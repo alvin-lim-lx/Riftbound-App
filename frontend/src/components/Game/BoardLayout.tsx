@@ -104,9 +104,10 @@ interface CardStackProps {
   isPlayer: boolean;
   onClick?: () => void;
   size?: 'sm' | 'md';
+  hidden?: boolean; // true = show card back (for hidden decks)
 }
 
-function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onClick, size = 'md' }: CardStackProps) {
+function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onClick, size = 'md', hidden }: CardStackProps) {
   const dims = size === 'sm' ? { w: 64, h: 86 } : { w: 80, h: 108 };
   const stackColors = ['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.12)'];
 
@@ -129,8 +130,22 @@ function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onCl
             }}
           />
         ))}
-        {/* Top card */}
-        {topCard && cardDef ? (
+        {/* Top card — hidden for face-down decks, otherwise shown */}
+        {hidden ? (
+          <div style={{
+            position: 'absolute',
+            inset: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'linear-gradient(135deg, #2a2a4a 0%, #1a1a3a 100%)',
+            border: `1px solid ${accentColor}66`,
+            borderRadius: '8px',
+            zIndex: 10,
+          }}>
+            <span style={{ color: accentColor + '99', fontSize: '20px', fontWeight: 800 }}>?</span>
+          </div>
+        ) : topCard && cardDef ? (
           <CardArtView
             card={topCard}
             cardDef={cardDef}
@@ -794,6 +809,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
         accentColor={accentColor}
         isPlayer={!isOpponent}
         size="sm"
+        hidden={true}
       />
     </div>
   );
