@@ -30,7 +30,7 @@ export function LegendZone({ cards, zoneLabel, allCards, cardDefs, playerId, com
       if (!c) return false;
       const def = cardDefs[c.cardId];
       const isLegendType = def?.type === 'Legend';
-      const inZone = c.location === 'legend' || c.location === 'battlefield';
+      const inZone = c.location === 'legendZone' || c.location === 'battlefield';
       return isLegendType && inZone;
     });
 

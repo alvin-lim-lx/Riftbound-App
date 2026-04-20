@@ -82,7 +82,7 @@ function partitionPlayerZones(
     const def = cardDefs[c.cardId];
     if (!def) continue;
 
-    if (c.location === 'battlefield') {
+    if (c.location === 'battlefield' || c.location === 'legendZone' || c.location === 'championZone') {
       if (def.type === 'Battlefield') baseIds.push(c.instanceId);
       else if (def.type === 'Unit' && def.superType === 'Champion') championIds.push(c.instanceId);
       else if (def.type === 'Legend') legendIds.push(c.instanceId);

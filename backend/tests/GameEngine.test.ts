@@ -252,6 +252,86 @@ describe('GameEngine', () => {
     });
   });
 
+  describe('Legend and Champion Zone Setup', () => {
+    it('places legend card in legendZone location', () => {
+      const legendCardId = 'unl-l01'; // Assuming a Legend card exists
+      const championCardId = 'unl-c01'; // Assuming a Champion unit exists
+      const state = createGame([P1, P2], ['Alice', 'Bob'], {
+        playerDecks: {
+          [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
+          [P2]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
+        },
+      });
+
+      const p1 = state.players[P1];
+      const p2 = state.players[P2];
+
+      // Legend should be set in player state
+      expect(p1.legend).toBeDefined();
+      expect(p2.legend).toBeDefined();
+
+      // Legend instance should be in allCards with location='legendZone'
+      const p1Legend = state.allCards[p1.legend!];
+      expect(p1Legend).toBeDefined();
+      expect(p1Legend.location).toBe('legend');
+      expect(p1Legend.ownerId).toBe(P1);
+
+      const p2Legend = state.allCards[p2.legend!];
+      expect(p2Legend).toBeDefined();
+      expect(p2Legend.location).toBe('legend');
+      expect(p2Legend.ownerId).toBe(P2);
+    });
+
+    it('places chosen champion card in championZone location', () => {
+      const legendCardId = 'unl-l01';
+      const championCardId = 'unl-c01';
+      const state = createGame([P1, P2], ['Alice', 'Bob'], {
+        playerDecks: {
+          [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
+          [P2]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
+        },
+      });
+
+      const p1 = state.players[P1];
+      const p2 = state.players[P2];
+
+      // Champion should be set in player state
+      expect(p1.chosenChampion).toBeDefined();
+      expect(p2.chosenChampion).toBeDefined();
+
+      // Champion instance should be in allCards with location='championZone'
+      const p1Champion = state.allCards[p1.chosenChampion!];
+      expect(p1Champion).toBeDefined();
+      expect(p1Champion.location).toBe('championZone');
+      expect(p1Champion.ownerId).toBe(P1);
+
+      const p2Champion = state.allCards[p2.chosenChampion!];
+      expect(p2Champion).toBeDefined();
+      expect(p2Champion.location).toBe('championZone');
+      expect(p2Champion.ownerId).toBe(P2);
+    });
+
+    it('legend and champion are NOT in player hand', () => {
+      const legendCardId = 'unl-l01';
+      const championCardId = 'unl-c01';
+      const state = createGame([P1, P2], ['Alice', 'Bob'], {
+        playerDecks: {
+          [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
+          [P2]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
+        },
+      });
+
+      const p1Hand = state.players[P1].hand;
+      const p2Hand = state.players[P2].hand;
+
+      // Legend and champion should not be in hand
+      expect(p1Hand).not.toContain(state.players[P1].legend);
+      expect(p1Hand).not.toContain(state.players[P1].chosenChampion);
+      expect(p2Hand).not.toContain(state.players[P2].legend);
+      expect(p2Hand).not.toContain(state.players[P2].chosenChampion);
+    });
+  });
+
   describe('Concede', () => {
     it('declares opponent as winner on concede', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
