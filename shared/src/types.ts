@@ -51,6 +51,7 @@ export interface CardCost {
 
 export interface CardStats {
   might?: number;  // Combat strength
+  health?: number;  // Survivability / HP
 }
 
 export interface Ability {
@@ -101,7 +102,7 @@ export interface CardInstance {
   instanceId: string;  // Unique per-card instance ID
   cardId: string;       // References CardDefinition.id
   ownerId: string;
-  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'hidden' | 'equipment' | 'legend' | 'championZone';
+  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'rune' | 'runeDiscard' | 'hidden' | 'equipment' | 'legend' | 'championZone';
   battlefieldId?: string;
   ready: boolean;
   exhausted: boolean;   // Tapped / used this turn
@@ -157,6 +158,7 @@ export interface GameState {
   winner: string | null;
   scoreLimit: number;
   actionLog: GameAction[];
+  gameLogs: GameLogEntry[];
   createdAt: number;
   isPvP: boolean;
 }
@@ -179,6 +181,55 @@ export type ActionType =
   | 'ReactFromHidden'
   | 'AssignBlocker'
   | 'Concede';
+
+export type LogEntryType =
+  // Phase events
+  | 'phase_start'
+  | 'turn_start'
+  | 'mulligan_start'
+  | 'mulligan_complete'
+  | 'setup_complete'
+  // Card actions
+  | 'card_drawn'
+  | 'card_played'
+  | 'card_discarded'
+  | 'unit_played'
+  | 'spell_played'
+  | 'gear_played'
+  | 'equipment_attached'
+  | 'unit_moved'
+  | 'unit_ready'
+  | 'unit_exhausted'
+  | 'unit_killed'
+  // Rune actions
+  | 'rune_channelled'
+  | 'rune_discarded'
+  | 'rune_drawn'
+  | 'mana_gained'
+  // Combat
+  | 'attack_declared'
+  | 'showdown_resolved'
+  | 'battlefield_conquered'
+  | 'battlefield_scored'
+  // Game events
+  | 'score_changed'
+  | 'ability_triggered'
+  | 'game_won'
+  | 'pass'
+  | 'concede'
+  | 'hidden_card_hidden'
+  | 'hidden_card_revealed';
+
+export interface GameLogEntry {
+  id: string;
+  type: LogEntryType;
+  playerId: string;           // Player who triggered this event (or system for auto-events)
+  turn: number;
+  phase: Phase;
+  timestamp: number;
+  message: string;            // Human-readable description
+  details?: Record<string, unknown>; // Additional context (cardId, cost, damage, etc.)
+}
 
 export interface GameAction {
   id: string;

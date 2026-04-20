@@ -84,7 +84,7 @@ export interface CardInstance {
   instanceId: string;
   cardId: string;
   ownerId: string;
-  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'hidden' | 'equipment';
+  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'rune' | 'runeDiscard' | 'hidden' | 'equipment';
   battlefieldId?: string;
   ready: boolean;
   exhausted: boolean;
@@ -303,6 +303,19 @@ export interface DeckValidation {
   runeCount: number;
   battlefieldCount: number;
   sideboardCount: number;
+}
+
+// --- Auth Types ---
+
+export interface User {
+  id: string;
+  username: string;
+  createdAt: number;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: User;
 }
 
 // --- API Types ---

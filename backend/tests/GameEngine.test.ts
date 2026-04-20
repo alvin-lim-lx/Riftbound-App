@@ -41,16 +41,16 @@ describe('GameEngine', () => {
       expect(state.winner).toBeNull();
     });
 
-    it('deals opening hands of 5 cards', () => {
+    it('deals opening hands of 4 cards', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
-      expect(state.players[P1].hand.length).toBe(5);
-      expect(state.players[P2].hand.length).toBe(5);
+      expect(state.players[P1].hand.length).toBe(4);
+      expect(state.players[P2].hand.length).toBe(4);
     });
 
     it('creates rune decks for both players', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
-      expect(state.players[P1].runeDeck.length).toBe(20);
-      expect(state.players[P2].runeDeck.length).toBe(20);
+      expect(state.players[P1].runeDeck.length).toBe(12);
+      expect(state.players[P2].runeDeck.length).toBe(12);
     });
   });
 
@@ -65,7 +65,11 @@ describe('GameEngine', () => {
 
   describe('PlayUnit', () => {
     it('rejects playing a card not in hand', () => {
-      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      const state: ReturnType<typeof createGame> = {
+        ...createGame([P1, P2], ['Alice', 'Bob']),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
       const result = executeAction(state, makeAction('PlayUnit', P1, {
         cardInstanceId: 'nonexistent_card',
         battlefieldId: state.battlefields[0].id,
@@ -77,14 +81,15 @@ describe('GameEngine', () => {
     });
 
     it('rejects playing without a valid battlefield', () => {
-      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const state: ReturnType<typeof createGame> = {
+        ...deepClone(createGame([P1, P2], ['Alice', 'Bob'])),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
       const unitId = state.players[P1].hand.find(id =>
         state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
       );
       expect(unitId).toBeDefined();
-
-      const def = state.cardDefinitions[state.allCards[unitId!].cardId];
-      const manaNeeded = def.cost?.rune ?? 0;
 
       const result = executeAction(state, makeAction('PlayUnit', P1, {
         cardInstanceId: unitId!,
@@ -92,15 +97,15 @@ describe('GameEngine', () => {
         hidden: false,
         accelerate: false,
       }));
-      // With mana fix, battlefield is checked AFTER hand+cost, but mana check runs first
-      // The exact error depends on whether player has enough mana
-      // Either way it should not succeed
       expect(result.success).toBe(false);
     });
 
     it('successfully plays a unit when player has enough mana and units on BF', () => {
-      // Use deepClone so we can mutate freely without affecting createGame
-      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const state: ReturnType<typeof createGame> = {
+        ...deepClone(createGame([P1, P2], ['Alice', 'Bob'])),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
       const bfId = state.battlefields[0].id;
 
       // Move a unit from hand to battlefield first (simulates previously played unit)
@@ -109,7 +114,6 @@ describe('GameEngine', () => {
       );
       expect(unitId).toBeDefined();
 
-      // Mutate: put unit on BF so subsequent units can be played there
       state.allCards[unitId!].location = 'battlefield';
       state.allCards[unitId!].battlefieldId = bfId;
       state.battlefields[0].units.push(unitId!);
@@ -122,17 +126,9 @@ describe('GameEngine', () => {
       expect(nextUnitId).toBeDefined();
 
       const nextDef = state.cardDefinitions[state.allCards[nextUnitId!].cardId];
-      const playState: typeof state = {
-        ...state,
-        phase: 'FirstMain' as const,
-        activePlayerId: P1,
-        players: {
-          ...state.players,
-          [P1]: { ...state.players[P1], mana: (nextDef.cost?.rune ?? 0) + 5 },
-        },
-      };
+      state.players[P1].mana = (nextDef.cost?.rune ?? 0) + 5;
 
-      const result = executeAction(playState, makeAction('PlayUnit', P1, {
+      const result = executeAction(state, makeAction('PlayUnit', P1, {
         cardInstanceId: nextUnitId!,
         battlefieldId: bfId,
         hidden: false,
@@ -148,7 +144,11 @@ describe('GameEngine', () => {
 
   describe('MoveUnit (Ganking)', () => {
     it('rejects moving a unit without Ganking keyword', () => {
-      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const state: ReturnType<typeof createGame> = {
+        ...deepClone(createGame([P1, P2], ['Alice', 'Bob'])),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
       const bfId = state.battlefields[0].id;
 
       const unitId = state.players[P1].hand.find(id => {
@@ -217,7 +217,11 @@ describe('GameEngine', () => {
     });
 
     it('returns PlayUnit for units in hand with enough mana when BF is controlled', () => {
-      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const state: ReturnType<typeof createGame> = {
+        ...deepClone(createGame([P1, P2], ['Alice', 'Bob'])),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
       const bfId = state.battlefields[0].id;
 
       // Put a unit on the BF first
@@ -237,24 +241,93 @@ describe('GameEngine', () => {
       );
       expect(nextUnitId).toBeDefined();
 
-      const highManaState: typeof state = {
-        ...state,
+      state.players[P1].mana = 10;
+
+      const actions = getLegalActions(state, P1);
+      expect(actions.some(a => a.type === 'PlayUnit')).toBe(true);
+    });
+  });
+
+  describe('DrawRune', () => {
+    it('channels a rune to the rune location (not hand)', () => {
+      const state: ReturnType<typeof createGame> = {
+        ...createGame([P1, P2], ['Alice', 'Bob']),
         phase: 'FirstMain' as const,
         activePlayerId: P1,
-        players: {
-          ...state.players,
-          [P1]: { ...state.players[P1], mana: 10 },
-        },
       };
+      const initialRuneDeckLen = state.players[P1].runeDeck.length;
+      const runeId = state.players[P1].runeDeck[0];
 
-      const actions = getLegalActions(highManaState, P1);
-      expect(actions.some(a => a.type === 'PlayUnit')).toBe(true);
+      const result = executeAction(state, makeAction('DrawRune', P1));
+
+      expect(result.success).toBe(true);
+      if (result.newState) {
+        expect(result.newState.allCards[runeId].location).toBe('rune');
+        expect(result.newState.players[P1].runeDeck.length).toBe(initialRuneDeckLen - 1);
+        // Rune should NOT be in hand
+        expect(result.newState.players[P1].hand).not.toContain(runeId);
+      }
+    });
+
+    it('rejects DrawRune when rune deck is empty', () => {
+      const state: ReturnType<typeof createGame> = {
+        ...createGame([P1, P2], ['Alice', 'Bob']),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
+      // Empty the rune deck
+      state.players[P1].runeDeck = [];
+
+      const result = executeAction(state, makeAction('DrawRune', P1));
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('No runes left.');
+    });
+  });
+
+  describe('UseRune', () => {
+    it('uses a channelled rune and increments mana', () => {
+      const state: ReturnType<typeof createGame> = {
+        ...createGame([P1, P2], ['Alice', 'Bob']),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
+      // Channel a rune first
+      const runeId = state.players[P1].runeDeck.shift()!;
+      state.allCards[runeId].location = 'rune';
+      const initialMana = state.players[P1].mana;
+
+      const result = executeAction(state, makeAction('UseRune', P1));
+
+      expect(result.success).toBe(true);
+      if (result.newState) {
+        expect(result.newState.allCards[runeId].location).toBe('runeDiscard');
+        expect(result.newState.players[P1].mana).toBe(initialMana + 1);
+      }
+    });
+
+    it('rejects UseRune when no runes are channelled', () => {
+      const state: ReturnType<typeof createGame> = {
+        ...createGame([P1, P2], ['Alice', 'Bob']),
+        phase: 'FirstMain' as const,
+        activePlayerId: P1,
+      };
+      // Ensure no runes are in the rune location
+      for (const card of Object.values(state.allCards)) {
+        if (card.ownerId === P1) card.location = 'deck';
+      }
+
+      const result = executeAction(state, makeAction('UseRune', P1));
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('No runes available.');
     });
   });
 
   describe('Concede', () => {
     it('declares opponent as winner on concede', () => {
-      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      const state: ReturnType<typeof createGame> = {
+        ...createGame([P1, P2], ['Alice', 'Bob']),
+        activePlayerId: P1, // ensure P1 is the active player
+      };
       const result = executeAction(state, makeAction('Concede', P1));
       expect(result.success).toBe(true);
       if (result.newState) {

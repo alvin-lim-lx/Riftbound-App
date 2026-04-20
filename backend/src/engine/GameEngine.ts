@@ -317,6 +317,7 @@ export function createGame(
     winner: null,
     scoreLimit,
     actionLog: [],
+    gameLogs: [],
     createdAt: Date.now(),
     isPvP,
   };
@@ -936,8 +937,7 @@ function handleDrawRune(state: GameState, action: GameAction): ActionResult {
   if (!runeId) return { success: false, error: 'No runes left.', action };
 
   const newState = deepClone(state);
-  newState.allCards[runeId].location = 'hand';
-  newState.players[action.playerId].hand.push(runeId);
+  newState.allCards[runeId].location = 'rune';
   newState.players[action.playerId].charges += 1;
 
   return {
@@ -950,13 +950,15 @@ function handleDrawRune(state: GameState, action: GameAction): ActionResult {
 
 function handleUseRune(state: GameState, action: GameAction): ActionResult {
   const player = state.players[action.playerId];
-  if (player.hand.length === 0) return { success: false, error: 'No runes in hand.', action };
+  // Find a rune in the 'rune' location (channelled runes ready to use)
+  const runeInstanceId = Object.values(state.allCards).find(
+    c => c.ownerId === action.playerId && c.location === 'rune'
+  )?.instanceId;
+  if (!runeInstanceId) return { success: false, error: 'No runes available.', action };
 
-  const runeId = player.hand[player.hand.length - 1];
   const newState = deepClone(state);
-  newState.allCards[runeId].location = 'runeDiscard';
-  newState.players[action.playerId].hand.pop();
-  newState.players[action.playerId].runeDiscard.push(runeId);
+  newState.allCards[runeInstanceId].location = 'runeDiscard';
+  newState.players[action.playerId].runeDiscard.push(runeInstanceId);
   newState.players[action.playerId].mana += 1;
 
   return { success: true, action, newState };
