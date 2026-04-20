@@ -62,6 +62,52 @@ export interface CardDefinition {
   flavorText?: string;
 }
 
+// --- Game Log Types ---
+
+export type LogEventType =
+  | 'game_created'
+  | 'phase_entered'
+  | 'turn_started'
+  | 'mulligan_done'
+  | 'card_drawn'
+  | 'rune_channeled'
+  | 'rune_discarded'
+  | 'rune_used'
+  | 'unit_played'
+  | 'spell_played'
+  | 'gear_played'
+  | 'gear_equipped'
+  | 'unit_moved'
+  | 'attack_declared'
+  | 'showdown_resolved'
+  | 'battlefield_conquered'
+  | 'battlefield_scored'
+  | 'unit_killed'
+  | 'unit_damaged'
+  | 'unit_readied'
+  | 'unit_exhausted'
+  | 'card_hidden'
+  | 'card_revealed'
+  | 'mana_gained'
+  | 'mana_spent'
+  | 'charge_gained'
+  | 'charge_spent'
+  | 'ability_triggered'
+  | 'pass'
+  | 'game_won'
+  | 'auto_score';
+
+export interface GameLogEntry {
+  id: string;
+  eventType: LogEventType;
+  turn: number;
+  phase: Phase;
+  playerId: string | null;
+  message: string;
+  details?: Record<string, unknown>;
+  timestamp: number;
+}
+
 // --- Game State Types ---
 
 export type Phase =
@@ -136,6 +182,7 @@ export interface GameState {
   winner: string | null;
   scoreLimit: number;
   actionLog: GameAction[];
+  gameLog: GameLogEntry[];
   createdAt: number;
   isPvP: boolean;
 }

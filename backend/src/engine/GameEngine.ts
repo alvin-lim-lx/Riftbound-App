@@ -13,7 +13,8 @@
 
 import {
   GameState, PlayerState, CardInstance, BattlefieldState,
-  Phase, ActionType, GameAction, CardDefinition
+  Phase, ActionType, GameAction, CardDefinition, GameLogEntry,
+  LogEventType
 } from '../../shared/src/types';
 import { CARDS } from '../../shared/src/cards';
 import { randomId, shuffle } from './utils';
@@ -44,6 +45,48 @@ export type GameSideEffect =
   | { type: 'ApplyModifier'; unitInstanceId: string; modifier: string; value: number }
   | { type: 'ReadyPlayer'; playerId: string }
   | { type: 'GameWin'; playerId: string; reason: string };
+
+// --- Game Engine Logging Helpers ---
+// ============================================================
+
+/**
+ * Push a structured GameLogEntry into the state's gameLog array.
+ * Returns a new state (does not mutate).
+ */
+function logEvent(
+  state: GameState,
+  eventType: LogEventType,
+  playerId: string | null,
+  message: string,
+  details?: Record<string, unknown>
+): GameState {
+  const entry: GameLogEntry = {
+    id: randomId(),
+    eventType,
+    turn: state.turn,
+    phase: state.phase,
+    playerId,
+    message,
+    details,
+    timestamp: Date.now(),
+  };
+  return {
+    ...state,
+    gameLog: [...state.gameLog, entry],
+  };
+}
+
+function logPhaseEntry(state: GameState, phase: Phase): GameState {
+  return logEvent(state, 'phase_entered', null,
+    `Entered ${phase} phase`,
+    { phase });
+}
+
+function logTurnStart(state: GameState, playerId: string): GameState {
+  return logEvent(state, 'turn_started', playerId,
+    `Turn ${state.turn} started — ${state.players[playerId]?.name ?? playerId}'s turn`,
+    { turn: state.turn, activePlayerId: playerId });
+}
 
 // ============================================================
 // Game Factory
@@ -317,6 +360,7 @@ export function createGame(
     winner: null,
     scoreLimit,
     actionLog: [],
+    gameLog: [],
     createdAt: Date.now(),
     isPvP,
   };
@@ -403,12 +447,30 @@ export function advancePhase(state: GameState): GameState {
 
 export function startNewTurn(state: GameState): GameState {
   const nextPlayerId = getOpponentId(state, state.activePlayerId);
-  const newState = { ...state, turn: state.turn + 1, activePlayerId: nextPlayerId };
-  return enterPhase(newState, 'Awaken');
+  const newState = {
+    ...state,
+    turn: state.turn + 1,
+    activePlayerId: nextPlayerId,
+    gameLog: [...state.gameLog],
+  };
+  const loggedState = logTurnStart(newState, nextPlayerId);
+  return enterPhase(loggedState, 'Awaken');
 }
 
 export function enterPhase(state: GameState, phase: Phase): GameState {
-  const newState: GameState = { ...state, phase };
+  let newState: GameState = { ...state, phase, gameLog: [...state.gameLog] };
+  // Log phase entry
+  const phaseNames: Record<string, string> = {
+    'Setup': 'Setup Phase', 'Mulligan': 'Mulligan Phase', 'Awaken': 'Awaken Phase',
+    'Beginning': 'Beginning Phase', 'Channel': 'Channel Phase', 'Draw': 'Draw Phase',
+    'Action': 'Action Phase', 'FirstMain': 'First Main Phase', 'Combat': 'Combat Phase',
+    'SecondMain': 'Second Main Phase', 'End': 'End Phase', 'Showdown': 'Showdown Phase',
+    'Scoring': 'Scoring Phase', 'GameOver': 'Game Over',
+  };
+  const label = phaseNames[phase] ?? phase;
+  newState = logEvent(newState, 'phase_entered', null,
+    `→ ${label}`,
+    { phase, turn: newState.turn });
 
   switch (phase) {
     case 'Setup':
@@ -424,12 +486,10 @@ export function enterPhase(state: GameState, phase: Phase): GameState {
     case 'Draw':
       return executeDrawPhase(newState);
     case 'Action':
-      // Action is a parent phase — enter FirstMain sub-phase
       return enterPhase(newState, 'FirstMain' as Phase);
     case 'FirstMain':
     case 'Combat':
     case 'SecondMain':
-      // Sub-phases of Action — no special entry behavior
       return newState;
     case 'End':
       return executeEndPhase(newState);
@@ -446,7 +506,11 @@ function executeSetupPhase(state: GameState): GameState {
   // - Draw opening hand of 4 cards
   // All of this is already done in createGame().
   // Transition directly to Mulligan phase.
-  return enterPhase(state, 'Mulligan');
+  // Log game creation
+  const loggedState = logEvent(state, 'game_created', null,
+    `Game created — ${Object.keys(state.players).length} players`,
+    { playerCount: Object.keys(state.players).length, scoreLimit: state.scoreLimit });
+  return enterPhase(loggedState, 'Mulligan');
 }
 
 function executeMulliganPhase(state: GameState): GameState {
@@ -462,17 +526,53 @@ function executeAwakenPhase(state: GameState): GameState {
   const player = state.players[playerId];
   const newState = deepClone(state);
 
-  // Reset mana and charges (Awaken behavior)
-  player.mana = 2;
-  player.maxMana = 2;
-  player.charges = 1;
+  // Log mana reset (Awaken behavior)
+  newState.players[playerId].mana = 2;
+  newState.players[playerId].maxMana = 2;
+  newState.players[playerId].charges = 1;
+
+  newState.gameLog = [...newState.gameLog,
+    {
+      id: randomId(),
+      eventType: 'mana_gained' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId,
+      message: `${player.name} gains 2 mana (Awaken)`,
+      timestamp: Date.now(),
+    },
+    {
+      id: randomId(),
+      eventType: 'charge_gained' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId,
+      message: `${player.name} gains 1 charge (Awaken)`,
+      timestamp: Date.now(),
+    }
+  ];
 
   // Ready all units at battlefields (Awaken behavior)
+  const readiedUnits: string[] = [];
   for (const bf of newState.battlefields) {
     for (const unitId of bf.units) {
       newState.allCards[unitId].ready = true;
       newState.allCards[unitId].exhausted = false;
+      readiedUnits.push(unitId);
     }
+  }
+  if (readiedUnits.length > 0) {
+    const unitNames = readiedUnits.map(id => newState.cardDefinitions[newState.allCards[id].cardId]?.name ?? id).join(', ');
+    newState.gameLog.push({
+      id: randomId(),
+      eventType: 'unit_readied' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId,
+      message: `${player.name}'s units readied: ${unitNames}`,
+      details: { unitIds: readiedUnits },
+      timestamp: Date.now(),
+    });
   }
 
   return newState;
@@ -488,7 +588,17 @@ function executeBeginningPhase(state: GameState): GameState {
       // Player has held battlefield with units all turn
       const holder = newState.players[bf.scoringPlayerId!];
       holder.score += 1;
-      newState.actionLog.push(makeLog(newState, bf.scoringPlayerId!, 'auto', `Scored 1 point from ${bf.name}`));
+      const holderName = holder.name ?? bf.scoringPlayerId;
+      newState.gameLog = [...newState.gameLog, {
+        id: randomId(),
+        eventType: 'auto_score' as const,
+        turn: newState.turn,
+        phase: newState.phase,
+        playerId: bf.scoringPlayerId!,
+        message: `${holderName} scored 1 point from ${bf.name}`,
+        details: { battlefieldId: bf.id, battlefieldName: bf.name, newScore: holder.score },
+        timestamp: Date.now(),
+      }];
     }
   }
 
@@ -499,6 +609,7 @@ function executeChannelPhase(state: GameState): GameState {
   const playerId = state.activePlayerId;
   const player = state.players[playerId];
   const newState = deepClone(state);
+  const channeledRunes: string[] = [];
 
   // Channel 2 Runes from Rune Deck into Base (hand)
   for (let i = 0; i < 2; i++) {
@@ -506,7 +617,21 @@ function executeChannelPhase(state: GameState): GameState {
     if (runeId) {
       newState.allCards[runeId].location = 'hand';
       player.hand.push(runeId);
+      channeledRunes.push(runeId);
     }
+  }
+
+  if (channeledRunes.length > 0) {
+    newState.gameLog = [...newState.gameLog, {
+      id: randomId(),
+      eventType: 'rune_channeled' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId,
+      message: `${player.name} channeled ${channeledRunes.length} rune(s) from deck to hand`,
+      details: { runeInstanceIds: channeledRunes },
+      timestamp: Date.now(),
+    }];
   }
 
   return newState;
@@ -522,6 +647,17 @@ function executeDrawPhase(state: GameState): GameState {
   if (cardId) {
     newState.allCards[cardId].location = 'hand';
     player.hand.push(cardId);
+    const cardDef = newState.cardDefinitions[newState.allCards[cardId].cardId];
+    newState.gameLog = [...newState.gameLog, {
+      id: randomId(),
+      eventType: 'card_drawn' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId,
+      message: `${player.name} drew ${cardDef?.name ?? cardId} from deck`,
+      details: { cardInstanceId: cardId, cardId: newState.allCards[cardId].cardId },
+      timestamp: Date.now(),
+    }];
   }
 
   // Clear Rune Pool (discard all runes from hand)
@@ -531,6 +667,19 @@ function executeDrawPhase(state: GameState): GameState {
     player.runeDiscard.push(runeId);
   }
   player.hand = player.hand.filter(id => newState.allCards[id]?.cardId !== 'Rune');
+
+  if (runeIds.length > 0) {
+    newState.gameLog = [...newState.gameLog, {
+      id: randomId(),
+      eventType: 'rune_discarded' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId,
+      message: `${player.name} discarded ${runeIds.length} rune(s) from hand (Draw Phase)`,
+      details: { runeInstanceIds: runeIds },
+      timestamp: Date.now(),
+    }];
+  }
 
   return newState;
 }
@@ -555,9 +704,21 @@ function executeEndPhase(state: GameState): GameState {
       }
     }
     for (const killId of toKill) {
+      const killedName = newState.cardDefinitions[newState.allCards[killId].cardId]?.name ?? killId;
       bf.units = bf.units.filter(id => id !== killId);
       newState.allCards[killId].location = 'discard';
-      newState.players[getUnitOwner(newState, killId)].discardPile.push(killId);
+      const ownerId = getUnitOwner(newState, killId);
+      newState.players[ownerId].discardPile.push(killId);
+      newState.gameLog = [...newState.gameLog, {
+        id: randomId(),
+        eventType: 'unit_killed' as const,
+        turn: newState.turn,
+        phase: newState.phase,
+        playerId: ownerId,
+        message: `${killedName} was killed (Temporary keyword — End Phase)`,
+        details: { unitInstanceId: killId, cardId: newState.allCards[killId].cardId, battlefieldId: bf.id },
+        timestamp: Date.now(),
+      }];
     }
   }
 
@@ -605,8 +766,12 @@ export function checkWinCondition(state: GameState): string | null {
 // ============================================================
 
 function handlePass(state: GameState, action: GameAction): ActionResult {
-  const newState = advancePhase(deepClone(state));
-  return { success: true, action, newState };
+  const playerName = state.players[action.playerId]?.name ?? action.playerId;
+  const newState = deepClone(state);
+  const passedState = logEvent(newState, 'pass', action.playerId,
+    `${playerName} passed`,
+    { nextPhase: newState.phase });
+  return { success: true, action, newState: advancePhase(passedState) };
 }
 
 function handlePlayUnit(
@@ -663,6 +828,33 @@ function handlePlayUnit(
   // Trigger play abilities
   const effects = resolveAbilities(newState, cardInstanceId, 'PLAY');
 
+  // Log unit played
+  const playerName = state.players[action.playerId]?.name ?? action.playerId;
+  newState.gameLog = [...newState.gameLog, {
+    id: randomId(),
+    eventType: 'unit_played' as const,
+    turn: newState.turn,
+    phase: newState.phase,
+    playerId: action.playerId,
+    message: `${playerName} played ${def.name}${accelerate ? ' (Accelerate)' : ''} on ${bf.name} — cost ${manaCost}${accelCost > 0 ? `+${accelCost} accel` : ''} mana`,
+    details: { cardInstanceId, cardId: card.cardId, cardName: def.name, battlefieldId, battlefieldName: bf.name, cost: manaCost, accelerate, hidden },
+    timestamp: Date.now(),
+  }];
+
+  // Log mana spent
+  if (manaCost + accelCost > 0) {
+    newState.gameLog.push({
+      id: randomId(),
+      eventType: 'mana_spent' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId: action.playerId,
+      message: `${playerName} spent ${manaCost + accelCost} mana`,
+      details: { amount: manaCost + accelCost, remaining: newState.players[action.playerId].mana },
+      timestamp: Date.now(),
+    });
+  }
+
   return { success: true, action, newState, sideEffects: effects };
 }
 
@@ -698,6 +890,33 @@ function handlePlaySpell(
   // Resolve spell effects
   const effects = resolveSpellEffect(newState, cardInstanceId, targetId, targetBattlefieldId);
 
+  // Log spell played
+  const playerName = state.players[action.playerId]?.name ?? action.playerId;
+  newState.gameLog = [...newState.gameLog, {
+    id: randomId(),
+    eventType: 'spell_played' as const,
+    turn: newState.turn,
+    phase: newState.phase,
+    playerId: action.playerId,
+    message: `${playerName} cast ${def.name} — cost ${cost} mana`,
+    details: { cardInstanceId, cardId: card.cardId, cardName: def.name, cost, targetId, targetBattlefieldId },
+    timestamp: Date.now(),
+  }];
+
+  // Log mana spent
+  if (cost > 0) {
+    newState.gameLog.push({
+      id: randomId(),
+      eventType: 'mana_spent' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId: action.playerId,
+      message: `${playerName} spent ${cost} mana`,
+      details: { amount: cost, remaining: newState.players[action.playerId].mana },
+      timestamp: Date.now(),
+    });
+  }
+
   return { success: true, action, newState, sideEffects: effects };
 }
 
@@ -729,6 +948,34 @@ function handlePlayGear(
   newCard.battlefieldId = newState.allCards[targetUnitId].battlefieldId;
   newState.allCards[targetUnitId].attachments.push(cardInstanceId);
   newState.players[action.playerId].equipment[cardInstanceId] = targetUnitId;
+
+  // Log gear played
+  const playerName = state.players[action.playerId]?.name ?? action.playerId;
+  const targetUnitName = newState.cardDefinitions[newState.allCards[targetUnitId].cardId]?.name ?? targetUnitId;
+  newState.gameLog = [...newState.gameLog, {
+    id: randomId(),
+    eventType: 'gear_played' as const,
+    turn: newState.turn,
+    phase: newState.phase,
+    playerId: action.playerId,
+    message: `${playerName} played ${def.name} onto ${targetUnitName} — cost ${cost} mana`,
+    details: { cardInstanceId, cardId: card.cardId, cardName: def.name, cost, targetUnitId },
+    timestamp: Date.now(),
+  }];
+
+  // Log mana spent
+  if (cost > 0) {
+    newState.gameLog.push({
+      id: randomId(),
+      eventType: 'mana_spent' as const,
+      turn: newState.turn,
+      phase: newState.phase,
+      playerId: action.playerId,
+      message: `${playerName} spent ${cost} mana`,
+      details: { amount: cost, remaining: newState.players[action.playerId].mana },
+      timestamp: Date.now(),
+    });
+  }
 
   return { success: true, action, newState };
 }

@@ -12,6 +12,7 @@
  * - All card definitions are cached in gameState.cardDefinitions
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.deepClone = exports.shuffle = exports.randomId = void 0;
 exports.createGame = createGame;
 exports.executeAction = executeAction;
 exports.advancePhase = advancePhase;
@@ -20,10 +21,12 @@ exports.enterPhase = enterPhase;
 exports.checkScoring = checkScoring;
 exports.checkWinCondition = checkWinCondition;
 exports.resolveShowdown = resolveShowdown;
-exports.deepClone = deepClone;
 exports.getLegalActions = getLegalActions;
 const cards_1 = require("../../shared/src/cards");
 const utils_1 = require("./utils");
+Object.defineProperty(exports, "randomId", { enumerable: true, get: function () { return utils_1.randomId; } });
+Object.defineProperty(exports, "shuffle", { enumerable: true, get: function () { return utils_1.shuffle; } });
+Object.defineProperty(exports, "deepClone", { enumerable: true, get: function () { return utils_1.deepClone; } });
 function createGame(playerIds, playerNames, options = {}) {
     const { scoreLimit = 8, isPvP = true, playerDecks } = options;
     // Determine first player's deck config (for battlefield/rune settings)
@@ -31,6 +34,14 @@ function createGame(playerIds, playerNames, options = {}) {
     // Create battlefields
     // If a deck config is provided with battlefieldIds, use those (first is starting bf)
     // Otherwise fall back to default 3 battlefields
+    // Mapping from logical battlefield names to real card IDs in CARDS
+    const BF_ID_MAP = {
+        'Baron_Pit': 'unl-t01',
+        'Brush': 'unl-t03',
+        // 'The_Grid' doesn't exist in CARDS — use Power Nexus as a substitute
+        'The_Grid': 'sfd-214-221',
+    };
+    const resolveBfCardId = (id) => BF_ID_MAP[id] ?? id;
     let battlefields;
     if (firstDeckConfig?.battlefieldIds && firstDeckConfig.battlefieldIds.length >= 1) {
         const bfCardIds = firstDeckConfig.battlefieldIds.slice(0, 3);
@@ -38,31 +49,39 @@ function createGame(playerIds, playerNames, options = {}) {
         const defaults = ['Baron_Pit', 'Brush', 'The_Grid'];
         while (bfCardIds.length < 3)
             bfCardIds.push(defaults[bfCardIds.length]);
-        battlefields = bfCardIds.map((cardId, i) => ({
-            id: `bf_${i}`,
-            name: cards_1.CARDS[cardId]?.name ?? cardId,
-            cardId,
-            controllerId: null,
-            units: [],
-            scoringSince: null,
-            scoringPlayerId: null,
-        }));
+        // Rule 480.5: randomly select 1 of the 3 battlefields for this game
+        const selectedIdx = Math.floor(Math.random() * bfCardIds.length);
+        const rawCardId = bfCardIds[selectedIdx];
+        const cardId = resolveBfCardId(rawCardId);
+        battlefields = [{
+                id: 'bf_0',
+                name: cards_1.CARDS[cardId]?.name ?? rawCardId,
+                cardId,
+                controllerId: null,
+                units: [],
+                scoringSince: null,
+                scoringPlayerId: null,
+            }];
     }
     else {
         const battlefieldDefs = ['Baron_Pit', 'Brush'];
-        battlefields = battlefieldDefs.map((cardId, i) => ({
-            id: `bf_${i}`,
-            name: cards_1.CARDS[cardId]?.name ?? cardId,
-            cardId,
-            controllerId: null,
-            units: [],
-            scoringSince: null,
-            scoringPlayerId: null,
-        }));
+        battlefields = battlefieldDefs.map((rawCardId, i) => {
+            const cardId = resolveBfCardId(rawCardId);
+            return {
+                id: `bf_${i}`,
+                name: cards_1.CARDS[cardId]?.name ?? rawCardId,
+                cardId,
+                controllerId: null,
+                units: [],
+                scoringSince: null,
+                scoringPlayerId: null,
+            };
+        });
+        const gridCardId = resolveBfCardId('The_Grid');
         battlefields.push({
             id: 'bf_2',
-            name: 'The Grid',
-            cardId: 'The_Grid',
+            name: cards_1.CARDS[gridCardId]?.name ?? 'The Grid',
+            cardId: gridCardId,
             controllerId: null,
             units: [],
             scoringSince: null,
@@ -73,35 +92,15 @@ function createGame(playerIds, playerNames, options = {}) {
     const allCards = {};
     const players = {};
     playerIds.forEach((pid, idx) => {
-        // Create a rune deck (20 runes, index 0-19)
-        const runeDeckIds = [];
-        for (let r = 0; r < 20; r++) {
-            const runeId = `${pid}_rune_${r}`;
-            allCards[runeId] = {
-                instanceId: runeId,
-                cardId: 'Rune',
-                ownerId: pid,
-                location: 'runeDeck',
-                ready: false,
-                exhausted: false,
-                stats: {},
-                currentStats: {},
-                counters: {},
-                attachments: [],
-                facing: 'up',
-                owner_hidden: false,
-            };
-            runeDeckIds.push(runeId);
-        }
         // Determine deck card ids — use provided deck config or fallback to all cards
         let deckCardIds;
         const deckConfig = playerDecks?.[pid];
         if (deckConfig) {
-            // Use player's custom deck: duplicate each card twice
-            deckCardIds = [];
-            for (const cardId of deckConfig.cardIds) {
-                deckCardIds.push(cardId, cardId);
-            }
+            // 40 cards in cardIds: includes the Chosen Champion (1 copy)
+            // Extract champion → Champion Zone; remaining 39 → shuffled into deck (no duplication)
+            const championId = deckConfig.chosenChampionCardId;
+            deckCardIds = deckConfig.cardIds.filter(id => id !== championId);
+            // deckCardIds is now 39 cards — use as-is, don't duplicate
         }
         else {
             // Fallback: use all Unit/Spell/Gear cards from the database
@@ -111,7 +110,7 @@ function createGame(playerIds, playerNames, options = {}) {
                 deckCardIds.push(cardId, cardId);
             }
         }
-        (0, utils_1.shuffle)(deckCardIds);
+        deckCardIds = (0, utils_1.shuffle)(deckCardIds);
         const deckInstanceIds = [];
         for (const cardId of deckCardIds) {
             const instId = `${pid}_deck_${(0, utils_1.randomId)()}`;
@@ -132,13 +131,57 @@ function createGame(playerIds, playerNames, options = {}) {
             };
             deckInstanceIds.push(instId);
         }
-        // Draw opening hand (5 cards for 2-player)
-        const handInstanceIds = deckInstanceIds.splice(0, 5);
+        // Draw opening hand of 4 cards (Rule 117)
+        const handInstanceIds = deckInstanceIds.splice(0, 4);
+        console.log(`[createGame] player=${pid} deckCards=${deckCardIds.length} handInstanceIds=${JSON.stringify(handInstanceIds)}`);
         for (const instId of handInstanceIds) {
             allCards[instId].location = 'hand';
         }
-        // If player has a legend in their deck, draw it to hand (mulligan choice)
-        // and also place the legend cardId on the champion slot
+        // Create Rune Deck — use provided runeIds (12 cards) or default 12 generic runes
+        let runeDeckIds = [];
+        if (deckConfig?.runeIds && deckConfig.runeIds.length > 0) {
+            // Use actual rune cards from deck config
+            for (const runeCardId of deckConfig.runeIds) {
+                const rid = `${pid}_rune_${(0, utils_1.randomId)()}`;
+                allCards[rid] = {
+                    instanceId: rid,
+                    cardId: runeCardId,
+                    ownerId: pid,
+                    location: 'runeDeck',
+                    ready: false,
+                    exhausted: false,
+                    stats: {},
+                    currentStats: {},
+                    counters: {},
+                    attachments: [],
+                    facing: 'up',
+                    owner_hidden: false,
+                };
+                runeDeckIds.push(rid);
+            }
+        }
+        else {
+            // Default: 12 generic runes
+            for (let r = 0; r < 12; r++) {
+                const runeId = `${pid}_rune_${r}`;
+                allCards[runeId] = {
+                    instanceId: runeId,
+                    cardId: 'Rune',
+                    ownerId: pid,
+                    location: 'runeDeck',
+                    ready: false,
+                    exhausted: false,
+                    stats: {},
+                    currentStats: {},
+                    counters: {},
+                    attachments: [],
+                    facing: 'up',
+                    owner_hidden: false,
+                };
+                runeDeckIds.push(runeId);
+            }
+        }
+        // Place Champion Legend in Legend Zone (Rule 112 / 103.1.a)
         let legendInstanceId = null;
         if (deckConfig?.legendId) {
             const legendDef = cards_1.CARDS[deckConfig.legendId];
@@ -148,7 +191,7 @@ function createGame(playerIds, playerNames, options = {}) {
                     instanceId: lid,
                     cardId: deckConfig.legendId,
                     ownerId: pid,
-                    location: 'hand',
+                    location: 'legend', // Legend Zone — not in hand
                     ready: false,
                     exhausted: false,
                     stats: legendDef.stats ? { ...legendDef.stats } : {},
@@ -159,51 +202,62 @@ function createGame(playerIds, playerNames, options = {}) {
                     owner_hidden: false,
                 };
                 legendInstanceId = lid;
-                // Give the legend card to the player in hand (they can mulligan it)
-                players[pid] = {
-                    id: pid,
-                    name: playerNames[idx] ?? `Player ${idx + 1}`,
-                    hand: [...handInstanceIds, lid],
-                    deck: deckInstanceIds,
-                    runeDeck: runeDeckIds,
-                    runeDiscard: [],
-                    discardPile: [],
-                    score: 0,
-                    xp: 0,
-                    equipment: {},
-                    hiddenZone: [],
-                    isReady: false,
-                    mana: 0,
-                    maxMana: 0,
-                    charges: 0,
-                };
             }
         }
-        if (!players[pid]) {
-            players[pid] = {
-                id: pid,
-                name: playerNames[idx] ?? `Player ${idx + 1}`,
-                hand: handInstanceIds,
-                deck: deckInstanceIds,
-                runeDeck: runeDeckIds,
-                runeDiscard: [],
-                discardPile: [],
-                score: 0,
-                xp: 0,
-                equipment: {},
-                hiddenZone: [],
-                isReady: false,
-                mana: 0,
-                maxMana: 0,
-                charges: 0,
-            };
+        // Place Chosen Champion in Champion Zone (Rule 113 / 103.2.a)
+        let chosenChampionInstanceId = null;
+        if (deckConfig?.chosenChampionCardId) {
+            const champDef = cards_1.CARDS[deckConfig.chosenChampionCardId];
+            if (champDef) {
+                const cid = `${pid}_champion_${(0, utils_1.randomId)()}`;
+                allCards[cid] = {
+                    instanceId: cid,
+                    cardId: deckConfig.chosenChampionCardId,
+                    ownerId: pid,
+                    location: 'championZone', // Champion Zone — not in hand
+                    ready: false,
+                    exhausted: false,
+                    stats: champDef.stats ? { ...champDef.stats } : {},
+                    currentStats: champDef.stats ? { ...champDef.stats } : {},
+                    counters: {},
+                    attachments: [],
+                    facing: 'up',
+                    owner_hidden: false,
+                };
+                chosenChampionInstanceId = cid;
+            }
         }
+        // Build PlayerState with all required fields
+        players[pid] = {
+            id: pid,
+            name: playerNames[idx] ?? `Player ${idx + 1}`,
+            hand: handInstanceIds, // 4 cards — Legend and Chosen Champion are NOT here
+            deck: deckInstanceIds,
+            runeDeck: runeDeckIds, // 12 runes
+            runeDiscard: [],
+            discardPile: [],
+            score: 0,
+            xp: 0,
+            equipment: {},
+            hiddenZone: [],
+            isReady: false,
+            mana: 0,
+            maxMana: 0,
+            charges: 0,
+            legend: legendInstanceId,
+            chosenChampion: chosenChampionInstanceId,
+            hasGoneFirst: false,
+            mulligansComplete: false,
+        };
     });
+    // Determine first player randomly (Rule 116) — flip a coin
+    const firstPlayerIdx = Math.floor(Math.random() * playerIds.length);
+    const firstPlayerId = playerIds[firstPlayerIdx];
     return {
         id: `game_${(0, utils_1.randomId)()}`,
         turn: 0,
         phase: 'Setup',
-        activePlayerId: playerIds[0],
+        activePlayerId: firstPlayerId,
         players,
         battlefields,
         allCards,
@@ -293,6 +347,10 @@ function startNewTurn(state) {
 function enterPhase(state, phase) {
     const newState = { ...state, phase };
     switch (phase) {
+        case 'Setup':
+            return executeSetupPhase(newState);
+        case 'Mulligan':
+            return executeMulliganPhase(newState);
         case 'Awaken':
             return executeAwakenPhase(newState);
         case 'Beginning':
@@ -315,10 +373,27 @@ function enterPhase(state, phase) {
             return newState;
     }
 }
+function executeSetupPhase(state) {
+    // Rule 101: Setup Phase
+    // - Players place their Legend in the Legend Zone
+    // - Players place their Chosen Champion in the Champion Zone
+    // - Shuffle both main deck and rune deck
+    // - Draw opening hand of 4 cards
+    // All of this is already done in createGame().
+    // Transition directly to Mulligan phase.
+    return enterPhase(state, 'Mulligan');
+}
+function executeMulliganPhase(state) {
+    // Mulligan phase: each player takes turns deciding which cards to keep.
+    // Rule 116 / 117 / 118: Players may mulligan once per game.
+    // The activePlayerId at this point is the player who chose first (hasGoneFirst=true).
+    // They get the first mulligan action.
+    return state;
+}
 function executeAwakenPhase(state) {
     const playerId = state.activePlayerId;
     const player = state.players[playerId];
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     // Reset mana and charges (Awaken behavior)
     player.mana = 2;
     player.maxMana = 2;
@@ -334,7 +409,7 @@ function executeAwakenPhase(state) {
 }
 function executeBeginningPhase(state) {
     const playerId = state.activePlayerId;
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     // Score from Hold — check each battlefield
     for (const bf of newState.battlefields) {
         if (bf.controllerId && bf.units.length > 0 && bf.scoringSince !== null) {
@@ -349,7 +424,7 @@ function executeBeginningPhase(state) {
 function executeChannelPhase(state) {
     const playerId = state.activePlayerId;
     const player = state.players[playerId];
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     // Channel 2 Runes from Rune Deck into Base (hand)
     for (let i = 0; i < 2; i++) {
         const runeId = player.runeDeck.shift();
@@ -363,7 +438,7 @@ function executeChannelPhase(state) {
 function executeDrawPhase(state) {
     const playerId = state.activePlayerId;
     const player = state.players[playerId];
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     // Draw 1 card from Main Deck
     const cardId = player.deck.shift();
     if (cardId) {
@@ -384,7 +459,7 @@ function executeCombatPhase(state) {
     return state;
 }
 function executeEndPhase(state) {
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     // Kill Temporary units (End of Turn behavior)
     for (const bf of newState.battlefields) {
         const toKill = [];
@@ -442,7 +517,7 @@ function checkWinCondition(state) {
 // Action Handlers
 // ============================================================
 function handlePass(state, action) {
-    const newState = advancePhase(deepClone(state));
+    const newState = advancePhase((0, utils_1.deepClone)(state));
     return { success: true, action, newState };
 }
 function handlePlayUnit(state, action) {
@@ -467,7 +542,7 @@ function handlePlayUnit(state, action) {
     const bf = state.battlefields.find(b => b.id === battlefieldId);
     if (!bf)
         return { success: false, error: 'Battlefield not found.', action };
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     newState.allCards[cardInstanceId] = { ...newState.allCards[cardInstanceId] };
     const newCard = newState.allCards[cardInstanceId];
     // Pay costs
@@ -507,7 +582,7 @@ function handlePlaySpell(state, action) {
     const cost = def.cost?.rune ?? 0;
     if (player.mana < cost)
         return { success: false, error: 'Not enough mana.', action };
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     newState.allCards[cardInstanceId] = { ...newState.allCards[cardInstanceId] };
     const newCard = newState.allCards[cardInstanceId];
     // Pay cost
@@ -531,7 +606,7 @@ function handlePlayGear(state, action) {
     const cost = def.cost?.rune ?? 0;
     if (player.mana < cost)
         return { success: false, error: 'Not enough mana.', action };
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     const newCard = { ...newState.allCards[cardInstanceId] };
     newState.allCards[cardInstanceId] = newCard;
     newState.players[action.playerId].mana -= cost;
@@ -565,7 +640,7 @@ function handleMoveUnit(state, action) {
     if (!state.battlefields.find(b => b.id === toBattlefieldId)?.controllerId) {
         // Can't move to unconquered BFs unless you have units there or it's neutral
     }
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     const newUnit = newState.allCards[cardInstanceId];
     newUnit.ready = false; // Moving exhausts
     newUnit.battlefieldId = toBattlefieldId;
@@ -587,14 +662,14 @@ function handleAttack(state, action) {
     const bf = state.battlefields.find(b => b.id === targetBattlefieldId);
     if (!bf)
         return { success: false, error: 'Target battlefield not found.', action };
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     newState.phase = 'Showdown';
     return { success: true, action, newState };
 }
 function resolveShowdown(state, attackerId, targetBattlefieldId) {
     const attacker = state.allCards[attackerId];
     const bf = state.battlefields.find(b => b.id === targetBattlefieldId);
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     const effects = [];
     // Gather all units at the battlefield
     const allUnitsAtBf = [...bf.units]; // defender's units
@@ -706,7 +781,7 @@ function handleDrawRune(state, action) {
     const runeId = player.runeDeck.shift();
     if (!runeId)
         return { success: false, error: 'No runes left.', action };
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     newState.allCards[runeId].location = 'hand';
     newState.players[action.playerId].hand.push(runeId);
     newState.players[action.playerId].charges += 1;
@@ -722,7 +797,7 @@ function handleUseRune(state, action) {
     if (player.hand.length === 0)
         return { success: false, error: 'No runes in hand.', action };
     const runeId = player.hand[player.hand.length - 1];
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     newState.allCards[runeId].location = 'runeDiscard';
     newState.players[action.playerId].hand.pop();
     newState.players[action.playerId].runeDiscard.push(runeId);
@@ -743,7 +818,7 @@ function handleHideCard(state, action) {
     const cost = def.cost?.charges ?? 1;
     if (player.charges < cost)
         return { success: false, error: 'Not enough charges.', action };
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     newState.players[action.playerId].charges -= cost;
     newState.players[action.playerId].hiddenZone.push(cardInstanceId);
     newState.allCards[cardInstanceId].location = 'hidden';
@@ -756,20 +831,20 @@ function handleReactFromHidden(state, action) {
     const card = state.allCards[cardInstanceId];
     if (!card || card.location !== 'hidden')
         return { success: false, error: 'Card not in hidden zone.', action };
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     newState.allCards[cardInstanceId].facing = 'up';
     newState.allCards[cardInstanceId].owner_hidden = false;
     return { success: true, action, newState };
 }
 function handleUseAbility(state, action) {
     const { cardInstanceId, abilityIndex, targetId, targetBattlefieldId } = action.payload;
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     const effects = resolveAbilities(newState, cardInstanceId, 'ABILITY', abilityIndex, targetId, targetBattlefieldId);
     return { success: true, action, newState, sideEffects: effects };
 }
 function handleConcede(state, action) {
     const opponentId = getOpponentId(state, action.playerId);
-    const newState = deepClone(state);
+    const newState = (0, utils_1.deepClone)(state);
     return {
         success: true,
         newState: { ...newState, phase: 'GameOver', winner: opponentId },
@@ -780,17 +855,23 @@ function handleConcede(state, action) {
 function handleMulligan(state, action) {
     const { keepIds } = action.payload;
     const player = state.players[action.playerId];
-    const newState = deepClone(state);
-    // Return non-kept cards to deck, shuffle, draw back up
-    const newHand = keepIds.filter(id => player.hand.includes(id));
+    const newState = (0, utils_1.deepClone)(state);
+    const allPlayerIds = Object.keys(newState.players);
+    // Rule 118: a player may set aside up to 2 cards during mulligan
     const toReturn = player.hand.filter(id => !keepIds.includes(id));
+    if (toReturn.length > 2) {
+        return { success: false, error: 'Mulligan: may set aside at most 2 cards.', action };
+    }
+    const newHand = keepIds.filter(id => player.hand.includes(id));
     for (const id of toReturn) {
         newState.allCards[id].location = 'deck';
         newState.players[action.playerId].deck.push(id);
     }
     newState.players[action.playerId].hand = newHand;
-    // Draw back to hand size
-    while (newState.players[action.playerId].hand.length < 5) {
+    // Shuffle returned cards back in
+    (0, utils_1.shuffle)(newState.players[action.playerId].deck);
+    // Draw back up to hand size of 4 (Rule 118.1-118.3)
+    while (newState.players[action.playerId].hand.length < 4) {
         const cardId = newState.players[action.playerId].deck.shift();
         if (cardId) {
             newState.allCards[cardId].location = 'hand';
@@ -799,8 +880,40 @@ function handleMulligan(state, action) {
         else
             break;
     }
+    // Track turn order: the player who was chosen first (activePlayerId at start
+    // of Mulligan phase) hasGoneFirst=true; the second player hasGoneFirst=false.
+    // The first player (hasGoneFirst=true) will take the first turn of the game.
+    const opponentId = allPlayerIds.find(id => id !== action.playerId);
+    if (opponentId) {
+        // The player who is NOT acting right now is the first player (they act first in turn order)
+        newState.players[action.playerId].hasGoneFirst = false; // second to act in turn order
+        newState.players[opponentId].hasGoneFirst = true; // first to act in turn order
+    }
+    // Check if both players have completed mulligan BEFORE marking current player ready
+    const bothReady = allPlayerIds
+        .filter(id => id !== action.playerId) // exclude current player
+        .every(id => newState.players[id].isReady);
+    // Mark current player ready
     newState.players[action.playerId].isReady = true;
-    return { success: true, action, newState };
+    if (bothReady) {
+        // Both players have now completed mulligan — transition to first turn
+        newState.players[action.playerId].mulligansComplete = true;
+        // First player (hasGoneFirst=true) takes first turn
+        const firstPlayerId = allPlayerIds.find(id => newState.players[id].hasGoneFirst) ?? allPlayerIds[0];
+        newState.turn = 1;
+        // Enter the Awaken phase for the first player
+        return {
+            success: true,
+            action,
+            newState: enterPhase({ ...newState, activePlayerId: firstPlayerId, phase: 'Awaken' }, 'Awaken'),
+        };
+    }
+    // Not both ready yet — switch active player to opponent for their mulligan
+    return {
+        success: true,
+        action,
+        newState: { ...newState, activePlayerId: opponentId },
+    };
 }
 // ============================================================
 // Ability Resolution
@@ -936,9 +1049,6 @@ function resolveSpellEffect(state, cardInstanceId, targetId, targetBattlefieldId
 // ============================================================
 // Helpers
 // ============================================================
-function deepClone(obj) {
-    return JSON.parse(JSON.stringify(obj));
-}
 function getOpponentId(state, playerId) {
     return Object.keys(state.players).find(pid => pid !== playerId) ?? playerId;
 }
@@ -966,6 +1076,10 @@ function getLegalActions(state, playerId) {
     const player = state.players[playerId];
     if (!player)
         return actions;
+    // Mulligan is legal during Mulligan phase for the active player who hasn't completed it yet
+    if (state.phase === 'Mulligan' && state.activePlayerId === playerId && !player.mulligansComplete) {
+        actions.push(makeAction('Mulligan', playerId, { keepIds: [...player.hand] }));
+    }
     // Pass is legal in Action sub-phases (FirstMain, Combat, SecondMain) and when in Action parent
     if (['FirstMain', 'Combat', 'SecondMain'].includes(state.phase) || state.phase === 'Action') {
         actions.push(makeAction('Pass', playerId, {}));

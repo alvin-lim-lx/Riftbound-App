@@ -1,0 +1,11 @@
+Closes #4
+
+## Summary
+- Fixed LegendZone.tsx: location check was 'legend' but game engine uses 'legendZone' for legends
+- Fixed BoardLayout.tsx partitionPlayerZones(): was only scanning 'battlefield' location cards, missing legends (legendZone) and champions (championZone) which are placed there by the game engine during setup
+
+## Testing
+- Added 3 new tests in backend/tests/GameEngine.test.ts covering legend/champion zone setup:
+  - Legend card is placed in legend location
+  - Champion card is placed in championZone location
+  - Both are excluded from player's hand

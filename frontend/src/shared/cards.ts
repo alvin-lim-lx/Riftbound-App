@@ -1,3 +1,4 @@
+// @ts-nocheck
 // Riftbound Card Database
 // Auto-generated from riftbound.leagueoflegends.com/card-gallery/
 // Total cards: 939

@@ -19,6 +19,8 @@ const cards_1 = require("../../shared/src/cards");
 const utils_1 = require("../engine/utils");
 const DeckRoutes_1 = require("../deck/DeckRoutes");
 const DeckManager_1 = require("../deck/DeckManager");
+const auth_1 = require("../routes/auth");
+require("../db/database"); // initializes SQLite schema on startup
 // ============================================================
 // Server Class
 // ============================================================
@@ -47,6 +49,8 @@ class GameServer {
         this.app.get('/health', (_req, res) => {
             res.json({ status: 'ok', games: this.liveGames.size, lobbies: this.lobbies.size });
         });
+        // Auth routes
+        this.app.use('/api/auth', (0, auth_1.createAuthRouter)());
         // Deck routes
         this.app.use('/api/decks', (0, DeckRoutes_1.createDeckRouter)());
         // Card data
@@ -156,9 +160,40 @@ class GameServer {
                 this.send(ws, { type: 'auth_ok', playerId });
                 break;
             }
+            case 'reassociate': {
+                // Re-associate a reconnected WS with an existing game
+                if (!client)
+                    return this.sendError(ws, 'Not authenticated');
+                const { gameId } = msg;
+                if (!gameId)
+                    return this.sendError(ws, 'Missing gameId');
+                const liveGame = this.liveGames.get(gameId);
+                if (!liveGame)
+                    return this.sendError(ws, 'Game not found');
+                // Check the player is actually in this game
+                if (!liveGame.clients.has(client.playerId)) {
+                    return this.sendError(ws, 'Player not in this game');
+                }
+                // Re-link the WS to the game client
+                liveGame.clients.set(client.playerId, ws);
+                // Update the client's gameId
+                const updatedClient = { ...client, gameId };
+                this.clients.set(ws, updatedClient);
+                console.log(`[reassociate] playerId=${client.playerId} re-associated with game=${gameId}`);
+                // Send the current game state to the reconnected client
+                const sanitized = this.sanitizeState(liveGame.state, client.playerId);
+                this.send(ws, {
+                    type: 'game_state_update',
+                    gameId: liveGame.id,
+                    state: sanitized,
+                    timestamp: Date.now(),
+                });
+                break;
+            }
             case 'start_vs_ai': {
                 if (!client)
                     return this.sendError(ws, 'Not authenticated');
+                console.log('[DEBUG] start_vs_ai msg.deckId:', msg.deckId, 'client.playerId:', client.playerId);
                 const lobbyId = (0, utils_1.randomId)();
                 const lobby = {
                     id: lobbyId,
@@ -244,6 +279,9 @@ class GameServer {
                 if (!game)
                     return this.sendError(ws, 'Game not found');
                 const action = msg.action;
+                console.log(`[submit_action] playerId=${action.playerId} type=${action.type} phase=${action.phase} turn=${action.turn}`);
+                console.log(`[submit_action] client.playerId=${client.playerId} client.gameId=${client.gameId}`);
+                console.log(`[submit_action] game.state.phase=${game.state.phase} game.state.activePlayerId=${game.state.activePlayerId}`);
                 if (action.playerId !== client.playerId) {
                     return this.sendError(ws, 'Not your action');
                 }
@@ -312,15 +350,36 @@ class GameServer {
         for (const pid of actualPlayerIds) {
             const isHost = pid === actualPlayerIds[0];
             const deckId = isHost ? lobby.hostDeckId : lobby.guestDeckId;
+            console.log(`[startGame] pid=${pid} isHost=${isHost} deckId=${deckId}`);
             if (deckId) {
                 const deck = DeckManager_1.DeckManager.get(deckId);
+                console.log(`[startGame] DeckManager.get(${deckId}) = ${deck ? 'FOUND' : 'NOT FOUND'}`);
                 if (deck) {
+                    console.log(`[startGame] Found deck: ${deck.name} legend=${deck.legendId} champ=${deck.chosenChampionCardId} cardIds=${deck.cardIds.length}`);
                     playerDecks[pid] = {
                         legendId: deck.legendId,
+                        chosenChampionCardId: deck.chosenChampionCardId,
                         cardIds: deck.cardIds,
                         runeIds: deck.runeIds ?? [],
                         battlefieldIds: deck.battlefieldIds ?? [],
                         sideboardIds: deck.sideboardIds ?? [],
+                    };
+                }
+                else {
+                    console.log(`[startGame] Deck NOT found for id=${deckId}`);
+                }
+            }
+            else if (!isHost) {
+                // AI player with no deck — pick a random AI pre-built deck
+                const aiDeck = DeckManager_1.DeckManager.getRandomAiDeck();
+                if (aiDeck) {
+                    playerDecks[pid] = {
+                        legendId: aiDeck.legendId,
+                        chosenChampionCardId: aiDeck.chosenChampionCardId,
+                        cardIds: aiDeck.cardIds,
+                        runeIds: aiDeck.runeIds ?? [],
+                        battlefieldIds: aiDeck.battlefieldIds ?? [],
+                        sideboardIds: aiDeck.sideboardIds ?? [],
                     };
                 }
             }
@@ -330,9 +389,10 @@ class GameServer {
             isPvP: !lobby.guestId?.startsWith('ai_'),
             playerDecks: Object.keys(playerDecks).length > 0 ? playerDecks : undefined,
         });
-        // Transition from Setup to Awaken phase (start of first turn)
+        // Enter Setup phase — this triggers the setup->Mulligan->Awaken sequence.
+        // createGame() already set phase='Setup' and randomly chose first player.
         const { enterPhase } = require('../engine/GameEngine');
-        const gameStateWithPhase = enterPhase(gameState, 'Awaken');
+        const gameStateWithPhase = enterPhase(gameState, 'Setup');
         const liveGame = {
             id: gameStateWithPhase.id,
             state: gameStateWithPhase,
@@ -426,6 +486,7 @@ class GameServer {
         }, 800); // 800ms delay for natural feel
     }
     broadcastGameState(game) {
+        console.log(`[broadcastGameState] phase=${game.state.phase} activePlayerId=${game.state.activePlayerId} clients.size=${game.clients.size}`);
         const event = {
             type: 'game_state_update',
             gameId: game.id,
@@ -433,6 +494,7 @@ class GameServer {
         };
         for (const [pid, ws] of game.clients) {
             const sanitized = this.sanitizeState(game.state, pid);
+            console.log(`[broadcastGameState] sending to pid=${pid} phase=${sanitized.phase}`);
             this.send(ws, { ...event, state: sanitized });
         }
     }

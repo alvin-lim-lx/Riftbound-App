@@ -1,11 +1,15 @@
 "use strict";
 // Utility functions
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.deepClone = deepClone;
 exports.randomId = randomId;
 exports.shuffle = shuffle;
 exports.clamp = clamp;
 exports.pickRandom = pickRandom;
 exports.sleep = sleep;
+function deepClone(obj) {
+    return JSON.parse(JSON.stringify(obj));
+}
 function randomId() {
     return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
