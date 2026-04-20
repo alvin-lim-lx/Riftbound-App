@@ -51,6 +51,7 @@ export interface CardCost {
 
 export interface CardStats {
   might?: number;  // Combat strength
+  health?: number; // Health (for combat resolution)
 }
 
 export interface Ability {
