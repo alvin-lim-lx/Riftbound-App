@@ -51,6 +51,7 @@ export interface CardCost {
 
 export interface CardStats {
   might?: number;  // Combat strength
+  health?: number; // Health points (when reduced to 0, unit is destroyed)
 }
 
 export interface Ability {
