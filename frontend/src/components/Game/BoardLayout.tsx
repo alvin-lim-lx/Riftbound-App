@@ -1174,10 +1174,10 @@ interface TopBarProps {
 function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: TopBarProps) {
   return (
     <div style={topBarStyles.bar}>
-      {/* Left: opponent info */}
+      {/* Left: player info */}
       <PlayerInfoBar
-        player={opponent}
-        isPlayer={false}
+        player={player}
+        isPlayer={true}
         allCards={allCards}
         cardDefs={cardDefs}
       />
@@ -1197,10 +1197,10 @@ function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: T
         </div>
       </div>
 
-      {/* Right: player info */}
+      {/* Right: opponent info */}
       <PlayerInfoBar
-        player={player}
-        isPlayer={true}
+        player={opponent}
+        isPlayer={false}
         allCards={allCards}
         cardDefs={cardDefs}
       />
