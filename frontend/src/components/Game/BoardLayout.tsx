@@ -753,10 +753,9 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
 
-  // Top card of main deck (last in array)
-  const deckTopId = player.deck[player.deck.length - 1];
-  const deckTopCard = deckTopId ? allCards[deckTopId] : undefined;
-  const deckTopDef = deckTopCard ? cardDefs[deckTopCard.cardId] : undefined;
+  // Top card of main deck — always hidden (never revealed to players)
+  // The deck count is shown but the top card is never exposed
+  const _deckTopId = player.deck[player.deck.length - 1]; // intentionally unused — deck is hidden
 
   // Top card of graveyard (last in array = top of discard)
   const gyTopId = player.discardPile[player.discardPile.length - 1];
@@ -785,12 +784,12 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
         <PlayerHandRow cards={handCards} cardDefs={cardDefs} onCardClick={undefined} />
       )}
 
-      {/* Main Deck (right) */}
+      {/* Main Deck (right) — always hidden, count only */}
       <CardStack
         count={player.deck.length}
         label="MAIN DECK"
-        topCard={deckTopCard}
-        cardDef={deckTopDef ?? null}
+        topCard={undefined}
+        cardDef={null}
         accentColor={accentColor}
         isPlayer={!isOpponent}
         size="sm"
@@ -1174,10 +1173,10 @@ interface TopBarProps {
 function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: TopBarProps) {
   return (
     <div style={topBarStyles.bar}>
-      {/* Left: opponent info */}
+      {/* Left: player info */}
       <PlayerInfoBar
-        player={opponent}
-        isPlayer={false}
+        player={player}
+        isPlayer={true}
         allCards={allCards}
         cardDefs={cardDefs}
       />
@@ -1197,10 +1196,10 @@ function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: T
         </div>
       </div>
 
-      {/* Right: player info */}
+      {/* Right: opponent info */}
       <PlayerInfoBar
-        player={player}
-        isPlayer={true}
+        player={opponent}
+        isPlayer={false}
         allCards={allCards}
         cardDefs={cardDefs}
       />

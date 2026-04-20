@@ -13,7 +13,8 @@
 
 import {
   GameState, PlayerState, CardInstance, BattlefieldState,
-  Phase, ActionType, GameAction, CardDefinition
+  Phase, ActionType, GameAction, CardDefinition,
+  SystemLogEntry, GameLogEntry, LogEntryType
 } from '../../shared/src/types';
 import { CARDS } from '../../shared/src/cards';
 import { randomId, shuffle } from './utils';
@@ -90,19 +91,19 @@ export function createGame(
     // Pad with defaults if fewer than 3
     const defaults = ['Baron_Pit', 'Brush', 'The_Grid'];
     while (bfCardIds.length < 3) bfCardIds.push(defaults[bfCardIds.length]);
-    // Rule 480.5: randomly select 1 of the 3 battlefields for this game
-    const selectedIdx = Math.floor(Math.random() * bfCardIds.length);
-    const rawCardId = bfCardIds[selectedIdx];
-    const cardId = resolveBfCardId(rawCardId);
-    battlefields = [{
-      id: 'bf_0',
-      name: CARDS[cardId]?.name ?? rawCardId,
-      cardId,
-      controllerId: null,
-      units: [],
-      scoringSince: null,
-      scoringPlayerId: null,
-    }];
+    // Create all 3 battlefields from the deck config
+    battlefields = bfCardIds.map((rawCardId, i) => {
+      const cardId = resolveBfCardId(rawCardId);
+      return {
+        id: `bf_${i}`,
+        name: CARDS[cardId]?.name ?? rawCardId,
+        cardId,
+        controllerId: null,
+        units: [],
+        scoringSince: null,
+        scoringPlayerId: null,
+      };
+    });
   } else {
     const battlefieldDefs = ['Baron_Pit', 'Brush'];
     battlefields = battlefieldDefs.map((rawCardId, i) => {
@@ -488,7 +489,7 @@ function executeBeginningPhase(state: GameState): GameState {
       // Player has held battlefield with units all turn
       const holder = newState.players[bf.scoringPlayerId!];
       holder.score += 1;
-      newState.actionLog.push(makeLog(newState, bf.scoringPlayerId!, 'auto', `Scored 1 point from ${bf.name}`));
+        newState.actionLog.push(makeLog(newState, bf.scoringPlayerId!, 'Score', `Scored 1 point from ${bf.name}`));
     }
   }
 
@@ -582,7 +583,7 @@ export function checkScoring(state: GameState): GameState {
         // Score was happening, player held it all turn
         const holder = state.players[bf.scoringPlayerId];
         holder.score += 1;
-        state.actionLog.push(makeLog(state, bf.scoringPlayerId, 'auto', `Scored 1 point from ${bf.name}`));
+        state.actionLog.push(makeLog(state, bf.scoringPlayerId, 'Score', `Scored 1 point from ${bf.name}`));
       }
       bf.scoringSince = null;
       bf.scoringPlayerId = null;
@@ -1267,12 +1268,12 @@ function getUnitOwner(state: GameState, unitInstanceId: string): string {
   return state.allCards[unitInstanceId]?.ownerId ?? '';
 }
 
-function makeLog(state: GameState, playerId: string, actionType: string, message: string): GameAction {
+function makeLog(state: GameState, playerId: string, logType: LogEntryType, message: string): SystemLogEntry {
   return {
     id: randomId(),
-    type: actionType as ActionType,
+    type: logType,
     playerId,
-    payload: { message },
+    message,
     turn: state.turn,
     phase: state.phase,
     timestamp: Date.now(),

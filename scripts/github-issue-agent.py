@@ -368,7 +368,6 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20):
     env["HERMES_NO_ANALYTICS"] = "1"
 
     log_file = open(log_path, "w", buffering=1)
-    returncode = None
 
     try:
         proc = subprocess.Popen(
