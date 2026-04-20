@@ -90,19 +90,19 @@ export function createGame(
     // Pad with defaults if fewer than 3
     const defaults = ['Baron_Pit', 'Brush', 'The_Grid'];
     while (bfCardIds.length < 3) bfCardIds.push(defaults[bfCardIds.length]);
-    // Rule 480.5: randomly select 1 of the 3 battlefields for this game
-    const selectedIdx = Math.floor(Math.random() * bfCardIds.length);
-    const rawCardId = bfCardIds[selectedIdx];
-    const cardId = resolveBfCardId(rawCardId);
-    battlefields = [{
-      id: 'bf_0',
-      name: CARDS[cardId]?.name ?? rawCardId,
-      cardId,
-      controllerId: null,
-      units: [],
-      scoringSince: null,
-      scoringPlayerId: null,
-    }];
+    // Create all 3 battlefields from the deck config
+    battlefields = bfCardIds.map((rawCardId, i) => {
+      const cardId = resolveBfCardId(rawCardId);
+      return {
+        id: `bf_${i}`,
+        name: CARDS[cardId]?.name ?? rawCardId,
+        cardId,
+        controllerId: null,
+        units: [],
+        scoringSince: null,
+        scoringPlayerId: null,
+      };
+    });
   } else {
     const battlefieldDefs = ['Baron_Pit', 'Brush'];
     battlefields = battlefieldDefs.map((rawCardId, i) => {
