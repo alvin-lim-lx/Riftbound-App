@@ -1,0 +1,41 @@
+# 860 Diana Deck Testing - LEGAL
+Legend:
+1 Diana, Scorn of the Moon
+Champion:
+1 Diana, Lunari
+MainDeck:
+3 Stacked Deck
+3 Ravenbloom Student
+3 Stupefy
+3 Moonfall
+3 Diana, Lunari
+3 Hwei, Brooding Painter
+2 Hard Bargain
+2 Rebuke
+2 Ezreal, Prodigy
+2 Star-Crossed
+2 Ride the Wind
+2 Fizz, Trickster
+2 Seal of Discord
+2 Rhasa the Sunderer
+1 Bellows Breath
+1 Isolate
+1 Eclipse
+1 Lunar Boon
+1 Wages of Pain
+1 Last Rites
+Battlefields:
+1 Abandoned Hall
+1 Ravenbloom Conservatory
+1 Targon's Peak
+Runes:
+6 Chaos Rune
+6 Mind Rune
+Sideboard:
+2 Abandon
+1 Acceptable Losses
+1 Bellows Breath
+1 Eclipse
+1 Hard Bargain
+1 Singularity
+1 Thousand-Tailed Watcher

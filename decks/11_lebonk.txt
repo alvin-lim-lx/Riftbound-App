@@ -1,0 +1,35 @@
+# LeBonk
+Legend:
+1 Deceiver
+Champion:
+1 LeBlanc, Fragmented
+MainDeck:
+1 LeBlanc, Fragmented
+2 Sacrifice
+3 Deathgrip
+3 Soaring Scout
+3 Watchful Sentry
+2 Cull the Weak
+2 Hidden Blade
+2 Baited Hook
+1 Galio, Indefatigable
+1 Karthus, Eternal
+2 Mirror Image
+2 Ultrasoft Poro
+1 Ekko, Recurrent
+2 Glasc Mixologist
+1 Kai'Sa, Evolutionary
+1 Commander Ledros
+1 Atakhan
+Battlefields:
+1 Startipped Peak
+1 Dusk Rose Lab
+1 Treasure Hoard
+Runes:
+6 Mind Rune
+6 Order Rune
+Sideboard:
+2 Galio, Indefatigable
+2 Karthus, Eternal
+2 Atakhan
+2 LeBlanc, Deceiver

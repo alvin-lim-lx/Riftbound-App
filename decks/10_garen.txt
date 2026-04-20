@@ -1,0 +1,36 @@
+# Garen Aggro Weenies
+Legend:
+1 Garen, Might of Demacia
+Champion:
+1 Garen, Commander
+MainDeck:
+3 Xin Zhao, Vigilant
+3 Soaring Scout
+3 Vanguard Captain
+3 Faithful Manufactor
+3 Dragonsoul Sage
+3 Kinkou Initiate
+3 Black Rose Dignitary
+3 Vi, Peacekeeper
+2 Corina Veraza
+2 Cull the Weak
+2 Galio, Indefatigable
+2 Safety Inspector
+2 Honest Broker
+2 Seal of Unity
+1 Darius, Executioner
+1 Hidden Blade
+1 Sacrifice
+1 Garen, Commander
+Battlefields:
+1 Aspirant's Climb
+1 Emperor's Dais
+1 Trifarian War Camp
+Runes:
+12 Order Rune
+Sideboard:
+1 Cull the Weak
+1 Imperial Decree
+2 Salvage
+3 Unyielding Spirit
+1 Vanguard Armory

@@ -1,0 +1,37 @@
+# Noodle's Sett (Unleashed)
+Legend:
+1 Sett, The Boss
+Champion:
+1 Sett, Brawler
+MainDeck:
+3 Warmog's Armor
+3 Pit Rookie
+3 Showstopper
+3 Fiora, Victorious
+3 Call to Glory
+3 Sacrifice
+3 Enthralling Protector
+3 Repulse
+2 Challenge
+2 Sabotage
+2 Rengar, Trophy Hunter
+2 Mageseeker Investigator
+2 Crowd Favorite
+1 Punch First
+1 Hidden Blade
+1 Call to Battle
+1 Marching Orders
+1 Ruin Runner
+1 Sett, Brawler
+Battlefields:
+1 Amateur Recital
+1 Monastery of Hirana
+1 Valley of Idols
+Runes:
+7 Body Rune
+5 Order Rune
+Sideboard:
+2 Disposal Order
+1 Ruin Runner
+3 Salvage
+2 Unyielding Spirit

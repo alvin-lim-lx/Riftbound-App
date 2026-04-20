@@ -1,0 +1,37 @@
+# The Lurking Pyke
+Legend:
+1 Pyke, Bloodharbor Ripper
+Champion:
+1 Pyke, Returned
+MainDeck:
+3 Death from Below
+3 Treasure Hunter
+3 Overzealous Fan
+3 Bewitching Spirit
+3 Noxus Hopeful
+3 Stacked Deck
+2 Falling Star
+2 Tideturner
+2 Darius, Trifarian
+2 Bone Skewer
+2 Sneaky Deckhand
+2 Hard Bargain
+2 Ride the Wind
+2 Baron Nashor
+2 Switcheroo
+1 Rebuke
+1 Mindsplitter
+1 Draven, Audacious
+1 Pyke, Returned
+Battlefields:
+1 Hall of Legends
+1 Ripper's Bay
+1 Treasure Hoard
+Runes:
+8 Chaos Rune
+4 Fury Rune
+Sideboard:
+2 Katarina, Reckless
+2 Sudden Storm
+2 The List
+2 Windsinger

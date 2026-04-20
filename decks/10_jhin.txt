@@ -1,0 +1,38 @@
+# Jhin Infinite Cycle Mind Control
+Legend:
+1 Virtuoso
+Champion:
+1 Jhin, Murderous Artist
+MainDeck:
+1 Jhin, Murderous Artist
+2 Downstage Dramatics
+3 Frigid Touch
+2 Lotus Trap
+2 Plundering Poro
+2 Upstage Comedy
+2 Piercing Light
+2 Hextech Anomaly
+2 Consult the Past
+2 Curtain Call
+2 Deadly Flourish
+1 Jhin, Meticulous Killer
+1 Kai'Sa, Survivor
+2 Production Surge
+2 Rocket Barrage
+2 Sprite Burst
+2 Ekko, Recurrent
+2 Singularity
+2 Thousand-Tailed Watcher
+1 Time Warp
+Battlefields:
+1 Forgotten Library
+1 Rockfall Path
+1 Vilemaw's Lair
+Runes:
+6 Fury Rune
+6 Mind Rune
+Sideboard:
+2 Downstage Dramatics
+2 Lotus Trap
+2 Jhin, Murderous Artist
+2 Jhin, Meticulous Killer

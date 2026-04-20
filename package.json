@@ -1,0 +1,22 @@
+{
+  "name": "riftbound",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Riftbound TCG - League of Legends Trading Card Game",
+  "workspaces": [
+    "backend",
+    "frontend",
+    "shared"
+  ],
+  "scripts": {
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "npm run dev:backend & npm run dev:frontend",
+    "build": "npm run build --workspaces",
+    "test": "cd backend && npm test"
+  },
+  "dependencies": {
+    "playwright": "^1.59.1",
+    "ws": "^8.20.0"
+  }
+}

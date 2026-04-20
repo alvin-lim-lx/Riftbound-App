@@ -1,0 +1,38 @@
+# Kai'Sa Control (Post-Ban)
+Legend:
+1 Kai'Sa, Daughter of the Void
+Champion:
+1 Kai'Sa, Survivor
+MainDeck:
+3 Plundering Poro
+3 Falling Star
+3 Stupefy
+3 Hextech Ray
+3 Watchful Sentry
+3 Lecturing Yordle
+3 Ferrous Forerunner
+3 Thousand-Tailed Watcher
+2 Time Warp
+2 Singularity
+2 Noxus Hopeful
+2 Piercing Light
+2 Rocket Barrage
+2 Bellows Breath
+1 Smoke Screen
+1 Progress Day
+1 Pouty Poro
+1 Kai'Sa, Survivor
+Battlefields:
+1 Fortified Position
+1 Ravenbloom Conservatory
+1 Void Gate
+Runes:
+7 Fury Rune
+5 Mind Rune
+Sideboard:
+1 Angle Shot
+2 Brynhir Thundersong
+1 Get Excited!
+1 Icathian Rain
+1 Smoke Screen
+2 Thermo Beam

@@ -1,0 +1,98 @@
+/* Riftbound Board Styles */
+:root {
+  --board-bg: #0d1117;
+  --board-surface: rgba(255, 255, 255, 0.04);
+  --board-border: rgba(255, 255, 255, 0.08);
+  --board-border-accent: rgba(255, 255, 255, 0.12);
+  --board-radius: 8px;
+  --score-gold: #d4a843;
+  --rune-red: #e63946;
+  --rune-purple: #a78bfa;
+  --mana-blue: #60a5fa;
+  --hp-green: #22c55e;
+  --hp-red: #ef4444;
+  --text-primary: #e8e8e8;
+  --text-secondary: #888;
+  --text-dim: #555;
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+  background: var(--board-bg);
+  color: var(--text-primary);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.05);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+button {
+  cursor: pointer;
+  transition: filter 0.1s ease, transform 0.1s ease;
+}
+
+button:hover {
+  filter: brightness(1.1);
+}
+
+button:active {
+  transform: scale(0.98);
+}
+
+input:focus {
+  border-color: #3b82f6 !important;
+  outline: none;
+}
+
+/* Zone label styling (shared across zone components) */
+.zone-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 700;
+}
+
+/* Card hover lift effect */
+.card-lift {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.card-lift:hover {
+  transform: translateY(-4px) scale(1.02);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+}
+
+/* Board grid cell styling */
+.board-cell {
+  background: var(--board-surface);
+  border: 1px solid var(--board-border);
+  border-radius: var(--board-radius);
+  padding: 6px 8px;
+}
+
+/* Player vs opponent contrast */
+.opponent-side {
+  opacity: 0.9;
+}
+
+.player-side {
+  opacity: 1;
+}

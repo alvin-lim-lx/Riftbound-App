@@ -1,0 +1,35 @@
+# Post-Ban Ezreal Tempo
+Legend:
+1 Ezreal, Prodigal Explorer
+Champion:
+1 Ezreal, Prodigy
+MainDeck:
+3 Stupefy
+3 Gust
+3 Sneaky Deckhand
+3 Stacked Deck
+3 Frigid Touch
+3 Plundering Poro
+3 Wages of Pain
+3 Bellows Breath
+3 Windsinger
+3 Fizz, Trickster
+2 Ravenbloom Student
+2 Singularity
+2 Thousand-Tailed Watcher
+2 Rebuke
+1 Sprite Call
+1 Ezreal, Prodigy
+Battlefields:
+1 Fortified Position
+1 Marai Spire
+1 The Arena's Greatest
+Runes:
+7 Chaos Rune
+5 Mind Rune
+Sideboard:
+2 Factory Recall
+2 Hard Bargain
+1 Rebuke
+2 Retreat
+1 Vex, Cheerless

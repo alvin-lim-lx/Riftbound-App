@@ -1,0 +1,35 @@
+# Kha'Zix Tech
+Legend:
+1 Voidreaver
+Champion:
+1 Kha'Zix, Evolving Hunter
+MainDeck:
+1 Kha'Zix, Evolving Hunter
+2 Blood Rose
+3 Determined Sentry
+2 Scryer's Bloom
+3 Stacked Deck
+2 Repulse
+2 Unyielding Spirit
+2 Punch First
+2 Abandon
+2 Grim Resolve
+2 Void Assault
+2 Boneshiver
+1 Nilah, Joyful Ascetic
+2 Akshan, Mischievous
+1 Kha'Zix, Mutating Horror
+2 Yone, Blademaster
+1 Ruin Runner
+Battlefields:
+1 Monastery of Hirana
+1 Treasure Hoard
+1 The Candlelit Sanctum
+Runes:
+6 Body Rune
+6 Chaos Rune
+Sideboard:
+2 Blood Rose
+2 Void Assault
+2 Kha'Zix, Evolving Hunter
+2 Kha'Zix, Mutating Horror

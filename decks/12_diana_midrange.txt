@@ -1,0 +1,37 @@
+# Diana Midrange
+Legend:
+1 Scorn of the Moon
+Champion:
+1 Diana, Lunari
+MainDeck:
+1 Diana, Lunari
+3 Seal of Discord
+2 Gust
+3 Stacked Deck
+3 Stupefy
+3 Frigid Touch
+2 Hard Bargain
+2 Isolate
+2 Overzealous Fan
+3 Ravenbloom Student
+2 Ride the Wind
+2 Last Rites
+1 Ezreal, Prodigy
+1 Fizz, Trickster
+2 Moonfall
+1 Consult the Past
+1 Diana, No Longer Human
+2 Hwei, Brooding Painter
+1 Rhasa the Sunderer
+Battlefields:
+1 Marai Spire
+1 The Candlelit Sanctum
+1 Targon's Peak
+Runes:
+6 Mind Rune
+6 Chaos Rune
+Sideboard:
+2 Gust
+2 Moonfall
+2 Diana, Lunari
+2 Diana, No Longer Human

@@ -1,0 +1,38 @@
+# BLIND MONK BUFF TEMPO
+Legend:
+1 Lee Sin, Blind Monk
+Champion:
+3 Lee Sin, Centered
+MainDeck:
+3 Defy
+3 Discipline
+3 Cithria of Cloudfield
+3 Pit Rookie
+3 Kinkou Monk
+3 Lee Sin, Centered
+2 Unyielding Spirit
+2 Confront
+2 Zhonya's Hourglass
+2 Spirit's Refuge
+2 Challenge
+2 Mistfall
+2 Wizened Elder
+2 Dragon's Rage
+1 Seal of Focus
+1 Seal of Strength
+1 Rune Prison
+1 Pirate's Haven
+1 First Mate
+1 Last Stand
+Battlefields:
+1 Fortified Position
+1 Navori Fighting Pit
+1 Trifarian War Camp
+Runes:
+6 Body Rune
+6 Calm Rune
+Sideboard:
+2 Charm
+2 Lee Sin, Ascetic
+2 Rune Prison
+2 Wind Wall

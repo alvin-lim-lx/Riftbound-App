@@ -1,0 +1,32 @@
+# Vex Hold
+Legend:
+1 Vex, Gloomist
+Champion:
+1 Vex, Apathetic
+MainDeck:
+3 Stacked Deck
+3 En Garde
+3 Defy
+3 Discipline
+3 Zhonya's Hourglass
+3 Guardian Angel
+3 Vilemaw
+3 Not So Fast
+3 Lonely Poro
+3 Stellacorn Herder
+3 Charm
+2 Sona, Harmonious
+2 Seal of Focus
+2 Back Off
+1 Vex, Apathetic
+Battlefields:
+1 Abandoned Hall
+1 Grove of the God-Willow
+1 Ravenbloom Conservatory
+Runes:
+12 Calm Rune
+Sideboard:
+2 Adaptatron
+2 Allay, Eager Admirer
+2 Disarming Rake
+2 Vex, Apathetic
