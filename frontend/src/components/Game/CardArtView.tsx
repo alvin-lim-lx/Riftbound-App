@@ -1,31 +1,53 @@
 /**
- * CardArtView — renders a card with its artwork, stats, and hover enlarge.
- * Used inside zone displays. Does NOT include click-to-play logic.
+ * CardArtView — renders a card with its artwork only (no tags/stats/labels).
+ * Implements an enlarged hover view via ReactDOM.createPortal for readability.
  */
 
 import React, { useState, useRef, useEffect } from 'react';
+import ReactDOM from 'react-dom';
 import type { CardInstance, CardDefinition } from '../../shared/types';
 
 interface Props {
   card: CardInstance;
   cardDef: CardDefinition | undefined;
   isOpponent?: boolean;   // face-down if opponent-hidden
-  showStats?: boolean;     // might/health
-  showKeywords?: boolean;
+  showStats?: boolean;     // reserved for future use (stats not shown per issue #13)
+  showKeywords?: boolean;  // reserved for future use (keywords not shown per issue #13)
   size?: 'sm' | 'md' | 'lg';
   onClick?: () => void;
   onHover?: (instanceId: string | null) => void;
 }
 
+// Card art aspect ratio (width / height)
+const CARD_ASPECT = 744 / 1039;
+
+const sizeMap = {
+  sm: { w: 64, h: 86 },
+  md: { w: 100, h: 134 },
+  lg: { w: 140, h: 188 },
+};
+
+const ENLARGE_W = 300;
+
+function getEnlargeDims(smW: number, smH: number): { w: number; h: number; left: number; top: number } {
+  const scale = ENLARGE_W / smW;
+  const h = Math.round(smH * scale);
+  const maxH = window.innerHeight - 32;
+  const actualH = Math.min(h, maxH);
+  const actualW = Math.round(actualH * CARD_ASPECT);
+  return { w: actualW, h: actualH, left: 0, top: 0 };
+}
+
 export function CardArtView({
   card, cardDef, isOpponent = false,
-  showStats = true, showKeywords = false,
+  showStats = false, showKeywords = false,
   size = 'md', onClick, onHover
 }: Props) {
   const [hovering, setHovering] = useState(false);
+  const [enlargePos, setEnlargePos] = useState<{ w: number; h: number; left: number; top: number } | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Notify parent of hover state (for tooltip/preview systems)
+  // Notify parent of hover state
   useEffect(() => {
     onHover?.(hovering ? card.instanceId : null);
   }, [hovering]);
@@ -33,10 +55,8 @@ export function CardArtView({
   const hidden = isOpponent && card.owner_hidden;
   const def = cardDef;
 
-  // Dimensions by size
   const dims = sizeMap[size];
 
-  // Build background image style
   const imgStyle: React.CSSProperties = {
     width: dims.w,
     height: dims.h,
@@ -60,19 +80,46 @@ export function CardArtView({
     transform: hovering ? 'scale(1.06)' : 'scale(1)',
   };
 
+  const handleMouseEnter = () => {
+    setHovering(true);
+    if (ref.current && def?.imageUrl) {
+      const rect = ref.current.getBoundingClientRect();
+      const { w, h } = getEnlargeDims(dims.w, dims.h);
+      // Flip to left if not enough space on right
+      const leftSpace = rect.left;
+      const rightSpace = window.innerWidth - rect.right;
+      let left: number;
+      if (rightSpace >= w + 16) {
+        left = rect.right + 16;
+      } else if (leftSpace >= w + 16) {
+        left = rect.left - w - 16;
+      } else {
+        // Center horizontally
+        left = Math.max(16, (window.innerWidth - w) / 2);
+      }
+      // Vertical: try to align with card top, clamp to viewport
+      let top = Math.max(16, Math.min(rect.top, window.innerHeight - h - 16));
+      setEnlargePos({ w, h, left, top });
+    }
+  };
+
+  const handleMouseLeave = () => {
+    setHovering(false);
+    setEnlargePos(null);
+  };
+
   if (hidden) {
     return (
       <div
         ref={ref}
         style={imgStyle}
         onClick={onClick}
-        onMouseEnter={() => setHovering(true)}
-        onMouseLeave={() => setHovering(false)}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
       >
         <div style={cardBackOverlay}>
           <div style={cardBackRune}>❖</div>
         </div>
-        {/* Count badge */}
         <div style={statBadge}>
           <span style={mightText}>?</span>
         </div>
@@ -80,100 +127,40 @@ export function CardArtView({
     );
   }
 
-  // Foreground — card details overlay at bottom
-  const bottomBar: React.CSSProperties = {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    padding: '3px 5px',
-    background: 'linear-gradient(transparent, rgba(0,0,0,0.8))',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1px',
-  };
-
   return (
-    <div
-      ref={ref}
-      style={imgStyle}
-      onClick={onClick}
-      onMouseEnter={() => setHovering(true)}
-      onMouseLeave={() => setHovering(false)}
-      title={def?.name ?? card.cardId}
-    >
-      {/* Name */}
-      <div style={bottomBar}>
-        <div style={cardNameStyle}>{def?.name ?? '?'}</div>
-
-        {showStats && def?.stats && (
-          <div style={statsRow}>
-            {def.stats.might !== undefined && (
-              <span style={mightText}>{def.stats.might}</span>
-            )}
-            {def.stats.health !== undefined && (
-              <span style={healthText}>♦{def.stats.health}</span>
-            )}
-          </div>
-        )}
-
-        {showKeywords && def?.keywords && def.keywords.length > 0 && (
-          <div style={keywordRow}>
-            {def.keywords.slice(0, 2).map((kw: string) => (
-              <span key={kw} style={keywordBadge}>{kw}</span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Cost */}
-      {def?.cost && def.cost.rune > 0 && (
-        <div style={costBadge}>
-          {def.cost.rune}
-        </div>
+    <>
+      <div
+        ref={ref}
+        style={imgStyle}
+        onClick={onClick}
+        onMouseEnter={handleMouseEnter}
+        onMouseLeave={handleMouseLeave}
+        title={def?.name ?? card.cardId}
+      />
+      {hovering && enlargePos && def?.imageUrl && ReactDOM.createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            left: enlargePos.left,
+            top: enlargePos.top,
+            width: enlargePos.w,
+            height: enlargePos.h,
+            borderRadius: '10px',
+            border: '2px solid rgba(255,255,255,0.3)',
+            background: `url(${def.imageUrl}) center / cover no-repeat`,
+            boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
+            zIndex: 9999,
+            pointerEvents: 'none',
+            opacity: 1,
+          }}
+        />,
+        document.body
       )}
-
-      {/* Type indicator */}
-      {def && (
-        <div style={{ ...typeBadge, ...typeBadgeColor(def.type) }}>
-          {typeLabel(def)}
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
 // ─── Helpers ─────────────────────────────────────────
-
-function typeLabel(def: CardDefinition): string {
-  switch (def.type) {
-    case 'Unit':    return def.superType === 'Champion' ? 'CHAMP' : 'UNIT';
-    case 'Spell':   return def.superType === 'Signature' ? 'SIG' : 'SPELL';
-    case 'Gear':    return def.superType === 'Signature' ? 'SIG' : 'GEAR';
-    case 'Battlefield': return 'BF';
-    case 'Legend':  return 'LGND';
-    case 'Rune':     return 'RUNE';
-    default:         return def.type.slice(0, 4).toUpperCase();
-  }
-}
-
-function typeBadgeColor(type: string): React.CSSProperties {
-  switch (type) {
-    case 'Unit':         return { background: 'rgba(59,130,246,0.7)', color: '#fff' };
-    case 'Spell':        return { background: 'rgba(16,185,129,0.7)', color: '#fff' };
-    case 'Gear':         return { background: 'rgba(245,158,11,0.7)', color: '#fff' };
-    case 'Battlefield':  return { background: 'rgba(124,58,237,0.7)', color: '#fff' };
-    case 'Legend':       return { background: 'rgba(212,168,67,0.8)', color: '#000' };
-    case 'Rune':         return { background: 'rgba(167,139,250,0.7)', color: '#fff' };
-    default:             return { background: 'rgba(100,100,100,0.7)', color: '#fff' };
-  }
-}
-
-const sizeMap = {
-  sm: { w: 64, h: 86 },
-  md: { w: 100, h: 134 },
-  lg: { w: 140, h: 188 },
-};
 
 const cardBackOverlay: React.CSSProperties = {
   position: 'absolute',
@@ -189,77 +176,14 @@ const cardBackRune: React.CSSProperties = {
   color: 'rgba(255,255,255,0.18)',
 };
 
-const cardNameStyle: React.CSSProperties = {
-  fontSize: '11px',
-  fontWeight: 700,
-  color: '#e8e8e8',
-  textOverflow: 'ellipsis',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  maxWidth: '100%',
-};
-
-const statsRow: React.CSSProperties = {
-  display: 'flex',
-  gap: '6px',
-  alignItems: 'center',
-};
-
 const mightText: React.CSSProperties = {
   fontSize: '13px',
   fontWeight: 800,
   color: '#e63946',
 };
 
-const healthText: React.CSSProperties = {
-  fontSize: '13px',
-  fontWeight: 800,
-  color: '#e8e8e8',
-};
-
-const keywordRow: React.CSSProperties = {
-  display: 'flex',
-  gap: '2px',
-  flexWrap: 'wrap',
-};
-
-const keywordBadge: React.CSSProperties = {
-  fontSize: '6px',
-  padding: '0 2px',
-  background: 'rgba(255,255,255,0.15)',
-  borderRadius: '2px',
-  color: '#aaa',
-};
-
 const statBadge: React.CSSProperties = {
   position: 'absolute',
   top: '3px',
   right: '3px',
-};
-
-const costBadge: React.CSSProperties = {
-  position: 'absolute',
-  top: '4px',
-  left: '4px',
-  background: 'rgba(0,0,0,0.7)',
-  borderRadius: '50%',
-  width: '20px',
-  height: '20px',
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-  fontSize: '11px',
-  fontWeight: 800,
-  color: '#a78bfa',
-};
-
-const typeBadge: React.CSSProperties = {
-  position: 'absolute',
-  top: '3px',
-  right: '3px',
-  fontSize: '7px',
-  fontWeight: 800,
-  padding: '1px 3px',
-  borderRadius: '3px',
-  letterSpacing: '0.5px',
 };
