@@ -14,7 +14,7 @@
 import {
   GameState, PlayerState, CardInstance, BattlefieldState,
   Phase, ActionType, GameAction, CardDefinition,
-  SystemLogEntry, GameLogEntry, LogEntryType
+  SystemLogEntry, GameLogEntry, LogEntryType, EffectStackEntry
 } from '../../shared/src/types';
 import { CARDS } from '../../shared/src/cards';
 import { randomId, shuffle } from './utils';
@@ -320,6 +320,7 @@ export function createGame(
     actionLog: [],
     createdAt: Date.now(),
     isPvP,
+    effectStack: [],  // empty effect stack at game start
   };
 }
 
@@ -386,6 +387,18 @@ const PHASE_ORDER: Phase[] = [
   'Awaken', 'Beginning', 'Channel', 'Draw', 'Action', 'End'
 ];
 
+// Phases that auto-advance when the effect stack is empty
+const AUTO_ADVANCE_PHASES: Phase[] = ['Awaken', 'Beginning', 'Channel', 'Draw'];
+
+export function canAutoAdvancePhase(state: GameState): boolean {
+  // Only auto-advance A-B-C-D phases
+  if (!AUTO_ADVANCE_PHASES.includes(state.phase)) {
+    return false;
+  }
+  // Only auto-advance when the effect stack is empty (defensive: treat undefined as empty)
+  return !state.effectStack || state.effectStack.length === 0;
+}
+
 export function advancePhase(state: GameState): GameState {
   // Handle Action sub-phases
   if (state.phase === 'FirstMain') {
@@ -399,12 +412,30 @@ export function advancePhase(state: GameState): GameState {
     return enterPhase(state, 'End');
   }
 
-  // Handle top-level phases
   const currentIdx = PHASE_ORDER.indexOf(state.phase);
+  if (currentIdx === -1) return state;
+
+  // Auto-advance through A-B-C-D phases when effect stack is empty
+  if (canAutoAdvancePhase(state)) {
+    if (currentIdx < PHASE_ORDER.length - 1) {
+      const nextPhase = PHASE_ORDER[currentIdx + 1];
+      const nextState = enterPhase(state, nextPhase);
+      // After entering next phase, check if THAT phase also auto-advances.
+      // Only recurse if the phase we entered is still an A-B-C-D phase.
+      if (AUTO_ADVANCE_PHASES.includes(nextPhase) && canAutoAdvancePhase(nextState)) {
+        return advancePhase(nextState);
+      }
+      return nextState;
+    } else {
+      // End of turn — start new turn
+      return startNewTurn(state);
+    }
+  }
+
+  // Stack non-empty or non-auto-advance phase: enter next phase (await player input)
   if (currentIdx < PHASE_ORDER.length - 1) {
     return enterPhase(state, PHASE_ORDER[currentIdx + 1]);
   } else {
-    // End of turn — start new turn
     return startNewTurn(state);
   }
 }

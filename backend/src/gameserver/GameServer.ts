@@ -15,7 +15,7 @@ import type {
 } from '../../shared/src/types';
 import {
   createGame, executeAction, resolveShowdown, advancePhase,
-  getLegalActions, type ActionResult
+  canAutoAdvancePhase, getLegalActions, type ActionResult
 } from '../engine/GameEngine';
 import { RulesBasedAI } from '../ai/RulesBasedAI';
 import { CARDS } from '../../shared/src/cards';
@@ -528,6 +528,11 @@ export class GameServer {
 
     const isAITurn = game.state.activePlayerId.startsWith('ai_');
     if (!isAITurn || !game.isRunning) return;
+
+    // Don't auto-schedule AI moves during A-B-C-D phases — those should
+    // auto-advance automatically unless there are pending triggers.
+    // AI will take real actions (PlayUnit, Pass, etc.) via getLegalActions.
+    if (canAutoAdvancePhase(game.state)) return;
 
     game.aiTimer = setTimeout(() => {
       const ai = game.ais.get(game.state.activePlayerId);

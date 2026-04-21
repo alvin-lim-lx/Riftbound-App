@@ -80,6 +80,17 @@ export interface CardDefinition {
   flavorText?: string;
 }
 
+// --- Effect Stack Types ---
+
+export interface EffectStackEntry {
+  id: string;
+  sourceId: string;         // CardInstance or Battlefield that triggered this
+  trigger: string;         // e.g., "Start of Turn", "When you play me"
+  effect: string;          // Human-readable effect description
+  resolves: boolean;       // Whether the effect has been resolved
+  triggeredBy?: string;    // Optional: playerId who triggered it
+}
+
 // --- Game State Types ---
 
 export type Phase =
@@ -160,6 +171,7 @@ export interface GameState {
   actionLog: GameLogEntry[];
   createdAt: number;
   isPvP: boolean;
+  effectStack: EffectStackEntry[];  // pending effects that require resolution (start of turn, etc.)
 }
 
 // --- Action Types ---
