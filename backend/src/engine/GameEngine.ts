@@ -498,8 +498,8 @@ function executeMulliganPhase(state: GameState): GameState {
 
 function executeAwakenPhase(state: GameState): GameState {
   const playerId = state.activePlayerId;
-  const player = state.players[playerId];
   const newState = deepClone(state);
+  const player = newState.players[playerId];
 
   // Reset mana and charges (Awaken behavior)
   player.mana = 2;
@@ -536,8 +536,8 @@ function executeBeginningPhase(state: GameState): GameState {
 
 function executeChannelPhase(state: GameState): GameState {
   const playerId = state.activePlayerId;
-  const player = state.players[playerId];
   const newState = deepClone(state);
+  const player = newState.players[playerId];
 
   // Channel 2 Runes from Rune Deck into Rune Pool (top bar)
   for (let i = 0; i < 2; i++) {
@@ -553,8 +553,8 @@ function executeChannelPhase(state: GameState): GameState {
 
 function executeDrawPhase(state: GameState): GameState {
   const playerId = state.activePlayerId;
-  const player = state.players[playerId];
   const newState = deepClone(state);
+  const player = newState.players[playerId];
 
   // Draw 1 card from Main Deck
   const cardId = player.deck.shift();
