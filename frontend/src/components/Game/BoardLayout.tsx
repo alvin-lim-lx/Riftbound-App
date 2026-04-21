@@ -622,8 +622,8 @@ function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md' }: ZoneC
       card={card}
       cardDef={def}
       isOpponent={isOpponent}
-      showStats={true}
-      showKeywords={true}
+      showStats={false}
+      showKeywords={false}
       size={size}
     />
   );

@@ -8,7 +8,6 @@ PHASES:
   3. CODE REVIEW   — hermes reviews its own diff (lint, typecheck, security)
   4. QA            — run tests, build attempts
   5. PUSH          — only if review+QA passed; post PR link
-  6. CLOSE         — close issue with PR link (or flag for human review on failure)
 
 Each phase logs to .agent_logs/issue-{num}_{phase}.log
 Lock file: .agent.lock (prevents concurrent runs)
@@ -30,7 +29,7 @@ LOGDIR = Path("/home/panda/riftbound/.agent_logs")
 LOGDIR.mkdir(exist_ok=True)
 
 # Phase definitions
-PHASES = ["INVESTIGATE", "IMPLEMENT", "CODE_REVIEW", "QA", "PUSH", "CLOSE"]
+PHASES = ["INVESTIGATE", "IMPLEMENT", "CODE_REVIEW", "QA", "PUSH"]
 
 
 def log(msg):
@@ -393,7 +392,11 @@ Output "PUSH_COMPLETE" on its own line when done.
 # ─── Agent runner ─────────────────────────────────────────────────────────────
 
 def spawn_hermes(prompt, log_path, timeout_minutes=20):
-    """Run hermes with a one-shot prompt, streaming to log_path."""
+    """Run hermes with a one-shot prompt, streaming to log_path.
+
+    Uses communicate() with timeout to guarantee the phase does not hang forever.
+    On timeout, kills the subprocess and returns False.
+    """
     env = os.environ.copy()
     env["HERMES_NO_ANALYTICS"] = "1"
 
@@ -412,15 +415,21 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20):
             bufsize=1
         )
 
-        for line in proc.stdout:
-            log_file.write(line)
+        try:
+            outs, _ = proc.communicate(timeout=timeout_minutes * 60)
+            log_file.write(outs if outs else "")
             log_file.flush()
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            outs, _ = proc.communicate()
+            log_file.write((outs if outs else "") + f"\n[TIMEOUT after {timeout_minutes} min]\n")
+            log_file.flush()
+            return False
 
-        returncode = proc.wait()
     finally:
         log_file.close()
 
-    return returncode == 0
+    return proc.returncode == 0
 
 
 def extract_result(log_path, prefix):
