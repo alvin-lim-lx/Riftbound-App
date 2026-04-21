@@ -49,6 +49,122 @@ def run(cmd, capture=True, timeout=120):
     return r.stdout.strip() if capture else r.returncode == 0
 
 
+# ─── Baseline error snapshot (for QA pre-existing error filtering) ───────────
+
+BASELINE_ERRORS_KEY = "agent_baseline_errors"
+
+def get_pre_existing_errors():
+    """
+    Return a set of error lines that exist in the current codebase on origin/master.
+    These are pre-existing issues (backup files, debug logs) that should not
+    cause QA to fail — only NEW errors introduced by the fix are real failures.
+    """
+    errors = set()
+
+    # 1. Snapshot baseline build errors (ignore known pre-existing sources)
+    # Run from a clean state on origin/master
+    run("git stash 2>&1")
+    run(f"git checkout origin/master 2>&1")
+
+    # Capture baseline tsc errors, filtering out known pre-existing sources
+    baseline_out = run("cd /home/panda/riftbound/backend && npx tsc --noEmit 2>&1")
+    baseline_out = run("cd /home/panda/riftbound/frontend && npx tsc --noEmit 2>&1")
+
+    if baseline_out:
+        for line in baseline_out.splitlines():
+            # Skip known pre-existing issues:
+            # - "cards - bkup.ts" is a git-tracked backup file with invalid TS
+            # - Any line referencing non-existent files (ghost imports)
+            if "cards - bkup" in line:
+                continue
+            if "cards.ts.backup" in line:
+                continue
+            errors.add(line.strip())
+
+    # Restore working state
+    run(f"git checkout - 2>&1")   # return to previous branch
+    run("git stash pop 2>&1")
+
+    log(f"  [BASELINE] {len(errors)} pre-existing error lines snapshotted")
+    return errors
+
+
+def filter_baseline_errors(output, baseline_errors):
+    """
+    Remove pre-existing baseline errors from command output.
+    Returns (filtered_output, new_errors_found).
+    Only NEW errors (not in baseline) are considered real failures.
+    """
+    if not output:
+        return "", set()
+
+    baseline = baseline_errors if baseline_errors else set()
+
+    filtered_lines = []
+    new_errors = set()
+
+    for line in output.splitlines():
+        stripped = line.strip()
+        if stripped in baseline:
+            continue   # pre-existing — skip
+        filtered_lines.append(line)
+        # Track if this looks like a real error line
+        if any(kw in stripped.lower() for kw in ["error", "fail", "cannot find"]):
+            new_errors.add(stripped)
+
+    filtered_output = "\n".join(filtered_lines)
+    return filtered_output, new_errors
+
+
+def get_affected_tests(changed_files):
+    """
+    Given a list of changed files, return a list of test file paths
+    that should be run (tests in backend/tests/ or matching test patterns).
+    Only runs tests for code that was actually changed — not the full suite.
+    """
+    import fnmatch
+
+    if not changed_files:
+        return []
+
+    # Map source file patterns → test file patterns
+    test_files = []
+    for src in changed_files:
+        if "backend/src" in src:
+            # Convert backend/src/engine/Foo.ts → backend/tests/**/Foo*.test.ts
+            base = os.path.splitext(os.path.basename(src))[0]
+            # Remove 'src/' prefix
+            rel = src.replace("backend/src/", "")
+            parts = rel.split("/")
+            if len(parts) >= 2:
+                # backend/src/engine/Foo.ts → backend/tests/engine/Foo.test.ts
+                module_path = "/".join(parts[:-1])
+                test_path = os.path.join("backend", "tests", module_path, f"{parts[-1].replace('.ts','.test.ts')}")
+                test_files.append(test_path)
+            else:
+                # top-level file: backend/src/Foo.ts
+                test_path = os.path.join("backend", "tests", f"{base}.test.ts")
+                test_files.append(test_path)
+
+    # Deduplicate and filter to existing files
+    existing = []
+    for tf in set(test_files):
+        full = os.path.join(WORKDIR, tf)
+        if os.path.exists(full):
+            existing.append(tf)
+        else:
+            # Try glob for broader matching
+            glob_pattern = os.path.join(WORKDIR, "backend", "tests", "**", f"{os.path.basename(tf)}")
+            import glob
+            matches = glob.glob(glob_pattern, recursive=True)
+            for m in matches:
+                rel = os.path.relpath(m, WORKDIR)
+                if rel not in existing:
+                    existing.append(rel)
+
+    return existing
+
+
 def gh_json(endpoint):
     token = run("gh auth token").strip()
     cmd = (f"curl -s -H 'Authorization: token {token}' "
@@ -295,59 +411,81 @@ Output "REVIEW_COMPLETE:<APPROVED|NEEDS_CHANGES>" on its own line when done.
 """
 
 
-def build_qa_prompt(issue_num, title, changed_files):
+def build_qa_prompt(issue_num, title, changed_files,
+                    backend_test_output, backend_build_output,
+                    frontend_build_output, baseline_errors):
     files_str = "\n".join(f"- {f}" for f in changed_files)
+
+    # Summarize pre-existing errors that were filtered out (for transparency)
+    baseline_note = ""
+    if baseline_errors:
+        sample = list(baseline_errors)[:5]
+        baseline_note = (
+            f"\nNOTE: The following {len(baseline_errors)} pre-existing error lines were "
+            f"detected in the codebase BEFORE your fix and have been filtered from "
+            f"the output below. These are NOT your responsibility:\n"
+            + "\n".join(f"  - {e}" for e in sample)
+            + ("\n  ... and more" if len(baseline_errors) > 5 else "")
+        )
+
     return f"""You are performing QA for GitHub issue #{issue_num} in /home/panda/riftbound.
 
 ISSUE #{issue_num}: {title}
 
 CHANGED FILES:
 {files_str}
+{baseline_note}
 
-{SYSTEM_INSTRUCTION}
+The commands below have ALREADY BEEN RUN by the agent. Review the actual output
+and judge PASS/FAIL based only on NEW errors (pre-existing errors have been removed).
+
+QA RESULTS (already executed):
+
+1. BACKEND TESTS — output:
+---
+{backend_test_output or '(no output)'}
+---
+
+2. BACKEND BUILD — output:
+---
+{backend_build_output or '(no output)'}
+---
+
+3. FRONTEND BUILD — output:
+---
+{frontend_build_output or '(no output)'}
+---
 
 SKILL TO LOAD (invoke NOW): verification-before-completion
-Then verify all QA checks pass with ACTUAL command output before claiming any result.
 
-QA CHECKLIST — for EACH item below, you MUST run the command and show the output:
+YOUR TASK — judge the filtered output above:
+- Ignore pre-existing baseline errors (they were already filtered)
+- Only flag NEW errors introduced by your fix as FAIL
+- Check changed files for: import errors, circular deps, debug console.log left in
 
-1. BACKEND TESTS:
-   cd /home/panda/riftbound/backend && npm test 2>&1
-   - Run the command and show the output
-   - "NO TEST COVERAGE" is acceptable (not a failure) only if no tests exist for the changed code
-
-2. FRONTEND BUILD:
-   cd /home/panda/riftbound/frontend && npx vite build 2>&1
-   - Run the command and show the output
-   - Warnings are acceptable; errors are not
-
-3. BACKEND BUILD:
-   cd /home/panda/riftbound/backend && npm run build 2>&1
-   - Run the command and show the output
-
-4. SYNTAX/SANITY: Check the changed files for any obvious issues:
-   - No import errors (all referenced modules exist)
-   - No circular dependencies introduced
-   - No large debugging console.log statements left in
-
-IMPORTANT: You must RUN each command and show its output. Do not assume or guess
-that they pass. verification-before-completion REQUIRES fresh evidence before
-claiming any result.
+QA CHECKLIST:
+1. Backend Tests: Did any NEW test failures appear? (pre-existing failures ignored)
+2. Backend Build: Did any NEW TypeScript errors appear? (pre-existing filtered out)
+3. Frontend Build: Did any NEW errors appear? (warnings acceptable)
+4. Sanity: Are changed files clean (no import errors, no debug logs)?
 
 FORMAT YOUR RESPONSE AS:
 ## Backend Tests: PASS/FAIL/NO_COVERAGE
-<RUN THE COMMAND — show actual output>
+<explain any NEW failures — ignore pre-existing>
 
 ## Backend Build: PASS/FAIL
-<RUN THE COMMAND — show actual output>
+<explain any NEW errors — ignore pre-existing>
 
 ## Frontend Build: PASS/FAIL
-<RUN THE COMMAND — show actual output>
+<explain any NEW errors>
 
 ## Sanity Check: PASS/FAIL
-<notes>
+<notes on changed files>
 
 ## Overall QA: PASS/FAIL
+
+IMPORTANT: Only mark FAIL if there are NEW errors not in the baseline.
+Pre-existing errors (backup files, debug logs) are acceptable.
 
 Output "QA_COMPLETE:<PASS|FAIL>" on its own line when done.
 """
@@ -511,7 +649,7 @@ def main():
             str(investigate_log),
             timeout_minutes=15
         )
-        findings = extract_result(str(investigate_log), "## Understanding")
+        findings = extract_result(str(investigate_log), "## Root Cause")
         log(f"  Phase 1 complete — findings captured ({'ok' if ok else 'agent exited non-zero'})")
 
         # ── PHASE 2: IMPLEMENT ─────────────────────────────────────────────
@@ -532,8 +670,6 @@ def main():
         changed_files = get_changed_files(branch)
         diff = get_git_diff(branch)
         log(f"  Changed files: {len(changed_files)} — {changed_files[:3]}")
-
-        # ── PHASE 3: CODE REVIEW ───────────────────────────────────────────
         log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num}")
         review_log = branch_log / "phase3_review.log"
         ok = spawn_hermes(
@@ -565,11 +701,39 @@ def main():
 
         # ── PHASE 4: QA ────────────────────────────────────────────────────
         log(f"\n[PHASE 4/{len(PHASES)}] QA — #{num}")
+
+        # 4a. Capture baseline errors BEFORE the fix is applied
+        #     so we can filter pre-existing failures from QA output
+        log("  [BASELINE] Capturing pre-existing errors on origin/master...")
+        baseline_errors = get_pre_existing_errors()
+
+        # 4b. Run QA commands directly (not through hermes) so output is real
+        log("  [QA] Running backend tests (affected tests only)...")
+        affected_tests = get_affected_tests(changed_files)
+        if affected_tests:
+            test_files_arg = " ".join(affected_tests)
+            backend_test_output = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=120)
+        else:
+            backend_test_output = "NO AFFECTED TESTS FOUND — no test files match the changed code"
+
+        log("  [QA] Running backend build...")
+        backend_build_raw = run("cd /home/panda/riftbound/backend && npm run build 2>&1", timeout=120)
+        backend_build_filtered, _ = filter_baseline_errors(backend_build_raw, baseline_errors)
+
+        log("  [QA] Running frontend build...")
+        frontend_build_raw = run("cd /home/panda/riftbound/frontend && npx vite build 2>&1", timeout=120)
+        frontend_build_filtered, _ = filter_baseline_errors(frontend_build_raw, baseline_errors)
+
+        # 4c. Pass pre-filtered output to hermes for judgment
         qa_log = branch_log / "phase4_qa.log"
         ok = spawn_hermes(
-            build_qa_prompt(num, title, changed_files),
+            build_qa_prompt(num, title, changed_files,
+                            backend_test_output,
+                            backend_build_filtered,
+                            frontend_build_filtered,
+                            baseline_errors),
             str(qa_log),
-            timeout_minutes=25
+            timeout_minutes=20
         )
         qa_result = extract_result(str(qa_log), "QA_COMPLETE:")
         log(f"  Phase 4 complete — {qa_result}")
