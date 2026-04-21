@@ -341,12 +341,27 @@ BODY:
 SKILL TO LOAD: systematic-debugging
 Then investigate the issue and produce findings.
 
+CRITICAL — GAME MECHANICS RESEARCH (do this first):
+1. Invoke the llm-wiki skill NOW (skill_manage action=view) to load the wiki skill
+2. Search the wiki at ~/wiki for relevant Riftbound game mechanic knowledge:
+   - Read index.md: grep -i "riftbound\\|phase\\|turn\\|channel\\|awaken\\|stack\\|trigger" ~/wiki/index.md
+   - Check these pages if they exist: ~/wiki/concepts/riftbound-keywords.md,
+     ~/wiki/entities/riftbound-tcg.md, ~/wiki/concepts/riftbound-tcg.md
+3. If the wiki has relevant Riftbound mechanic knowledge, cite it in your analysis
+4. If the wiki does NOT cover the relevant mechanics:
+   a. Search online for official Riot/Riftbound rules or mechanic descriptions
+   b. Save any useful sources you find to ~/wiki/raw/articles/ with descriptive names
+   c. Update or create wiki pages to capture the mechanic knowledge
+   d. Add new pages to ~/wiki/index.md and append to ~/wiki/log.md
+
 YOUR TASK:
 1. Invoke the systematic-debugging skill NOW (skill_manage action=view)
-2. Follow its 4-phase process: Root Cause Investigation → Pattern Analysis → Hypothesis → Implementation Planning
-3. Find the ROOT CAUSE — do not propose fixes until you understand WHY it breaks
-4. Explore the relevant parts of the codebase thoroughly
-5. Write your findings
+2. Invoke the llm-wiki skill NOW (skill_manage action=view)
+3. Research relevant game mechanics via the wiki FIRST (see above)
+4. Follow the 4-phase process: Root Cause Investigation → Pattern Analysis → Hypothesis → Implementation Planning
+5. Find the ROOT CAUSE — do not propose fixes until you understand WHY it breaks
+6. Explore the relevant parts of the codebase thoroughly
+7. Write your findings
 
 OUTPUT FORMAT:
 ## Root Cause
@@ -354,6 +369,9 @@ OUTPUT FORMAT:
 
 ## Evidence
 <what you found in the code that confirms this>
+
+## Game Mechanic References
+<any wiki or online sources consulted for Riftbound mechanics; note if nothing was found>
 
 ## Files to Change
 - list of files
@@ -363,6 +381,9 @@ OUTPUT FORMAT:
 
 ## Verification Plan
 <how to verify the fix works>
+
+## Wiki Sources Added
+<list any new sources added to ~/wiki/raw/articles/ or wiki pages created/updated; leave blank if none>
 
 IMPORTANT: Do NOT make any code changes. Only investigate and plan.
 Output "DONE" on its own line when finished.
@@ -386,18 +407,20 @@ Then implement the fix following RED-GREEN-REFACTOR.
 
 YOUR TASK — BREAK YOUR WORK INTO SMALL, INDEPENDENT COMMITS:
 1. Invoke the test-driven-development skill NOW (skill_manage action=view)
-2. Follow its RED-GREEN-REFACTOR cycle strictly:
+2. Invoke the llm-wiki skill NOW (skill_manage action=view)
+3. Consult ~/wiki for any Riftbound mechanic references relevant to this fix
+4. Follow its RED-GREEN-REFACTOR cycle strictly:
    a. RED: Write a failing test that reproduces the bug/validates the fix
    b. GREEN: Write the MINIMAL code to make the test pass
    c. REFACTOR: Clean up if needed
-3. After each meaningful sub-task, COMMIT with a descriptive message:
+5. After each meaningful sub-task, COMMIT with a descriptive message:
    - After RED test: "fix #N test: add failing test for {title[:50]}"
    - After GREEN fix: "fix #N impl: core fix for {title[:50]}"
    - After REFACTOR: "fix #N refactor: cleanup"
-4. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
-5. Fix any test failures your changes introduced
-6. Stage and commit your changes with message: "fix #N: {title[:60]}"
-7. Run: git log -1 --pretty=format:"COMMIT:%H"
+6. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
+7. Fix any test failures your changes introduced
+8. Stage and commit your changes with message: "fix #N: {title[:60]}"
+9. Run: git log -1 --pretty=format:"COMMIT:%H"
 
 If you are about to timeout (running low on time), commit what you have immediately — partial commits are fine and will be resumed from.
 
