@@ -19,6 +19,8 @@ import re
 import os
 import socket
 import sys
+import signal
+import threading
 from pathlib import Path
 from datetime import datetime
 
@@ -27,6 +29,12 @@ WORKDIR = "/home/panda/riftbound"
 LOCKFILE = "/home/panda/riftbound/.agent.lock"
 LOGDIR = Path("/home/panda/riftbound/.agent_logs")
 LOGDIR.mkdir(exist_ok=True)
+
+# ── IMPLEMENT sub-phase continuity ─────────────────────────────────────────
+# Seconds before IMPLEMENT timeout when SIGALRM fires to commit WIP in-flight work
+WIP_COMMIT_LEAD_TIME = 120   # 2 min before phase timeout
+# Phase timeouts (minutes)
+IMPL_TIMEOUT_MIN = 25
 
 # Phase definitions
 PHASES = ["INVESTIGATE", "IMPLEMENT", "CODE_REVIEW", "QA", "PUSH"]
@@ -390,7 +398,12 @@ Output "DONE" on its own line when finished.
 """
 
 
-def build_implement_prompt(issue_num, title, body, findings):
+def build_implement_prompt(issue_num, title, body, findings, resume_subphase=None):
+    resume_note = (
+        f"\nRESUME CONTEXT: You are resuming work from a previous run. "
+        f"Continue from where you left off. Current sub-phase: {resume_subphase}\n"
+        if resume_subphase else ""
+    )
     return f"""You are implementing the fix for GitHub issue #{issue_num} in /home/panda/riftbound.
 
 ISSUE #{issue_num}: {title}
@@ -399,37 +412,57 @@ ISSUE BODY:
 
 YOUR PLAN (from investigation phase):
 {findings}
+{resume_note}
 
 {SYSTEM_INSTRUCTION}
 
 SKILL TO LOAD (invoke NOW): test-driven-development
 Then implement the fix following RED-GREEN-REFACTOR.
 
-YOUR TASK — BREAK YOUR WORK INTO SMALL, INDEPENDENT COMMITS:
+YOUR TASK — BREAK YOUR WORK INTO SMALL, INDEPENDENT COMMITS WITH SUB-PHASE MARKERS:
+
 1. Invoke the test-driven-development skill NOW (skill_manage action=view)
 2. Invoke the llm-wiki skill NOW (skill_manage action=view)
 3. Consult ~/wiki for any Riftbound mechanic references relevant to this fix
-4. Follow its RED-GREEN-REFACTOR cycle strictly:
+4. Before starting EACH sub-task, output: "SUBPHASE:<short-name>" on its own line.
+   Examples:
+     SUBPHASE:add-effectStack-to-GameState
+     SUBPHASE:implement-canAutoAdvance-logic
+     SUBPHASE:write-phase-advance-tests
+     SUBPHASE:fix-scheduleAIMove
+   This marks your position so the pipeline can resume exactly here on timeout.
+
+5. Follow the RED-GREEN-REFACTOR cycle:
    a. RED: Write a failing test that reproduces the bug/validates the fix
    b. GREEN: Write the MINIMAL code to make the test pass
    c. REFACTOR: Clean up if needed
-5. After each meaningful sub-task, COMMIT with a descriptive message:
-   - After RED test: "fix #N test: add failing test for {title[:50]}"
-   - After GREEN fix: "fix #N impl: core fix for {title[:50]}"
-   - After REFACTOR: "fix #N refactor: cleanup"
-6. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
-7. Fix any test failures your changes introduced
-8. Stage and commit your changes with message: "fix #N: {title[:60]}"
-9. Run: git log -1 --pretty=format:"COMMIT:%H"
 
-If you are about to timeout (running low on time), commit what you have immediately — partial commits are fine and will be resumed from.
+6. After each meaningful sub-task (RED / GREEN / REFACTOR), COMMIT:
+   - After RED test:  git commit -m "fix #{issue_num} test: ..."
+   - After GREEN fix: git commit -m "fix #{issue_num} impl: ..."
+   - After REFACTOR:  git commit -m "fix #{issue_num} refactor: ..."
+   Use a concise description after the colon (e.g., "add effectStack field", "implement canAutoAdvance").
+
+7. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
+8. Fix any test failures your changes introduced
+
+9. When ALL sub-tasks are complete and tests pass, do a final commit:
+   git add -A && git commit -m "fix #{issue_num}: {title[:60]}"
+   Then output: git log -1 --pretty=format:"COMMIT:%H"
+
+TIMEOUT SAFETY:
+- If you are approaching the time limit (~20 min), commit what you have NOW.
+- Partial commits are fine — the pipeline will resume from your last sub-phase.
+- The WIP commit is automatic on the server side; your job is to ensure every
+  meaningful step is already committed before that happens.
 
 - Only modify files under /home/panda/riftbound
 - Do NOT run npm install or add new dependencies
 - Do NOT push
 
-Output "COMMIT:<hash>" on its own line when you have committed.
-Then output "DONE" on its own line.
+Output "SUBPHASE:<name>" before each meaningful step (as described in step 4).
+Output "COMMIT:<hash>" on its own line when you have a final commit.
+Output "DONE" on its own line when everything is committed and tests pass.
 """
 
 
@@ -608,18 +641,81 @@ Output "PUSH_COMPLETE" on its own line when done.
 """
 
 
+# ─── WIP commit helper ────────────────────────────────────────────────────────
+
+def git_wip_commit(issue_num, subphase_hint=""):
+    """Stage all changes and commit as WIP with a descriptive message.
+    Returns the commit hash on success, None if nothing to commit or on error."""
+    try:
+        status = subprocess.run(
+            "git status --porcelain", shell=True, capture_output=True, text=True, cwd=WORKDIR
+        )
+        if not status.stdout.strip():
+            log("  [WIP] No changes to commit")
+            return None
+
+        commit_msg = f"WIP: fix #{issue_num}"
+        if subphase_hint:
+            commit_msg += f" — {subphase_hint}"
+
+        subprocess.run("git add -A", shell=True, capture_output=True, cwd=WORKDIR)
+        result = subprocess.run(
+            ["git", "commit", "-m", commit_msg],
+            shell=True, capture_output=True, text=True, cwd=WORKDIR
+        )
+        if result.returncode == 0:
+            commit_hash = result.stdout.strip().split()[-1] if result.stdout.strip() else "?"
+            log(f"  [WIP] Committed as '{commit_msg}' ({commit_hash})")
+            return commit_hash
+        else:
+            log(f"  [WIP] Commit failed: {result.stderr.strip()[:100]}")
+    except Exception as e:
+        log(f"  [WIP] Commit error: {e}")
+    return None
+
+
 # ─── Agent runner ─────────────────────────────────────────────────────────────
 
-def spawn_hermes(prompt, log_path, timeout_minutes=20):
+def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None):
     """Run hermes with a one-shot prompt, streaming to log_path.
 
-    Uses communicate() with timeout to guarantee the phase does not hang forever.
-    On timeout, kills the subprocess and returns False.
+    For IMPLEMENT phases (issue_num is not None), schedules a WIP commit
+    WIP_COMMIT_LEAD_TIME seconds before the phase timeout to save in-flight work.
+
+    Returns: (success: bool, timed_out: bool)
+      - (True, False): hermes completed successfully, no timeout
+      - (False, True): process timed out (WIP commit was attempted)
+      - (False, False): process exited non-zero, no timeout
     """
     env = os.environ.copy()
     env["HERMES_NO_ANALYTICS"] = "1"
 
     log_file = open(log_path, "w", buffering=1)
+    timed_out = False
+    did_wip_commit = False
+    proc = None
+
+    def wip_commit():
+        nonlocal did_wip_commit
+        log(f"  [WIP-COMMIT] ~{WIP_COMMIT_LEAD_TIME}s before timeout — committing WIP state...")
+        try:
+            commit_hash = git_wip_commit(issue_num, subphase)
+            did_wip_commit = True
+            if commit_hash:
+                log(f"  [WIP-COMMIT] Saved as {commit_hash}")
+        except Exception as e:
+            log(f"  [WIP-COMMIT] Failed: {e}")
+
+    # Schedule WIP commit alarm for IMPLEMENT phases
+    timer = None
+    if issue_num is not None and (timeout_minutes * 60) > WIP_COMMIT_LEAD_TIME:
+        timer = threading.Timer(
+            (timeout_minutes * 60) - WIP_COMMIT_LEAD_TIME,
+            wip_commit
+        )
+        timer.daemon = True
+        timer.start()
+        log(f"  [TIMER] WIP commit scheduled for {(timeout_minutes * 60) - WIP_COMMIT_LEAD_TIME}s from now")
 
     try:
         proc = subprocess.Popen(
@@ -639,16 +735,18 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20):
             log_file.write(outs if outs else "")
             log_file.flush()
         except subprocess.TimeoutExpired:
+            timed_out = True
             proc.kill()
             outs, _ = proc.communicate()
             log_file.write((outs if outs else "") + f"\n[TIMEOUT after {timeout_minutes} min]\n")
             log_file.flush()
-            return False
 
     finally:
         log_file.close()
+        if timer:
+            timer.cancel()
 
-    return proc.returncode == 0
+    return proc.returncode == 0, timed_out
 
 
 def extract_result(log_path, prefix):
@@ -776,7 +874,7 @@ def main():
             if not resumed:
                 run(f"git checkout -b {branch} origin/master 2>&1")
             investigate_log = branch_log / "phase1_investigate.log"
-            ok = spawn_hermes(
+            ok, _ = spawn_hermes(
                 build_investigate_prompt(num, title, body),
                 str(investigate_log),
                 timeout_minutes=15
@@ -805,18 +903,65 @@ def main():
         if not implement_done:
             log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num}")
             implement_log = branch_log / "phase2_implement.log"
-            ok = spawn_hermes(
-                build_implement_prompt(num, title, body, findings),
+
+            # Load sub-phase state if resuming mid-IMPLEMENT
+            impl_cp = load_checkpoint(branch_log)
+            saved_subphase = None
+            files_manifest = []
+            if impl_cp:
+                saved_subphase = impl_cp.get("impl_subphase")
+                files_manifest = impl_cp.get("impl_files_manifest", [])
+                if saved_subphase:
+                    log(f"  [RESUME] Resuming IMPLEMENT from sub-phase: {saved_subphase}")
+
+            ok, timed_out = spawn_hermes(
+                build_implement_prompt(num, title, body, findings, resume_subphase=saved_subphase),
                 str(implement_log),
-                timeout_minutes=25
+                timeout_minutes=IMPL_TIMEOUT_MIN,
+                issue_num=num,
+                subphase=saved_subphase
             )
             phase_results["IMPLEMENT"] = ok
             commit_line = extract_result(str(implement_log), "COMMIT:")
             log(f"  Phase 2 complete — commit: {commit_line or '(none)'}")
-            # Update checkpoint regardless of outcome (save what we have)
+
+            # Capture files_manifest from the final commit for QA phase routing
+            if commit_line:
+                commit_hash = commit_line.replace("COMMIT:", "").strip()
+                manifest_out = run(f"git diff origin/master --name-only 2>&1")
+                files_manifest = [f for f in manifest_out.strip().splitlines() if f]
+
+            # Save sub-phase checkpoint regardless of outcome
+            # subphase is parsed from the log by extract_result; if timed_out and no COMMIT yet,
+            # impl_subphase is left as the last sub-phase name found in the log
+            last_subphase = extract_result(str(implement_log), "SUBPHASE:")
             phases["2_IMPLEMENT"] = f"done:{commit_line.replace('COMMIT:','').strip()}" if commit_line else "incomplete"
-            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
-                                           "findings": findings, "phases": phases, "ts": ts})
+
+            save_checkpoint(branch_log, {
+                "issue": num, "title": title, "branch": branch,
+                "findings": findings,
+                "phases": phases,
+                "ts": ts,
+                "impl_subphase": last_subphase.replace("SUBPHASE:", "").strip() if last_subphase else None,
+                "impl_files_manifest": files_manifest,
+            })
+
+            # ── VERIFY after IMPLEMENT ────────────────────────────────────────
+            if ok and commit_line and not timed_out:
+                log("  [VERIFY] Running post-IMPLEMENT verification...")
+                diff_stat = run(f"git diff origin/master --stat 2>&1")
+                log(f"  [VERIFY] Changes: {diff_stat.strip()[:200] if diff_stat else '(no diff)'}")
+                # Run a quick smoke test on the affected files
+                if files_manifest:
+                    affected = get_affected_tests(files_manifest)
+                    if affected:
+                        test_files_arg = " ".join(affected[:3])   # cap at 3 test files for speed
+                        smoke = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=60)
+                        log(f"  [VERIFY] Smoke test output ({len(smoke)} chars)")
+                        if "error" in smoke.lower()[:200] or "FAIL" in smoke:
+                            log("  [VERIFY] WARNING: smoke test shows issues — review before proceeding")
+            # ── END VERIFY ─────────────────────────────────────────────────────
+
             if not ok:
                 release_lock()
                 log("  [CHECKPOINT] IMPLEMENT incomplete — saved progress, will resume on next run")
@@ -837,7 +982,7 @@ def main():
             log(f"  Changed files: {len(changed_files)} — {changed_files[:3]}")
             log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num}")
             review_log = branch_log / "phase3_review.log"
-            ok = spawn_hermes(
+            ok, _ = spawn_hermes(
                 build_code_review_prompt(num, title, diff),
                 str(review_log),
                 timeout_minutes=20
@@ -906,7 +1051,7 @@ def main():
 
             # 4c. Hermes judges the QA output
             qa_log = branch_log / "phase4_qa.log"
-            ok = spawn_hermes(
+            ok, _ = spawn_hermes(
                 build_qa_prompt(num, title, changed_files,
                                 backend_test_filtered_capped,
                                 backend_build_filtered_capped,
@@ -950,7 +1095,7 @@ def main():
         if not push_done:
             log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num}")
             push_log = branch_log / "phase5_push.log"
-            ok = spawn_hermes(
+            ok, _ = spawn_hermes(
                 build_push_prompt(num, title, branch),
                 str(push_log),
                 timeout_minutes=10
