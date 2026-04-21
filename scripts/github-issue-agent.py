@@ -32,6 +32,36 @@ LOGDIR.mkdir(exist_ok=True)
 PHASES = ["INVESTIGATE", "IMPLEMENT", "CODE_REVIEW", "QA", "PUSH"]
 
 
+# ─── Checkpoint ───────────────────────────────────────────────────────────────
+
+def find_checkpoint(issue_num):
+    """Find most recent checkpoint dir for this issue, or None."""
+    if not LOGDIR.exists():
+        return None
+    candidates = sorted(LOGDIR.glob(f"issue-{issue_num}_*"))
+    for c in reversed(candidates):
+        cp = c / "checkpoint.json"
+        if cp.exists():
+            return c
+    return None
+
+
+def load_checkpoint(branch_log):
+    """Load checkpoint JSON from a branch_log dir, or None."""
+    cp = branch_log / "checkpoint.json"
+    if cp.exists():
+        with open(cp) as f:
+            return json.load(f)
+    return None
+
+
+def save_checkpoint(branch_log, data):
+    """Write checkpoint JSON."""
+    branch_log.mkdir(exist_ok=True, parents=True)
+    with open(branch_log / "checkpoint.json", "w") as f:
+        json.dump(data, f, indent=2)
+
+
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
     print(f"[{ts}] {msg}")
@@ -354,21 +384,23 @@ YOUR PLAN (from investigation phase):
 SKILL TO LOAD (invoke NOW): test-driven-development
 Then implement the fix following RED-GREEN-REFACTOR.
 
-YOUR TASK:
+YOUR TASK — BREAK YOUR WORK INTO SMALL, INDEPENDENT COMMITS:
 1. Invoke the test-driven-development skill NOW (skill_manage action=view)
 2. Follow its RED-GREEN-REFACTOR cycle strictly:
    a. RED: Write a failing test that reproduces the bug/validates the fix
    b. GREEN: Write the MINIMAL code to make the test pass
    c. REFACTOR: Clean up if needed
-3. If the issue is ambiguous, make a reasonable best-effort attempt
+3. After each meaningful sub-task, COMMIT with a descriptive message:
+   - After RED test: "fix #N test: add failing test for {title[:50]}"
+   - After GREEN fix: "fix #N impl: core fix for {title[:50]}"
+   - After REFACTOR: "fix #N refactor: cleanup"
 4. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
 5. Fix any test failures your changes introduced
 6. Stage and commit your changes with message: "fix #N: {title[:60]}"
 7. Run: git log -1 --pretty=format:"COMMIT:%H"
 
-IMPORTANT RULES:
-- You MUST write the failing test BEFORE writing any production code
-- If you accidentally write production code first, DELETE it and start with the test
+If you are about to timeout (running low on time), commit what you have immediately — partial commits are fine and will be resumed from.
+
 - Only modify files under /home/panda/riftbound
 - Do NOT run npm install or add new dependencies
 - Do NOT push
@@ -657,164 +689,268 @@ def main():
         log(f"  Selected: #{num} — {title}")
 
         branch = create_branch_name(num, title)
-        branch_log = LOGDIR / f"issue-{num}_{ts}"
-        branch_log.mkdir(exist_ok=True)
+
+        # ── RESUME LOGIC ──
+        # Try to pick up from a previous run if one exists
+        checkpoint_dir = find_checkpoint(num)
+        findings = ""
+        resumed = False
+
+        if checkpoint_dir:
+            cp = load_checkpoint(checkpoint_dir)
+            if cp:
+                saved_branch = cp.get("branch", "")
+                saved_findings = cp.get("findings", "")
+                phases = cp.get("phases", {})
+                # Only resume from same branch if IMPLEMENT hasn't committed yet
+                phase2_state = phases.get("2_IMPLEMENT", "")
+                implement_done = phase2_state.startswith("done:")
+                if saved_findings and not implement_done:
+                    log(f"  [RESUME] Found checkpoint for #{num} — reusing branch '{saved_branch}', skipping completed phases")
+                    run(f"git checkout {saved_branch} 2>&1")
+                    findings = saved_findings
+                    branch_log = checkpoint_dir
+                    resumed = True
+                    # Determine which phase to resume from
+                    if phases.get("5_PUSH", "").startswith("done:"):
+                        # Already pushed — nothing to do
+                        log(f"  Issue #{num} already fully handled (PUSH complete).")
+                        release_lock()
+                        return
+                    elif phases.get("4_QA", "") == "done":
+                        # QA passed, need PUSH
+                        resume_from = 5
+                    elif phases.get("3_CODE_REVIEW", "") == "done":
+                        # Review passed, need QA
+                        resume_from = 4
+                    elif phases.get("2_IMPLEMENT", "") == "done":
+                        # Implement done but not reviewed — re-do REVIEW (QA may need fresh diff)
+                        resume_from = 3
+                    else:
+                        # INVESTIGATE done, need IMPLEMENT
+                        resume_from = 2
+                    log(f"  [RESUME] Resuming from phase {resume_from}")
+                else:
+                    branch_log = LOGDIR / f"issue-{num}_{ts}"
+                    branch_log.mkdir(exist_ok=True)
+            else:
+                branch_log = LOGDIR / f"issue-{num}_{ts}"
+                branch_log.mkdir(exist_ok=True)
+        else:
+            branch_log = LOGDIR / f"issue-{num}_{ts}"
+            branch_log.mkdir(exist_ok=True)
+
+        if not resumed:
+            run(f"git checkout -b {branch} origin/master 2>&1")
 
         # Track per-phase results
         phase_results = {}
-        findings = ""
 
         # ── PHASE 1: INVESTIGATE ───────────────────────────────────────────
-        log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num}")
-        label_issue(num, ["in-progress"])
-        run(f"git checkout -b {branch} origin/master 2>&1")
-
-        investigate_log = branch_log / "phase1_investigate.log"
-        ok = spawn_hermes(
-            build_investigate_prompt(num, title, body),
-            str(investigate_log),
-            timeout_minutes=15
-        )
-        findings = extract_result(str(investigate_log), "## Root Cause")
-        log(f"  Phase 1 complete — findings captured ({'ok' if ok else 'agent exited non-zero'})")
+        if not resumed or "1_INVESTIGATE" not in phases or phases["1_INVESTIGATE"] != "done":
+            log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num}")
+            label_issue(num, ["in-progress"])
+            if not resumed:
+                run(f"git checkout -b {branch} origin/master 2>&1")
+            investigate_log = branch_log / "phase1_investigate.log"
+            ok = spawn_hermes(
+                build_investigate_prompt(num, title, body),
+                str(investigate_log),
+                timeout_minutes=15
+            )
+            findings = extract_result(str(investigate_log), "## Root Cause")
+            log(f"  Phase 1 complete — findings captured ({'ok' if ok else 'agent exited non-zero'})")
+            if not ok:
+                # Timeout or error — save checkpoint so next run can resume
+                save_checkpoint(branch_log, {
+                    "issue": num, "title": title, "branch": branch,
+                    "findings": findings, "phases": {"1_INVESTIGATE": "incomplete"}, "ts": ts
+                })
+                release_lock()
+                log("  [CHECKPOINT] Phase 1 did not fully complete — saved, will resume on next run")
+                return
+            phases = {"1_INVESTIGATE": "done", "2_IMPLEMENT": "pending",
+                       "3_CODE_REVIEW": "pending", "4_QA": "pending", "5_PUSH": "pending"}
+            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
+                                           "findings": findings, "phases": phases, "ts": ts})
+        else:
+            log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num} [SKIP — already done]")
 
         # ── PHASE 2: IMPLEMENT ─────────────────────────────────────────────
-        log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num}")
-        implement_log = branch_log / "phase2_implement.log"
-        ok = spawn_hermes(
-            build_implement_prompt(num, title, body, findings),
-            str(implement_log),
-            timeout_minutes=25
-        )
-        phase_results["IMPLEMENT"] = ok
-        commit_line = extract_result(str(implement_log), "COMMIT:")
-        log(f"  Phase 2 complete — commit: {commit_line or '(none)'}")
-        if not ok:
-            _handle_failure(num, title, branch, branch_log, "IMPLEMENT phase failed")
-            return
-
-        changed_files = get_changed_files(branch)
-        diff = get_git_diff(branch)
-        log(f"  Changed files: {len(changed_files)} — {changed_files[:3]}")
-        log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num}")
-        review_log = branch_log / "phase3_review.log"
-        ok = spawn_hermes(
-            build_code_review_prompt(num, title, diff),
-            str(review_log),
-            timeout_minutes=20
-        )
-        review_result = extract_result(str(review_log), "REVIEW_COMPLETE:")
-        log(f"  Phase 3 complete — {review_result}")
-
-        # Parse review outcome
-        approved = "APPROVED" in (review_result or "")
-        if not approved:
-            log("  REVIEW: NEEDS_CHANGES — agent will self-fix in next iteration")
-            # Comment about the review failure and leave branch for next cycle
-            comment_issue(num,
-                f"## Code Review: NEEDS CHANGES\n\n"
-                f"The code review found issues that must be addressed.\n\n"
-                f"Review log available at branch `{branch}`, file "
-                f"`.agent_logs/issue-{num}_{ts}/phase3_review.log`.\n\n"
-                f"The agent will retry automatically on the next 30-minute cycle."
+        phase2_state = phases.get("2_IMPLEMENT", "") if 'phases' in dir() else ""
+        implement_done = isinstance(phase2_state, str) and phase2_state.startswith("done:")
+        if not implement_done:
+            log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num}")
+            implement_log = branch_log / "phase2_implement.log"
+            ok = spawn_hermes(
+                build_implement_prompt(num, title, body, findings),
+                str(implement_log),
+                timeout_minutes=25
             )
-            remove_label(num, "in-progress")
-            label_issue(num, ["needs-review"])
-            run("git checkout master 2>&1")
-            run(f"git branch -D {branch} 2>&1")
-            release_lock()
-            return
+            phase_results["IMPLEMENT"] = ok
+            commit_line = extract_result(str(implement_log), "COMMIT:")
+            log(f"  Phase 2 complete — commit: {commit_line or '(none)'}")
+            # Update checkpoint regardless of outcome (save what we have)
+            phases["2_IMPLEMENT"] = f"done:{commit_line.replace('COMMIT:','').strip()}" if commit_line else "incomplete"
+            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
+                                           "findings": findings, "phases": phases, "ts": ts})
+            if not ok:
+                release_lock()
+                log("  [CHECKPOINT] IMPLEMENT incomplete — saved progress, will resume on next run")
+                return
+        else:
+            log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num} [SKIP — already committed: {phase2_state}]")
+            commit_line = phase2_state.replace("done:", "").strip()
+            # Restore phases dict for subsequent phase references
+            if 'phases' not in dir():
+                phases = {"1_INVESTIGATE": "done", "2_IMPLEMENT": phase2_state,
+                           "3_CODE_REVIEW": "pending", "4_QA": "pending", "5_PUSH": "pending"}
+        # ── PHASE 3: CODE REVIEW ──────────────────────────────────────────
+        phase3_state = phases.get("3_CODE_REVIEW", "") if 'phases' in dir() else ""
+        review_done = phase3_state == "done"
+        if not review_done:
+            changed_files = get_changed_files(branch)
+            diff = get_git_diff(branch)
+            log(f"  Changed files: {len(changed_files)} — {changed_files[:3]}")
+            log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num}")
+            review_log = branch_log / "phase3_review.log"
+            ok = spawn_hermes(
+                build_code_review_prompt(num, title, diff),
+                str(review_log),
+                timeout_minutes=20
+            )
+            review_result = extract_result(str(review_log), "REVIEW_COMPLETE:")
+            log(f"  Phase 3 complete — {review_result}")
+            phases["3_CODE_REVIEW"] = "done" if review_result else "incomplete"
+            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
+                                           "findings": findings, "phases": phases, "ts": ts})
+            if not review_result or "APPROVED" not in (review_result or ""):
+                log("  REVIEW: NEEDS_CHANGES — will retry on next cycle")
+                comment_issue(num,
+                    f"## Code Review: NEEDS CHANGES\n\n"
+                    f"The code review found issues that must be addressed.\n\n"
+                    f"Review log available at branch `{branch}`, file "
+                    f"`.agent_logs/issue-{num}_{ts}/phase3_review.log`.\n\n"
+                    f"The agent will retry automatically on the next cycle."
+                )
+                remove_label(num, "in-progress")
+                label_issue(num, ["needs-review"])
+                release_lock()
+                return
+        else:
+            changed_files = get_changed_files(branch)
+            log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num} [SKIP — already done]")
 
         # ── PHASE 4: QA ────────────────────────────────────────────────────
-        log(f"\n[PHASE 4/{len(PHASES)}] QA — #{num}")
+        phase4_state = phases.get("4_QA", "") if 'phases' in dir() else ""
+        qa_done = phase4_state == "done"
+        if not qa_done:
+            log(f"\n[PHASE 4/{len(PHASES)}] QA — #{num}")
 
-        # 4a. Capture baseline errors BEFORE the fix is applied
-        #     so we can filter pre-existing failures from QA output
-        log("  [BASELINE] Capturing pre-existing errors on origin/master...")
-        ts_errors, test_failures = get_pre_existing_errors()
+            # 4a. Capture baseline errors BEFORE the fix is applied
+            log("  [BASELINE] Capturing pre-existing errors on origin/master...")
+            ts_errors, test_failures = get_pre_existing_errors()
 
-        # 4b. Run QA commands directly (not through hermes) so output is real
-        log("  [QA] Running backend tests (affected tests only)...")
-        affected_tests = get_affected_tests(changed_files)
-        if affected_tests:
-            test_files_arg = " ".join(affected_tests)
-            backend_test_raw = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=120)
-        else:
-            backend_test_raw = "NO AFFECTED TESTS FOUND — no test files match the changed code"
-        # Filter pre-existing test failures
-        backend_test_filtered, _ = filter_baseline_errors(backend_test_raw, ts_errors, test_failures)
+            # 4b. Run QA commands directly
+            log("  [QA] Running backend tests (affected tests only)...")
+            affected_tests = get_affected_tests(changed_files)
+            if affected_tests:
+                test_files_arg = " ".join(affected_tests)
+                backend_test_raw = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=120)
+            else:
+                backend_test_raw = "NO AFFECTED TESTS FOUND — no test files match the changed code"
+            backend_test_filtered, _ = filter_baseline_errors(backend_test_raw, ts_errors, test_failures)
 
-        log("  [QA] Running backend build...")
-        backend_build_raw = run("cd /home/panda/riftbound/backend && npm run build 2>&1", timeout=120)
-        backend_build_filtered, _ = filter_baseline_errors(backend_build_raw, ts_errors, test_failures)
+            log("  [QA] Running backend build...")
+            backend_build_raw = run("cd /home/panda/riftbound/backend && npm run build 2>&1", timeout=120)
+            backend_build_filtered, _ = filter_baseline_errors(backend_build_raw, ts_errors, test_failures)
 
-        log("  [QA] Running frontend build...")
-        frontend_build_raw = run("cd /home/panda/riftbound/frontend && npx vite build 2>&1", timeout=120)
-        frontend_build_filtered, _ = filter_baseline_errors(frontend_build_raw, ts_errors, test_failures)
+            log("  [QA] Running frontend build...")
+            frontend_build_raw = run("cd /home/panda/riftbound/frontend && npx vite build 2>&1", timeout=120)
+            frontend_build_filtered, _ = filter_baseline_errors(frontend_build_raw, ts_errors, test_failures)
 
-        # Cap QA output at 150 lines to prevent prompt bloat
-        MAX_QA_LINES = 150
-        def cap_output(output, label):
-            lines = output.splitlines() if output else []
-            if len(lines) > MAX_QA_LINES:
-                return "\n".join(lines[:MAX_QA_LINES]) + f"\n... [{len(lines) - MAX_QA_LINES}] more lines (truncated)"
-            return output
+            # Cap QA output at 150 lines
+            MAX_QA_LINES = 150
+            def cap_output(output, label):
+                lines = output.splitlines() if output else []
+                if len(lines) > MAX_QA_LINES:
+                    return "\n".join(lines[:MAX_QA_LINES]) + f"\n... [{len(lines) - MAX_QA_LINES}] more lines (truncated)"
+                return output
 
-        backend_build_filtered_capped = cap_output(backend_build_filtered, "backend build")
-        frontend_build_filtered_capped = cap_output(frontend_build_filtered, "frontend build")
-        backend_test_filtered_capped = cap_output(backend_test_filtered, "backend tests")
+            backend_build_filtered_capped = cap_output(backend_build_filtered, "backend build")
+            frontend_build_filtered_capped = cap_output(frontend_build_filtered, "frontend build")
+            backend_test_filtered_capped = cap_output(backend_test_filtered, "backend tests")
 
-        # 4c. Pass pre-filtered output to hermes for judgment
-        qa_log = branch_log / "phase4_qa.log"
-        ok = spawn_hermes(
-            build_qa_prompt(num, title, changed_files,
-                            backend_test_filtered_capped,
-                            backend_build_filtered_capped,
-                            frontend_build_filtered_capped,
-                            ts_errors),
-            str(qa_log),
-            timeout_minutes=20
-        )
-        qa_result = extract_result(str(qa_log), "QA_COMPLETE:")
-        log(f"  Phase 4 complete — {qa_result}")
-
-        qa_pass = "PASS" in (qa_result or "") and "FAIL" not in (qa_result or "")
-        if not qa_pass:
-            log("  QA: FAIL — agent will retry on next cycle")
-            comment_issue(num,
-                f"## QA Check: FAILED\n\n"
-                f"QA phase found failures. The agent will retry automatically.\n\n"
-                f"QA log: `.agent_logs/issue-{num}_{ts}/phase4_qa.log`\n\n"
-                f"Branch `{branch}` is preserved for inspection."
+            # 4c. Hermes judges the QA output
+            qa_log = branch_log / "phase4_qa.log"
+            ok = spawn_hermes(
+                build_qa_prompt(num, title, changed_files,
+                                backend_test_filtered_capped,
+                                backend_build_filtered_capped,
+                                frontend_build_filtered_capped,
+                                ts_errors),
+                str(qa_log),
+                timeout_minutes=20
             )
-            remove_label(num, "in-progress")
-            label_issue(num, ["qa-failed"])
-            run("git checkout master 2>&1")
-            release_lock()
-            return
+            qa_result = extract_result(str(qa_log), "QA_COMPLETE:")
+            log(f"  Phase 4 complete — {qa_result}")
+
+            # Parse QA outcome — only accept exact QA_COMPLETE:PASS line
+            qa_pass = False
+            for line in (qa_result or "").splitlines():
+                if line.strip().startswith("QA_COMPLETE:"):
+                    qa_pass = line.strip().endswith(":PASS")
+                    break
+
+            phases["4_QA"] = "done" if qa_pass else "fail"
+            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
+                                           "findings": findings, "phases": phases, "ts": ts})
+
+            if not qa_pass:
+                log("  QA: FAIL — will retry on next cycle")
+                comment_issue(num,
+                    f"## QA Check: FAILED\n\n"
+                    f"QA phase found failures. The agent will retry automatically.\n\n"
+                    f"QA log: `.agent_logs/issue-{num}_{ts}/phase4_qa.log`\n\n"
+                    f"Branch `{branch}` is preserved for inspection."
+                )
+                remove_label(num, "in-progress")
+                label_issue(num, ["qa-failed"])
+                release_lock()
+                return
+        else:
+            log(f"\n[PHASE 4/{len(PHASES)}] QA — #{num} [SKIP — already done]")
 
         # ── PHASE 5: PUSH ──────────────────────────────────────────────────
-        log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num}")
-        push_log = branch_log / "phase5_push.log"
-        ok = spawn_hermes(
-            build_push_prompt(num, title, branch),
-            str(push_log),
-            timeout_minutes=10
-        )
-        pr_url = extract_pr_url(str(push_log))
-        log(f"  Phase 5 complete — PR: {pr_url or '(not found)'}")
-        if not ok or not pr_url:
-            comment_issue(num,
-                f"## Push Failed\n\n"
-                f"Could not automatically push the PR. "
-                f"Branch `{branch}` is ready. Please review and push manually.\n\n"
-                f"Push log: `.agent_logs/issue-{num}_{ts}/phase5_push.log`"
+        phase5_state = phases.get("5_PUSH", "") if 'phases' in dir() else ""
+        push_done = phase5_state.startswith("done:")
+        if not push_done:
+            log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num}")
+            push_log = branch_log / "phase5_push.log"
+            ok = spawn_hermes(
+                build_push_prompt(num, title, branch),
+                str(push_log),
+                timeout_minutes=10
             )
-            remove_label(num, "in-progress")
-            label_issue(num, ["push-failed"])
-            run("git checkout master 2>&1")
-            release_lock()
-            return
+            pr_url = extract_pr_url(str(push_log))
+            log(f"  Phase 5 complete — PR: {pr_url or '(not found)'}")
+            phases["5_PUSH"] = f"done:{pr_url}" if pr_url else "incomplete"
+            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
+                                           "findings": findings, "phases": phases, "ts": ts})
+            if not ok or not pr_url:
+                comment_issue(num,
+                    f"## Push Failed\n\n"
+                    f"Could not automatically push the PR. "
+                    f"Branch `{branch}` is ready. Please review and push manually.\n\n"
+                    f"Push log: `.agent_logs/issue-{num}_{ts}/phase5_push.log`"
+                )
+                remove_label(num, "in-progress")
+                label_issue(num, ["push-failed"])
+                release_lock()
+                return
+        else:
+            pr_url = phase5_state.replace("done:", "").strip()
+            log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num} [SKIP — already done: {pr_url}]")
 
         # ── DONE ───────────────────────────────────────────────────────────────
         log(f"\n  Issue #{num} complete — PR ready for human review")
