@@ -8,7 +8,6 @@ PHASES:
   3. CODE REVIEW   — hermes reviews its own diff (lint, typecheck, security)
   4. QA            — run tests, build attempts
   5. PUSH          — only if review+QA passed; post PR link
-  6. CLOSE         — close issue with PR link (or flag for human review on failure)
 
 Each phase logs to .agent_logs/issue-{num}_{phase}.log
 Lock file: .agent.lock (prevents concurrent runs)
@@ -30,7 +29,7 @@ LOGDIR = Path("/home/panda/riftbound/.agent_logs")
 LOGDIR.mkdir(exist_ok=True)
 
 # Phase definitions
-PHASES = ["INVESTIGATE", "IMPLEMENT", "CODE_REVIEW", "QA", "PUSH", "CLOSE"]
+PHASES = ["INVESTIGATE", "IMPLEMENT", "CODE_REVIEW", "QA", "PUSH"]
 
 
 def log(msg):
