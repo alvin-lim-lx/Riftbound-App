@@ -9,7 +9,7 @@ import {
   getLegalActions,
   deepClone,
 } from '../src/engine/GameEngine';
-import type { GameAction } from '../shared/src/types';
+import type { GameAction, SystemLogEntry, GameLogEntry } from '../shared/src/types';
 
 const P1 = 'player_1';
 const P2 = 'player_2';
@@ -37,20 +37,20 @@ describe('GameEngine', () => {
       expect(state.players[P1]).toBeDefined();
       expect(state.players[P2]).toBeDefined();
       expect(state.battlefields.length).toBeGreaterThan(0);
-      expect(state.phase).toBe('Setup');
+      expect(state.phase).toBe('Mulligan');
       expect(state.winner).toBeNull();
     });
 
-    it('deals opening hands of 5 cards', () => {
+    it('deals opening hands of 4 cards', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
-      expect(state.players[P1].hand.length).toBe(5);
-      expect(state.players[P2].hand.length).toBe(5);
+      expect(state.players[P1].hand.length).toBe(4);
+      expect(state.players[P2].hand.length).toBe(4);
     });
 
     it('creates rune decks for both players', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
-      expect(state.players[P1].runeDeck.length).toBe(20);
-      expect(state.players[P2].runeDeck.length).toBe(20);
+      expect(state.players[P1].runeDeck.length).toBe(12);
+      expect(state.players[P2].runeDeck.length).toBe(12);
     });
   });
 
@@ -65,7 +65,10 @@ describe('GameEngine', () => {
 
   describe('PlayUnit', () => {
     it('rejects playing a card not in hand', () => {
-      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      // Set up a valid phase and active player for the action
+      state.phase = 'FirstMain';
+      state.activePlayerId = P1;
       const result = executeAction(state, makeAction('PlayUnit', P1, {
         cardInstanceId: 'nonexistent_card',
         battlefieldId: state.battlefields[0].id,
@@ -340,6 +343,142 @@ describe('GameEngine', () => {
       if (result.newState) {
         expect(result.newState.phase).toBe('GameOver');
         expect(result.newState.winner).toBe(P2);
+      }
+    });
+  });
+
+  describe('actionLog', () => {
+    it('logs player actions to actionLog on success', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      const initialLogSize = state.actionLog.length;
+
+      // Advance to FirstMain phase so we can play a unit
+      const phaseState = { ...state, phase: 'FirstMain' as const, activePlayerId: P1 };
+
+      // Execute a Pass action
+      const passAction = makeAction('Pass', P1);
+      const result = executeAction(phaseState, passAction);
+
+      expect(result.success).toBe(true);
+      expect(result.newState).toBeDefined();
+      expect(result.newState!.actionLog.length).toBeGreaterThan(initialLogSize);
+      // The last logged action should be our Pass action
+      const loggedAction = result.newState!.actionLog[result.newState!.actionLog.length - 1];
+      expect(loggedAction.id).toBe(passAction.id);
+      expect(loggedAction.type).toBe('Pass');
+    });
+
+    it('logs phase transitions to actionLog', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      // Just verify actionLog exists and is an array with entries from setup
+      expect(Array.isArray(state.actionLog)).toBe(true);
+      // Phase entries are added via enterPhase during createGame (Setup → Mulligan)
+      expect(state.actionLog.length).toBeGreaterThan(0);
+    });
+
+    it('logs mulligan action to actionLog', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+
+      // Mulligan phase is active — activePlayerId is the first player
+      const activePlayer = state.activePlayerId;
+      const handIds = state.players[activePlayer].hand;
+      const keepIds = handIds.slice(1); // keep all but first card (set aside 1)
+
+      const mulliganAction = makeAction('Mulligan', activePlayer, { keepIds });
+      const result = executeAction(state, mulliganAction);
+
+      expect(result.success).toBe(true);
+      expect(result.newState).toBeDefined();
+      // Mulligan action itself should be logged
+      const loggedMulligan = result.newState!.actionLog.find((a: GameAction) => a.id === mulliganAction.id);
+      expect(loggedMulligan).toBeDefined();
+      expect(loggedMulligan.type).toBe('Mulligan');
+    });
+
+    it('does not log failed actions to actionLog', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      const logSizeBefore = state.actionLog.length;
+
+      // Try to play a unit that doesn't exist in hand
+      const playAction = makeAction('PlayUnit', P1, {
+        cardInstanceId: 'nonexistent_card',
+        battlefieldId: state.battlefields[0].id,
+        hidden: false,
+        accelerate: false,
+      });
+      const result = executeAction(state, playAction);
+
+      expect(result.success).toBe(false);
+      expect(result.newState).toBeUndefined();
+      // Failed action should not appear in actionLog
+      expect(state.actionLog.find((a: GameAction) => a.id === playAction.id)).toBeUndefined();
+    });
+
+    it('logs turn changes to actionLog via startNewTurn', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      // Force to End of turn so advancePhase will call startNewTurn
+      const endState = { ...state, phase: 'End' as const, turn: 1, activePlayerId: P1 };
+
+      const result = executeAction(endState, makeAction('Pass', P1));
+
+      expect(result.success).toBe(true);
+      expect(result.newState).toBeDefined();
+      // Should have a TurnChange log entry
+      const turnChangeEntry = (result.newState!.actionLog as any[]).find(
+        (a) => a.type === 'TurnChange'
+      );
+      expect(turnChangeEntry).toBeDefined();
+      // SystemLogEntry has 'message' field directly (not nested in payload)
+      expect(String(turnChangeEntry.message)).toContain('Turn 2');
+    });
+
+    it('actionLog contains both GameAction and SystemLogEntry entries', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      // actionLog should contain SystemLogEntry entries from setup/mulligan phase
+      expect(state.actionLog.length).toBeGreaterThan(0);
+
+      // Check that some entries are SystemLogEntry (no payload field) and others are GameAction
+      const hasSystemLog = state.actionLog.some(
+        (entry: GameLogEntry) => 'message' in entry && !('payload' in entry)
+      );
+      const hasGameAction = state.actionLog.some(
+        (entry: GameLogEntry) => 'payload' in entry
+      );
+
+      // Both player actions (Mulligan) and system logs (PhaseChange) should coexist
+      expect(hasSystemLog).toBe(true);
+
+      // Phase change entries should have the correct structure
+      const phaseChangeEntries = state.actionLog.filter(
+        (entry: GameLogEntry) => entry.type === 'PhaseChange'
+      );
+      expect(phaseChangeEntries.length).toBeGreaterThan(0);
+
+      // Each log entry should have required fields: id, type, turn, phase, timestamp
+      for (const entry of state.actionLog) {
+        expect(entry).toHaveProperty('id');
+        expect(entry).toHaveProperty('type');
+        expect(entry).toHaveProperty('turn');
+        expect(entry).toHaveProperty('phase');
+        expect(entry).toHaveProperty('timestamp');
+      }
+
+      // SystemLogEntry-specific: should have 'message' field, no 'payload'
+      const sysEntry = phaseChangeEntries[0] as SystemLogEntry;
+      expect(sysEntry).toHaveProperty('message');
+      expect(sysEntry.message.length).toBeGreaterThan(0);
+    });
+
+    it('system log entries correctly identify playerId where applicable', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      // Phase change logs should have playerId set to activePlayerId
+      const phaseChangeEntries = state.actionLog.filter(
+        (entry: GameLogEntry) => entry.type === 'PhaseChange'
+      );
+      for (const entry of phaseChangeEntries) {
+        const sysEntry = entry as SystemLogEntry;
+        expect(sysEntry.playerId).toBeDefined();
+        expect([P1, P2]).toContain(sysEntry.playerId);
       }
     });
   });

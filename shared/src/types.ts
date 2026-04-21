@@ -51,7 +51,7 @@ export interface CardCost {
 
 export interface CardStats {
   might?: number;  // Combat strength
-  health?: number; // Health (for combat resolution)
+  health?: number; // Health points (for units)
 }
 
 export interface Ability {
@@ -157,7 +157,7 @@ export interface GameState {
   cardDefinitions: Record<string, CardDefinition>;  // cached card data
   winner: string | null;
   scoreLimit: number;
-  actionLog: GameAction[];
+  actionLog: GameLogEntry[];
   createdAt: number;
   isPvP: boolean;
 }
@@ -179,7 +179,9 @@ export type ActionType =
   | 'HideCard'
   | 'ReactFromHidden'
   | 'AssignBlocker'
-  | 'Concede';
+  | 'Concede'
+  | 'PhaseChange'
+  | 'TurnChange';
 
 export interface GameAction {
   id: string;
@@ -190,6 +192,22 @@ export interface GameAction {
   phase: Phase;
   timestamp: number;
 }
+
+// --- Game Log Types ---
+
+export type LogEntryType = 'PhaseChange' | 'TurnChange' | 'Score' | 'GameStart' | 'GameOver' | 'System';
+
+export interface SystemLogEntry {
+  id: string;
+  type: LogEntryType;
+  playerId?: string;
+  message: string;
+  turn: number;
+  phase: Phase;
+  timestamp: number;
+}
+
+export type GameLogEntry = GameAction | SystemLogEntry;
 
 // Specific action payloads
 export interface PlayUnitPayload {
