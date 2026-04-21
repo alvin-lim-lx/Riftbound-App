@@ -52,44 +52,55 @@ def run(cmd, capture=True, timeout=120):
 # ─── Baseline error snapshot (for QA pre-existing error filtering) ───────────
 
 BASELINE_ERRORS_KEY = "agent_baseline_errors"
+PREEXISTING_TEST_FAIL_KEY = "agent_preexisting_test_fails"
 
 def get_pre_existing_errors():
     """
-    Return a set of error lines that exist in the current codebase on origin/master.
-    These are pre-existing issues (backup files, debug logs) that should not
-    cause QA to fail — only NEW errors introduced by the fix are real failures.
-    """
-    errors = set()
+    Return a tuple (ts_errors, test_failures) for baseline on origin/master.
+    - ts_errors: set of TypeScript error line strings
+    - test_failures: set of test failure description strings (TESTFAIL:<testname>)
 
-    # 1. Snapshot baseline build errors (ignore known pre-existing sources)
-    # Run from a clean state on origin/master
+    These are pre-existing issues that should not cause QA to fail —
+    only NEW errors introduced by the fix are real failures.
+    """
+    ts_errors = set()
+    test_failures = set()
+
+    # Snapshot baseline from origin/master
     run("git stash 2>&1")
     run(f"git checkout origin/master 2>&1")
 
-    # Capture baseline tsc errors, filtering out known pre-existing sources
-    baseline_out = run("cd /home/panda/riftbound/backend && npx tsc --noEmit 2>&1")
-    baseline_out = run("cd /home/panda/riftbound/frontend && npx tsc --noEmit 2>&1")
+    # Capture baseline tsc errors
+    for out in [
+        run("cd /home/panda/riftbound/backend && npx tsc --noEmit 2>&1"),
+        run("cd /home/panda/riftbound/frontend && npx tsc --noEmit 2>&1"),
+    ]:
+        if out:
+            for line in out.splitlines():
+                if "cards - bkup" in line:
+                    continue
+                if "cards.ts.backup" in line:
+                    continue
+                ts_errors.add(line.strip())
 
-    if baseline_out:
-        for line in baseline_out.splitlines():
-            # Skip known pre-existing issues:
-            # - "cards - bkup.ts" is a git-tracked backup file with invalid TS
-            # - Any line referencing non-existent files (ghost imports)
-            if "cards - bkup" in line:
-                continue
-            if "cards.ts.backup" in line:
-                continue
-            errors.add(line.strip())
+    # Capture baseline test failures — pre-existing test bugs should not count
+    test_out = run("cd /home/panda/riftbound/backend && npm test 2>&1", timeout=180)
+    if test_out:
+        for line in test_out.splitlines():
+            # Match failure lines: "  ✗ MyTest.test.ts > my test name"
+            # Also match lines with "FAIL" in them that look like test failures
+            if re.search(r"[✗×]|\bFAIL\b", line, re.IGNORECASE) and ("test.ts" in line.lower() or "expect" in line.lower()):
+                test_failures.add(line.strip())
 
     # Restore working state
     run(f"git checkout - 2>&1")   # return to previous branch
     run("git stash pop 2>&1")
 
-    log(f"  [BASELINE] {len(errors)} pre-existing error lines snapshotted")
-    return errors
+    log(f"  [BASELINE] {len(ts_errors)} pre-existing TS errors, {len(test_failures)} test failures snapshotted")
+    return ts_errors, test_failures
 
 
-def filter_baseline_errors(output, baseline_errors):
+def filter_baseline_errors(output, ts_errors, test_failures):
     """
     Remove pre-existing baseline errors from command output.
     Returns (filtered_output, new_errors_found).
@@ -98,17 +109,26 @@ def filter_baseline_errors(output, baseline_errors):
     if not output:
         return "", set()
 
-    baseline = baseline_errors if baseline_errors else set()
-
     filtered_lines = []
     new_errors = set()
 
     for line in output.splitlines():
         stripped = line.strip()
-        if stripped in baseline:
-            continue   # pre-existing — skip
+
+        # Skip pre-existing TypeScript errors
+        if stripped in ts_errors:
+            continue
+
+        # Skip pre-existing test failures
+        is_preexisting_test_fail = False
+        for tf in test_failures:
+            if tf in stripped or stripped in tf:
+                is_preexisting_test_fail = True
+                break
+        if is_preexisting_test_fail:
+            continue
+
         filtered_lines.append(line)
-        # Track if this looks like a real error line
         if any(kw in stripped.lower() for kw in ["error", "fail", "cannot find"]):
             new_errors.add(stripped)
 
@@ -436,56 +456,55 @@ CHANGED FILES:
 {files_str}
 {baseline_note}
 
-The commands below have ALREADY BEEN RUN by the agent. Review the actual output
-and judge PASS/FAIL based only on NEW errors (pre-existing errors have been removed).
+The QA commands below have ALREADY BEEN RUN. The output has been pre-filtered
+to remove known pre-existing errors. Judge the CLEAN output below.
 
-QA RESULTS (already executed):
+QA RESULTS (pre-filtered — these are the only remaining issues):
 
-1. BACKEND TESTS — output:
+1. BACKEND TESTS:
 ---
-{backend_test_output or '(no output)'}
+{backend_test_output or '(no output — tests passed or no coverage)'}
 ---
 
-2. BACKEND BUILD — output:
+2. BACKEND BUILD:
 ---
 {backend_build_output or '(no output)'}
 ---
 
-3. FRONTEND BUILD — output:
+3. FRONTEND BUILD:
 ---
 {frontend_build_output or '(no output)'}
 ---
 
 SKILL TO LOAD (invoke NOW): verification-before-completion
 
-YOUR TASK — judge the filtered output above:
-- Ignore pre-existing baseline errors (they were already filtered)
-- Only flag NEW errors introduced by your fix as FAIL
-- Check changed files for: import errors, circular deps, debug console.log left in
+DECISION RULES — follow these exactly:
+- If backend test output shows NEW failures (not seen in baseline), → Backend Tests: FAIL
+- If backend build output shows NEW TypeScript errors (not in baseline note above), → Backend Build: FAIL
+- If frontend build output shows NEW errors (warnings are OK), → Frontend Build: FAIL
+- If there are NO NEW failures in any category → Overall QA: PASS
+- If there ARE NEW failures in any category → Overall QA: FAIL
 
-QA CHECKLIST:
-1. Backend Tests: Did any NEW test failures appear? (pre-existing failures ignored)
-2. Backend Build: Did any NEW TypeScript errors appear? (pre-existing filtered out)
-3. Frontend Build: Did any NEW errors appear? (warnings acceptable)
-4. Sanity: Are changed files clean (no import errors, no debug logs)?
+IMPORTANT: The baseline note above lists errors that WERE in the original codebase
+and are NOT your responsibility. Do NOT count them as failures.
+
+If all three checks (tests, backend build, frontend build) show no new errors → PASS.
+If any check shows new errors that were not in the baseline note → FAIL.
 
 FORMAT YOUR RESPONSE AS:
-## Backend Tests: PASS/FAIL/NO_COVERAGE
-<explain any NEW failures — ignore pre-existing>
+## Backend Tests: PASS / FAIL / NO_COVERAGE
+<if FAIL: name the specific NEW test that failed>
 
-## Backend Build: PASS/FAIL
-<explain any NEW errors — ignore pre-existing>
+## Backend Build: PASS / FAIL
+<if FAIL: name the specific NEW error line>
 
-## Frontend Build: PASS/FAIL
-<explain any NEW errors>
+## Frontend Build: PASS / FAIL
+<if FAIL: name the specific NEW error>
 
-## Sanity Check: PASS/FAIL
-<notes on changed files>
+## Sanity Check: PASS / FAIL
+<notes on changed files — any import errors or debug logs?>
 
-## Overall QA: PASS/FAIL
-
-IMPORTANT: Only mark FAIL if there are NEW errors not in the baseline.
-Pre-existing errors (backup files, debug logs) are acceptable.
+## Overall QA: PASS / FAIL
 
 Output "QA_COMPLETE:<PASS|FAIL>" on its own line when done.
 """
@@ -705,33 +724,35 @@ def main():
         # 4a. Capture baseline errors BEFORE the fix is applied
         #     so we can filter pre-existing failures from QA output
         log("  [BASELINE] Capturing pre-existing errors on origin/master...")
-        baseline_errors = get_pre_existing_errors()
+        ts_errors, test_failures = get_pre_existing_errors()
 
         # 4b. Run QA commands directly (not through hermes) so output is real
         log("  [QA] Running backend tests (affected tests only)...")
         affected_tests = get_affected_tests(changed_files)
         if affected_tests:
             test_files_arg = " ".join(affected_tests)
-            backend_test_output = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=120)
+            backend_test_raw = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=120)
         else:
-            backend_test_output = "NO AFFECTED TESTS FOUND — no test files match the changed code"
+            backend_test_raw = "NO AFFECTED TESTS FOUND — no test files match the changed code"
+        # Filter pre-existing test failures
+        backend_test_filtered, _ = filter_baseline_errors(backend_test_raw, ts_errors, test_failures)
 
         log("  [QA] Running backend build...")
         backend_build_raw = run("cd /home/panda/riftbound/backend && npm run build 2>&1", timeout=120)
-        backend_build_filtered, _ = filter_baseline_errors(backend_build_raw, baseline_errors)
+        backend_build_filtered, _ = filter_baseline_errors(backend_build_raw, ts_errors, test_failures)
 
         log("  [QA] Running frontend build...")
         frontend_build_raw = run("cd /home/panda/riftbound/frontend && npx vite build 2>&1", timeout=120)
-        frontend_build_filtered, _ = filter_baseline_errors(frontend_build_raw, baseline_errors)
+        frontend_build_filtered, _ = filter_baseline_errors(frontend_build_raw, ts_errors, test_failures)
 
         # 4c. Pass pre-filtered output to hermes for judgment
         qa_log = branch_log / "phase4_qa.log"
         ok = spawn_hermes(
             build_qa_prompt(num, title, changed_files,
-                            backend_test_output,
+                            backend_test_filtered,
                             backend_build_filtered,
                             frontend_build_filtered,
-                            baseline_errors),
+                            ts_errors),
             str(qa_log),
             timeout_minutes=20
         )
