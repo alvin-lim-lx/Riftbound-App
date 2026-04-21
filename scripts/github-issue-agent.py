@@ -66,15 +66,20 @@ def get_pre_existing_errors():
     ts_errors = set()
     test_failures = set()
 
-    # Snapshot baseline from origin/master
-    run("git stash 2>&1")
-    run(f"git checkout origin/master 2>&1")
+    # Snapshot baseline from origin/master — run builds to capture pre-existing errors
+    # Use a temp directory to avoid touching the working tree
+    import tempfile, shutil, pathlib
 
-    # Capture baseline tsc errors
-    for out in [
-        run("cd /home/panda/riftbound/backend && npx tsc --noEmit 2>&1"),
-        run("cd /home/panda/riftbound/frontend && npx tsc --noEmit 2>&1"),
-    ]:
+    tmpdir = pathlib.Path(tempfile.mkdtemp(prefix="rb_baseline_"))
+    try:
+        # Clone a shallow snapshot of origin/master for baseline measurement
+        run(f"git clone --depth=1 --branch=origin/master file://{WORKDIR} {tmpdir} 2>&1")
+        backend_tsc = run(f"cd {tmpdir}/backend && npx tsc --noEmit 2>&1", timeout=60)
+        frontend_tsc = run(f"cd {tmpdir}/frontend && npx tsc --noEmit 2>&1", timeout=60)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+    for out in [backend_tsc, frontend_tsc]:
         if out:
             for line in out.splitlines():
                 if "cards - bkup" in line:
@@ -83,8 +88,12 @@ def get_pre_existing_errors():
                     continue
                 ts_errors.add(line.strip())
 
-    # Capture baseline test failures — pre-existing test bugs should not count
+    # Snapshot baseline test failures on origin/master
+    # Run tests on origin/master directly (checkout only, no stash)
+    cur_branch = run("git symbolic-ref --short HEAD 2>/dev/null || echo 'detached'").strip()
+    run(f"git checkout origin/master 2>&1")
     test_out = run("cd /home/panda/riftbound/backend && npm test 2>&1", timeout=180)
+    run(f"git checkout {cur_branch} 2>&1")  # return to working branch
     if test_out:
         for line in test_out.splitlines():
             # Match failure lines: "  ✗ MyTest.test.ts > my test name"
@@ -92,9 +101,7 @@ def get_pre_existing_errors():
             if re.search(r"[✗×]|\bFAIL\b", line, re.IGNORECASE) and ("test.ts" in line.lower() or "expect" in line.lower()):
                 test_failures.add(line.strip())
 
-    # Restore working state
-    run(f"git checkout - 2>&1")   # return to previous branch
-    run("git stash pop 2>&1")
+    # Restore — no stash pop needed since we didn't use stash
 
     log(f"  [BASELINE] {len(ts_errors)} pre-existing TS errors, {len(test_failures)} test failures snapshotted")
     return ts_errors, test_failures
@@ -745,13 +752,25 @@ def main():
         frontend_build_raw = run("cd /home/panda/riftbound/frontend && npx vite build 2>&1", timeout=120)
         frontend_build_filtered, _ = filter_baseline_errors(frontend_build_raw, ts_errors, test_failures)
 
+        # Cap QA output at 150 lines to prevent prompt bloat
+        MAX_QA_LINES = 150
+        def cap_output(output, label):
+            lines = output.splitlines() if output else []
+            if len(lines) > MAX_QA_LINES:
+                return "\n".join(lines[:MAX_QA_LINES]) + f"\n... [{len(lines) - MAX_QA_LINES}] more lines (truncated)"
+            return output
+
+        backend_build_filtered_capped = cap_output(backend_build_filtered, "backend build")
+        frontend_build_filtered_capped = cap_output(frontend_build_filtered, "frontend build")
+        backend_test_filtered_capped = cap_output(backend_test_filtered, "backend tests")
+
         # 4c. Pass pre-filtered output to hermes for judgment
         qa_log = branch_log / "phase4_qa.log"
         ok = spawn_hermes(
             build_qa_prompt(num, title, changed_files,
-                            backend_test_filtered,
-                            backend_build_filtered,
-                            frontend_build_filtered,
+                            backend_test_filtered_capped,
+                            backend_build_filtered_capped,
+                            frontend_build_filtered_capped,
                             ts_errors),
             str(qa_log),
             timeout_minutes=20
