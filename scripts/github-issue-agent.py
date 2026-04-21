@@ -87,8 +87,8 @@ def comment_issue(issue_num, body):
 
 
 def close_issue(issue_num, reason="completed"):
-    gh("PATCH", f"/repos/{REPO}/issues/{issue_num}",
-       {"state": "closed", "state_reason": reason})
+    # Agent never closes issues — human reviews and merges PR to officially close
+    pass
 
 
 def get_untriaged_issues():
@@ -101,7 +101,7 @@ def get_untriaged_issues():
         if "pull_request" in i:
             continue
         labels = [l["name"] for l in i.get("labels", [])]
-        skip = {"in-progress", "done", "wontfix", "discussion"}
+        skip = {"done", "wontfix", "discussion"}
         if any(l in skip for l in labels):
             continue
         result.append(i)
@@ -574,24 +574,12 @@ def main():
             release_lock()
             return
 
-        # ── PHASE 6: CLOSE ────────────────────────────────────────────────
-        log(f"\n[PHASE 6/{len(PHASES)}] CLOSE — #{num}")
-        close_msg = (
-            f"## AI Agent Completed ✓\n\n"
-            f"An autonomous agent investigated and fixed this issue through a 5-phase pipeline:\n\n"
-            f"1. **Investigate** — understood the issue and formed a plan\n"
-            f"2. **Implement** — wrote the fix + tests\n"
-            f"3. **Code Review** — self-review: lint ✓, types ✓, security ✓\n"
-            f"4. **QA** — tests passed, builds verified\n"
-            f"5. **Push** — PR created\n\n"
-            f"**Pull Request:** {pr_url}\n\n"
-            f"Please review and merge the PR to complete this issue."
-        )
-        comment_issue(num, close_msg)
-        # Leave issue open — human must merge PR to officially close
-        log(f"\n  Issue #{num} left OPEN — PR ready for human review")
+        # ── DONE ───────────────────────────────────────────────────────────────
+        log(f"\n  Issue #{num} complete — PR ready for human review")
         log(f"  Branch: {branch}")
         log(f"  PR:     {pr_url}")
+        remove_label(num, "in-progress")
+        label_issue(num, ["in-review"])
 
     finally:
         release_lock()
