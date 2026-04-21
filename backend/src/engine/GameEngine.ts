@@ -335,36 +335,43 @@ export function executeAction(
     return { success: false, error: 'Not your turn.', action };
   }
 
+  // Clone state and add action to log before routing to handler.
+  // All state-mutating handlers work on cloned state and return newState,
+  // so we push the action to the clone's actionLog here — handlers that
+  // call deepClone() preserve the log entry.
+  const stateWithLog: GameState = deepClone(state);
+  stateWithLog.actionLog.push(action);
+
   // Route to handler
   switch (action.type) {
     case 'Pass':
-      return handlePass(state, action);
+      return handlePass(stateWithLog, action);
     case 'PlayUnit':
-      return handlePlayUnit(state, action);
+      return handlePlayUnit(stateWithLog, action);
     case 'PlaySpell':
-      return handlePlaySpell(state, action);
+      return handlePlaySpell(stateWithLog, action);
     case 'PlayGear':
-      return handlePlayGear(state, action);
+      return handlePlayGear(stateWithLog, action);
     case 'EquipGear':
-      return handleEquipGear(state, action);
+      return handleEquipGear(stateWithLog, action);
     case 'MoveUnit':
-      return handleMoveUnit(state, action);
+      return handleMoveUnit(stateWithLog, action);
     case 'Attack':
-      return handleAttack(state, action);
+      return handleAttack(stateWithLog, action);
     case 'DrawRune':
-      return handleDrawRune(state, action);
+      return handleDrawRune(stateWithLog, action);
     case 'UseRune':
-      return handleUseRune(state, action);
+      return handleUseRune(stateWithLog, action);
     case 'HideCard':
-      return handleHideCard(state, action);
+      return handleHideCard(stateWithLog, action);
     case 'ReactFromHidden':
-      return handleReactFromHidden(state, action);
+      return handleReactFromHidden(stateWithLog, action);
     case 'UseAbility':
-      return handleUseAbility(state, action);
+      return handleUseAbility(stateWithLog, action);
     case 'Concede':
-      return handleConcede(state, action);
+      return handleConcede(stateWithLog, action);
     case 'Mulligan':
-      return handleMulligan(state, action);
+      return handleMulligan(stateWithLog, action);
     default:
       return { success: false, error: `Unknown action type: ${action.type}`, action };
   }
