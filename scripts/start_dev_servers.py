@@ -65,6 +65,36 @@ def is_port_open(port, host="localhost"):
         return False
 
 
+def is_tailscale_running():
+    """Check if tailscaled is running and connected to the tailnet."""
+    try:
+        r = subprocess.run(
+            ["~/bin/tailscale", "status"],
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        if r.returncode == 0 and "100." in r.stdout:
+            return True, r.stdout.strip()
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return False, None
+
+
+def get_tailscale_ip():
+    """Get the Tailscale IP of this machine, or None."""
+    try:
+        r = subprocess.run(
+            ["~/bin/tailscale", "status", "--json"],
+            shell=True, capture_output=True, text=True, timeout=5
+        )
+        if r.returncode == 0:
+            import json
+            d = json.loads(r.stdout)
+            return d.get("Self", {}).get("TailscaleIPs", [None])[0]
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError, json.JSONDecodeError):
+        pass
+    return None
+
+
 def wait_for_backend(timeout=60):
     """Wait for backend to be healthy."""
     log(f"Waiting for backend (port {BACKEND_PORT}) to be ready...")
@@ -108,11 +138,19 @@ def start_frontend():
 
 
 def check_status():
-    """Check health of both servers."""
+    """Check health of both servers and Tailscale network."""
+    ts_ok, ts_output = is_tailscale_running()
+    ts_ip = get_tailscale_ip() if ts_ok else None
+
     backend_ok = is_port_open(BACKEND_PORT)
     frontend_ok = is_port_open(FRONTEND_PORT)
 
     print()
+    if ts_ok:
+        log(f"Tailscale:  RUNNING ({ts_ip})")
+    else:
+        log("Tailscale:  DOWN — Windows/mobile cannot reach dev servers")
+
     if backend_ok:
         log(f"Backend  (port {BACKEND_PORT}): RUNNING")
     else:
@@ -124,11 +162,17 @@ def check_status():
         log(f"Frontend (port {FRONTEND_PORT}): DOWN")
 
     print()
-    if backend_ok and frontend_ok:
-        log("All servers healthy.")
+    if ts_ok and backend_ok and frontend_ok:
+        log("All services healthy.")
+        log(f"  Local:    http://localhost:{FRONTEND_PORT} / http://localhost:{BACKEND_PORT}")
+        log(f"  Network:   http://{ts_ip}:{FRONTEND_PORT} / http://{ts_ip}:{BACKEND_PORT}")
         return True
     else:
-        log("Some servers are not running.")
+        missing = []
+        if not ts_ok: missing.append("Tailscale")
+        if not backend_ok: missing.append("Backend")
+        if not frontend_ok: missing.append("Frontend")
+        log(f"Missing: {', '.join(missing)}")
         return False
 
 
@@ -148,6 +192,17 @@ def main():
     log("=" * 50)
     log("Riftbound Dev Server Manager")
     log("=" * 50)
+
+    # Pre-flight: check Tailscale
+    ts_ok, _ = is_tailscale_running()
+    if ts_ok:
+        ts_ip = get_tailscale_ip()
+        log(f"Tailscale: RUNNING at {ts_ip}")
+    else:
+        log("WARNING: Tailscale is not running.")
+        log("  Windows/mobile browsers will not be able to reach dev servers.")
+        log("  Start it with: ~/bin/tailscaled --tun=userspace-networking &")
+        log("  Then: ~/bin/tailscale up --authkey=<key>")
 
     # Kill existing
     kill_all()
@@ -185,6 +240,9 @@ def main():
     log("Servers started:")
     log(f"  Backend:  http://localhost:{BACKEND_PORT}")
     log(f"  Frontend: http://localhost:{FRONTEND_PORT}")
+    ts_ip = get_tailscale_ip()
+    if ts_ip:
+        log(f"  Network:  http://{ts_ip}:{FRONTEND_PORT} / http://{ts_ip}:{BACKEND_PORT}")
     log(f"  Logs:     {LOG_DIR}/")
     log("=" * 50)
     log("To stop: python3 scripts/start_dev_servers.py --kill")
