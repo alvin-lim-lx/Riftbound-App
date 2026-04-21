@@ -102,7 +102,7 @@ export interface CardInstance {
   instanceId: string;  // Unique per-card instance ID
   cardId: string;       // References CardDefinition.id
   ownerId: string;
-  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'hidden' | 'equipment' | 'legend' | 'championZone';
+  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'rune' | 'hidden' | 'equipment' | 'legend' | 'championZone';
   battlefieldId?: string;
   ready: boolean;
   exhausted: boolean;   // Tapped / used this turn

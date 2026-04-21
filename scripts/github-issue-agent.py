@@ -150,6 +150,13 @@ def get_git_diff(branch):
 
 # ─── Phase prompts ────────────────────────────────────────────────────────────
 
+SYSTEM_INSTRUCTION = """
+IMPORTANT: At the start of EVERY phase below, you MUST invoke the relevant skill
+using the Skill tool (skill_manage action=view). The skill content loads into
+your context and defines exactly how to proceed. Do NOT skip this.
+"""
+
+
 def build_investigate_prompt(issue_num, title, body):
     return f"""You are investigating GitHub issue #{issue_num} in /home/panda/riftbound.
 
@@ -157,27 +164,35 @@ ISSUE #{issue_num}: {title}
 BODY:
 {body[:3000] if body else '(no description)'}
 
+{SYSTEM_INSTRUCTION}
+
+SKILL TO LOAD: systematic-debugging
+Then investigate the issue and produce findings.
+
 YOUR TASK:
-1. Read the full issue carefully
-2. Explore the relevant parts of the codebase
-3. Identify which files need to change and what the fix should look like
-4. Write your findings as a detailed plan
+1. Invoke the systematic-debugging skill NOW (skill_manage action=view)
+2. Follow its 4-phase process: Root Cause Investigation → Pattern Analysis → Hypothesis → Implementation Planning
+3. Find the ROOT CAUSE — do not propose fixes until you understand WHY it breaks
+4. Explore the relevant parts of the codebase thoroughly
+5. Write your findings
 
-FORMAT YOUR RESPONSE AS:
-## Understanding
-<what the issue is about>
+OUTPUT FORMAT:
+## Root Cause
+<the actual root cause — not the symptom>
 
-## Files Likely to Change
-- file1.ts
-- file2.tsx
+## Evidence
+<what you found in the code that confirms this>
 
-## Proposed Fix Summary
-<concise description of what to change>
+## Files to Change
+- list of files
+
+## Proposed Fix
+<what to change and why>
 
 ## Verification Plan
-<how you will verify the fix works>
+<how to verify the fix works>
 
-Stop after planning. Do NOT make any code changes yet.
+IMPORTANT: Do NOT make any code changes. Only investigate and plan.
 Output "DONE" on its own line when finished.
 """
 
@@ -192,24 +207,31 @@ ISSUE BODY:
 YOUR PLAN (from investigation phase):
 {findings}
 
-YOUR TASK:
-1. Make the necessary code changes to fix this issue
-2. If the issue is unclear, make a reasonable best-effort attempt
-3. Write a test that would pass if the fix works (put it in the appropriate tests/ directory)
-4. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
-5. Fix any test failures your changes introduced before committing
-6. Stage and commit your changes with message: "fix #{issue_num}: {title[:60]}"
-   (Do NOT push yet — the next phase will handle that)
-7. Run: git log -1 --pretty=format:"COMMIT:%H" to capture the commit hash
+{SYSTEM_INSTRUCTION}
 
-IMPORTANT:
+SKILL TO LOAD (invoke NOW): test-driven-development
+Then implement the fix following RED-GREEN-REFACTOR.
+
+YOUR TASK:
+1. Invoke the test-driven-development skill NOW (skill_manage action=view)
+2. Follow its RED-GREEN-REFACTOR cycle strictly:
+   a. RED: Write a failing test that reproduces the bug/validates the fix
+   b. GREEN: Write the MINIMAL code to make the test pass
+   c. REFACTOR: Clean up if needed
+3. If the issue is ambiguous, make a reasonable best-effort attempt
+4. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
+5. Fix any test failures your changes introduced
+6. Stage and commit your changes with message: "fix #N: {title[:60]}"
+7. Run: git log -1 --pretty=format:"COMMIT:%H"
+
+IMPORTANT RULES:
+- You MUST write the failing test BEFORE writing any production code
+- If you accidentally write production code first, DELETE it and start with the test
 - Only modify files under /home/panda/riftbound
-- Make atomic, focused commits
-- If tests fail, fix the underlying issue, not the tests
-- Do NOT run npm install or add new dependencies without justification
+- Do NOT run npm install or add new dependencies
 - Do NOT push
 
-Output "COMMIT:<hash>" on its own line when you have committed your changes.
+Output "COMMIT:<hash>" on its own line when you have committed.
 Then output "DONE" on its own line.
 """
 
@@ -222,53 +244,53 @@ ISSUE #{issue_num}: {title}
 YOUR CHANGES (git diff vs origin/master):
 {diff[:8000] if diff else '(no changes detected)'}
 
-CODE REVIEW CHECKLIST — examine each item and report PASS or FAIL with explanation:
+{SYSTEM_INSTRUCTION}
 
-1. LINT: Run the linter if available and report any errors
+SKILL TO LOAD (invoke NOW): requesting-code-review
+Then perform a thorough code review following its checklist and two-stage process.
+
+CODE REVIEW — two stages:
+
+STAGE 1 — SPEC COMPLIANCE:
+Does the code actually fix the issue? Check:
+- Root cause was addressed (not just the symptom)
+- The fix handles edge cases
+- No functionality was accidentally broken
+
+STAGE 2 — CODE QUALITY:
+Run each check and report PASS/FAIL:
+
+1. LINT: Run linter if available
    - Backend: cd /home/panda/riftbound/backend && npx eslint src/ --max-warnings=0 2>&1 || true
    - Frontend: cd /home/panda/riftbound/frontend && npx eslint src/ --max-warnings=0 2>&1 || true
 
-2. TYPES: Run the type checker and report any errors
+2. TYPES: Run type checker
    - cd /home/panda/riftbound/backend && npx tsc --noEmit 2>&1
    - cd /home/panda/riftbound/frontend && npx tsc --noEmit 2>&1
 
-3. SECURITY: Check for common security issues in your diff:
-   - No hardcoded secrets, API keys, or credentials
-   - No SQL injection vectors (user input properly parameterized)
-   - No eval() or other dangerous patterns
-   - No sensitive data logged
+3. SECURITY: No hardcoded secrets, no injection vectors, no eval(), no sensitive data logged
 
-4. LOGIC: Review the changed code for correctness:
-   - No off-by-one errors
-   - No null/undefined access issues
-   - Error handling is appropriate
+4. LOGIC: No off-by-one errors, no null/undefined access, error handling is appropriate
 
 5. BACKWARDS COMPATIBILITY: Does this change break any existing API contracts?
 
+6. YAGNI CHECK: Did you add code that isn't strictly needed for this fix?
+
 FORMAT YOUR RESPONSE AS:
-## Lint Result: PASS/FAIL
-<details if fail>
-<error output>
-</details>
+## Stage 1 — Spec Compliance: PASS/FAIL
+<notes>
 
-## Type Check Result: PASS/FAIL
-<details if fail>
-<type errors>
-</details>
-
-## Security Result: PASS/FAIL
-<details if fail>
-<issues found>
-</details>
-
-## Logic Review: PASS/FAIL
-<details if fail>
-<issues found>
-</details>
+## Stage 2 — Code Quality:
+### Lint: PASS/FAIL
+### Types: PASS/FAIL
+### Security: PASS/FAIL
+### Logic: PASS/FAIL
+### Backwards Compat: PASS/FAIL
+### YAGNI: PASS/FAIL
 
 ## Overall: APPROVED / NEEDS_CHANGES
 
-If NEEDS_CHANGES: describe what must be fixed before this can be approved.
+If NEEDS_CHANGES: describe what must be fixed.
 
 Output "REVIEW_COMPLETE:<APPROVED|NEEDS_CHANGES>" on its own line when done.
 """
@@ -283,43 +305,51 @@ ISSUE #{issue_num}: {title}
 CHANGED FILES:
 {files_str}
 
-QA CHECKLIST — run each and report PASS/FAIL:
+{SYSTEM_INSTRUCTION}
+
+SKILL TO LOAD (invoke NOW): verification-before-completion
+Then verify all QA checks pass with ACTUAL command output before claiming any result.
+
+QA CHECKLIST — for EACH item below, you MUST run the command and show the output:
 
 1. BACKEND TESTS:
    cd /home/panda/riftbound/backend && npm test 2>&1
-   - If tests fail, this is a FAIL
-   - If there are no tests for the changed code, note it as "NO TEST COVERAGE" (not a failure)
+   - Run the command and show the output
+   - "NO TEST COVERAGE" is acceptable (not a failure) only if no tests exist for the changed code
 
 2. FRONTEND BUILD:
    cd /home/panda/riftbound/frontend && npx vite build 2>&1
-   - Build must succeed without errors
-   - Warnings are acceptable
+   - Run the command and show the output
+   - Warnings are acceptable; errors are not
 
 3. BACKEND BUILD:
    cd /home/panda/riftbound/backend && npm run build 2>&1
-   - Build must succeed without errors
+   - Run the command and show the output
 
 4. SYNTAX/SANITY: Check the changed files for any obvious issues:
    - No import errors (all referenced modules exist)
    - No circular dependencies introduced
    - No large debugging console.log statements left in
 
+IMPORTANT: You must RUN each command and show its output. Do not assume or guess
+that they pass. verification-before-completion REQUIRES fresh evidence before
+claiming any result.
+
 FORMAT YOUR RESPONSE AS:
 ## Backend Tests: PASS/FAIL/NO_COVERAGE
-<output summary>
+<RUN THE COMMAND — show actual output>
 
 ## Backend Build: PASS/FAIL
-<output summary>
+<RUN THE COMMAND — show actual output>
 
 ## Frontend Build: PASS/FAIL
-<output summary>
+<RUN THE COMMAND — show actual output>
 
 ## Sanity Check: PASS/FAIL
 <notes>
 
 ## Overall QA: PASS/FAIL
 
-If FAIL on any critical item (tests, builds), the overall is FAIL.
 Output "QA_COMPLETE:<PASS|FAIL>" on its own line when done.
 """
 

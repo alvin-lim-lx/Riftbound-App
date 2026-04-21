@@ -1,0 +1,194 @@
+#!/usr/bin/env python3
+"""
+Riftbound Dev Server Manager
+
+Starts both backend (port 3001) and frontend (port 5173) dev servers
+as background processes with proper health checks.
+
+Usage:
+    python3 scripts/start_dev_servers.py        # start both servers
+    python3 scripts/start_dev_servers.py --kill # stop all dev servers
+    python3 scripts/start_dev_servers.py --status  # check health
+"""
+
+import subprocess
+import time
+import sys
+import os
+import signal
+import re
+from pathlib import Path
+
+ROOT = Path("/home/panda/riftbound")
+BACKEND_DIR = ROOT / "backend"
+FRONTEND_DIR = ROOT / "frontend"
+LOG_DIR = ROOT / ".dev_logs"
+LOG_DIR.mkdir(exist_ok=True)
+
+BACKEND_LOG = LOG_DIR / "backend.log"
+FRONTEND_LOG = LOG_DIR / "frontend.log"
+
+BACKEND_PORT = 3001
+FRONTEND_PORT = 5173
+
+
+def log(msg):
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def run(cmd, capture=True, timeout=30):
+    r = subprocess.run(
+        cmd, shell=True, capture_output=capture, text=True, timeout=timeout
+    )
+    return r.stdout.strip() if capture else r.returncode == 0
+
+
+def kill_all():
+    """Kill all ts-node-dev and vite processes."""
+    log("Killing existing dev servers...")
+    for pattern in ["ts-node-dev", "vite", "GameServer"]:
+        run(f"pkill -9 -f '{pattern}' 2>/dev/null || true")
+    # Also kill anything holding the ports
+    run(f"fuser -k {BACKEND_PORT}/tcp 2>/dev/null || true")
+    run(f"fuser -k {FRONTEND_PORT}/tcp 2>/dev/null || true")
+    time.sleep(2)
+    log("All servers stopped.")
+
+
+def is_port_open(port, host="localhost"):
+    """Check if a port is accepting connections."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=2):
+            return True
+    except (socket.timeout, ConnectionRefusedError, OSError):
+        return False
+
+
+def wait_for_backend(timeout=60):
+    """Wait for backend to be healthy."""
+    log(f"Waiting for backend (port {BACKEND_PORT}) to be ready...")
+    start = time.time()
+    while time.time() - start < timeout:
+        if is_port_open(BACKEND_PORT):
+            log(f"Backend is up on port {BACKEND_PORT}")
+            return True
+        time.sleep(2)
+    log(f"TIMEOUT: Backend did not start within {timeout}s")
+    return False
+
+
+def start_backend():
+    """Start the backend dev server."""
+    log("Starting backend...")
+    # Redirect output to log file
+    stdout_f = open(BACKEND_LOG, "w")
+    proc = subprocess.Popen(
+        ["npm", "run", "dev"],
+        cwd=str(BACKEND_DIR),
+        stdout=stdout_f,
+        stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,  # new process group for clean kill
+    )
+    return proc
+
+
+def start_frontend():
+    """Start the frontend dev server."""
+    log("Starting frontend...")
+    stdout_f = open(FRONTEND_LOG, "w")
+    proc = subprocess.Popen(
+        ["npm", "run", "dev"],
+        cwd=str(FRONTEND_DIR),
+        stdout=stdout_f,
+        stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,
+    )
+    return proc
+
+
+def check_status():
+    """Check health of both servers."""
+    backend_ok = is_port_open(BACKEND_PORT)
+    frontend_ok = is_port_open(FRONTEND_PORT)
+
+    print()
+    if backend_ok:
+        log(f"Backend  (port {BACKEND_PORT}): RUNNING")
+    else:
+        log(f"Backend  (port {BACKEND_PORT}): DOWN")
+
+    if frontend_ok:
+        log(f"Frontend (port {FRONTEND_PORT}): RUNNING")
+    else:
+        log(f"Frontend (port {FRONTEND_PORT}): DOWN")
+
+    print()
+    if backend_ok and frontend_ok:
+        log("All servers healthy.")
+        return True
+    else:
+        log("Some servers are not running.")
+        return False
+
+
+def main():
+    if len(sys.argv) > 1:
+        arg = sys.argv[1]
+        if arg in ("--kill", "-k"):
+            kill_all()
+            return
+        elif arg in ("--status", "-s"):
+            check_status()
+            return
+        elif arg in ("--help", "-h"):
+            print(__doc__)
+            return
+
+    log("=" * 50)
+    log("Riftbound Dev Server Manager")
+    log("=" * 50)
+
+    # Kill existing
+    kill_all()
+
+    # Start backend first
+    backend_proc = start_backend()
+
+    # Wait for backend to be healthy
+    if not wait_for_backend(timeout=90):
+        log("FAILED: Backend did not start. Check logs:")
+        log(f"  tail -f {BACKEND_LOG}")
+        # Kill backend on failure
+        try:
+            os.killpg(os.getpgid(backend_proc.pid), signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        sys.exit(1)
+
+    # Small buffer
+    time.sleep(2)
+
+    # Start frontend
+    frontend_proc = start_frontend()
+
+    # Wait for frontend
+    time.sleep(5)
+    if is_port_open(FRONTEND_PORT):
+        log(f"Frontend is up on port {FRONTEND_PORT}")
+    else:
+        log(f"WARNING: Frontend may not be ready yet. Check:")
+        log(f"  tail -f {FRONTEND_LOG}")
+
+    print()
+    log("=" * 50)
+    log("Servers started:")
+    log(f"  Backend:  http://localhost:{BACKEND_PORT}")
+    log(f"  Frontend: http://localhost:{FRONTEND_PORT}")
+    log(f"  Logs:     {LOG_DIR}/")
+    log("=" * 50)
+    log("To stop: python3 scripts/start_dev_servers.py --kill")
+
+
+if __name__ == "__main__":
+    main()

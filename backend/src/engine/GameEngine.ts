@@ -500,12 +500,12 @@ function executeChannelPhase(state: GameState): GameState {
   const player = state.players[playerId];
   const newState = deepClone(state);
 
-  // Channel 2 Runes from Rune Deck into Base (hand)
+  // Channel 2 Runes from Rune Deck into Rune Pool (top bar)
   for (let i = 0; i < 2; i++) {
     const runeId = player.runeDeck.shift();
     if (runeId) {
-      newState.allCards[runeId].location = 'hand';
-      player.hand.push(runeId);
+      // Set location to 'rune' (active rune pool visible in top bar)
+      (newState.allCards[runeId] as { location: string }).location = 'rune';
     }
   }
 
@@ -524,13 +524,14 @@ function executeDrawPhase(state: GameState): GameState {
     player.hand.push(cardId);
   }
 
-  // Clear Rune Pool (discard all runes from hand)
-  const runeIds = player.hand.filter(id => newState.allCards[id]?.cardId === 'Rune');
+  // Clear Rune Pool (discard all runes from rune pool)
+  const runeIds = Object.keys(newState.allCards).filter(
+    id => newState.allCards[id].ownerId === playerId && newState.allCards[id].location === 'rune'
+  );
   for (const runeId of runeIds) {
-    newState.allCards[runeId].location = 'runeDiscard';
+    (newState.allCards[runeId] as { location: string }).location = 'runeDiscard';
     player.runeDiscard.push(runeId);
   }
-  player.hand = player.hand.filter(id => newState.allCards[id]?.cardId !== 'Rune');
 
   return newState;
 }

@@ -34,7 +34,7 @@ export interface CardInstance {
     instanceId: string;
     cardId: string;
     ownerId: string;
-    location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'hidden' | 'equipment';
+    location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'rune' | 'hidden' | 'equipment';
     battlefieldId?: string;
     ready: boolean;
     exhausted: boolean;
