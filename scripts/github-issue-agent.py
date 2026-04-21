@@ -749,13 +749,35 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
     return proc.returncode == 0, timed_out
 
 
-def extract_result(log_path, prefix):
-    """Find a RESULT line like 'DONE' or 'REVIEW_COMPLETE:APPROVED' in log."""
+def extract_result(log_path, prefix, multiline=False):
+    """Find a RESULT line or section in log.
+
+    Single-line mode (default): return the first line containing prefix.
+    Multiline mode: scan backward from 'DONE' to find the section header
+    (prefix line like '## Root Cause'), return all lines from that header
+    to the 'DONE' marker. Handles cases where prefix appears mid-document.
+    """
     try:
         with open(log_path) as f:
-            for line in f:
+            content = f.read()
+        if not multiline:
+            for line in content.splitlines():
                 if prefix in line:
                     return line.strip()
+            return ""
+        # Multiline: find the section starting with prefix, ending at DONE
+        lines = content.splitlines()
+        # Find last occurrence of DONE, then search backward from there for prefix
+        done_indices = [i for i, l in enumerate(lines) if l.strip() == "DONE"]
+        if not done_indices:
+            return ""
+        # Search backward from the last DONE
+        for idx in reversed(done_indices):
+            for i in range(idx - 1, -1, -1):
+                if lines[i].startswith(prefix):
+                    # Collect from this line to the DONE line
+                    return "\n".join(lines[i:idx + 1])
+        return ""
     except Exception:
         pass
     return ""
@@ -828,10 +850,16 @@ def main():
                 implement_done = phase2_state.startswith("done:")
                 if saved_findings and not implement_done:
                     log(f"  [RESUME] Found checkpoint for #{num} — reusing branch '{saved_branch}', skipping completed phases")
-                    run(f"git checkout {saved_branch} 2>&1")
-                    findings = saved_findings
-                    branch_log = checkpoint_dir
-                    resumed = True
+                    checkout_result = run(f"git checkout {saved_branch} 2>&1")
+                    current_branch = run("git symbolic-ref --short HEAD 2>/dev/null || echo 'detached'").strip()
+                    if current_branch != saved_branch:
+                        log(f"  [WARN] Checkout to '{saved_branch}' failed (on '{current_branch}') — forcing fresh start")
+                        saved_findings = ""  # force fresh start
+                        resumed = False
+                    else:
+                        findings = saved_findings
+                        branch_log = checkpoint_dir
+                        resumed = True
                     # Determine which phase to resume from
                     if phases.get("5_PUSH", "").startswith("done:"):
                         # Already pushed — nothing to do
@@ -879,7 +907,7 @@ def main():
                 str(investigate_log),
                 timeout_minutes=15
             )
-            findings = extract_result(str(investigate_log), "## Root Cause")
+            findings = extract_result(str(investigate_log), "## Root Cause", multiline=True)
             log(f"  Phase 1 complete — findings captured ({'ok' if ok else 'agent exited non-zero'})")
             if not ok:
                 # Timeout or error — save checkpoint so next run can resume
@@ -985,7 +1013,9 @@ def main():
             ok, _ = spawn_hermes(
                 build_code_review_prompt(num, title, diff),
                 str(review_log),
-                timeout_minutes=20
+                timeout_minutes=20,
+                issue_num=num,
+                subphase="code-review"
             )
             review_result = extract_result(str(review_log), "REVIEW_COMPLETE:")
             log(f"  Phase 3 complete — {review_result}")
