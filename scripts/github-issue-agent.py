@@ -880,7 +880,7 @@ def main():
                 ok, timed_out = spawn_hermes(
                     build_investigate_prompt(num, title, body),
                     str(investigate_log),
-                    timeout_minutes=15
+                    timeout_minutes=IMPL_TIMEOUT_MIN
                 )
                 findings = extract_result(str(investigate_log), "## Root Cause", multiline=True)
                 log(f"  Phase 1 complete — findings captured ({'ok' if ok else 'agent exited non-zero'})")
