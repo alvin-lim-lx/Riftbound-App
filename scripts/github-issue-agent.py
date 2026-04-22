@@ -335,6 +335,8 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
         text=True,
         cwd=WORKDIR,
         close_fds=True
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=WORKDIR
     )
 
     # tmp_fd is now dup'd into proc's fd table; close the original
@@ -355,6 +357,12 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
             wip_timer.cancel()
 
     _atomic_move(tmp_path, log_file)
+    # Always write output log file after communicate()
+    try:
+        log_file.write_text(outs or "", encoding="utf-8")
+    except Exception:
+        pass
+
     return proc.returncode == 0, False
 
 
