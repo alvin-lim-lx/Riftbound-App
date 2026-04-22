@@ -312,9 +312,12 @@ def get_affected_tests(changed_files):
 
 def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None):
     """Spawn hermes with optional WIP commit timer. Returns (ok, timed_out)."""
-    import pathlib
-    log_file = pathlib.Path(log_path)
+    log_file = Path(log_path)
     log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    # Atomic write: write to a .tmp file, rename on success
+    tmp_path = log_file.with_suffix(".tmp")
+    tmp_fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
 
     wip_timer = None
     if issue_num and subphase:
@@ -327,21 +330,17 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
     proc = subprocess.Popen(
         ["hermes", "chat", "-q", prompt, "--source", "github-issue-agent", "--pass-session-id"],
         stdin=subprocess.DEVNULL,
+        stdout=tmp_fd,
+        stderr=subprocess.STDOUT,
+        text=True,
+        cwd=WORKDIR,
+        close_fds=True
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, cwd=WORKDIR
     )
 
-    def stream_output():
-        try:
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                current = log_file.read_text(encoding="utf-8")
-                log_file.write_text(current + line, encoding="utf-8")
-        except Exception:
-            pass
-
-    streamer = threading.Thread(target=stream_output, daemon=True)
-    streamer.start()
+    # tmp_fd is now dup'd into proc's fd table; close the original
+    os.close(tmp_fd)
 
     try:
         outs, errs = proc.communicate(timeout=timeout_minutes * 60)
@@ -351,11 +350,13 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
         log(f"  [TIMEOUT] Process killed after {timeout_minutes} min")
         if wip_timer:
             wip_timer.cancel()
+        _atomic_move(tmp_path, log_file)
         return False, True
     finally:
         if wip_timer:
             wip_timer.cancel()
 
+    _atomic_move(tmp_path, log_file)
     # Always write output log file after communicate()
     try:
         log_file.write_text(outs or "", encoding="utf-8")
@@ -363,6 +364,12 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
         pass
 
     return proc.returncode == 0, False
+
+
+def _atomic_move(src: Path, dst: Path):
+    """Move src to dst atomically. Does nothing if src doesn't exist."""
+    if src.exists():
+        os.replace(str(src), str(dst))
 
 
 def git_wip_commit(issue_num, subphase=""):
