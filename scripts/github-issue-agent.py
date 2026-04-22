@@ -178,7 +178,8 @@ def remove_label(issue_num, label):
 
 
 def comment_issue(issue_num, body):
-    run(f'gh issue comment #{issue_num} -b "{body.replace(chr(10), "\\n")}" 2>&1', capture=False)
+    escaped = body.replace(chr(10), "\\n")
+    run(f'gh issue comment #{issue_num} -b "{escaped}" 2>&1', capture=False)
 
 
 def close_issue(issue_num, reason="completed"):
@@ -293,28 +294,21 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
         log(f"  [TIMER] WIP commit scheduled for {lead}s from now")
 
     proc = subprocess.Popen(
-        ["hermes", "--acp", "--stdio"],
+        ["hermes", "chat", "-q", prompt,
+         "--source", "github-issue-agent", "--pass-session-id"],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, cwd=WORKDIR
     )
 
-    def stream_output():
-        try:
-            for line in proc.stdout:
-                print(line, end="", flush=True)
-                current = log_file.read_text(encoding="utf-8")
-                log_file.write_text(current + line, encoding="utf-8")
-        except Exception:
-            pass
-
-    streamer = threading.Thread(target=stream_output, daemon=True)
-    streamer.start()
-
     try:
-        outs, errs = proc.communicate(input=prompt, timeout=timeout_minutes * 60)
+        # hermes chat -q reads prompt from -q arg, not stdin
+        # stdin is only needed to detect early EOF / broken pipe
+        outs, errs = proc.communicate(timeout=timeout_minutes * 60)
+        log_file.write_text(outs if outs else "", encoding="utf-8")
     except subprocess.TimeoutExpired:
         proc.kill()
         outs, errs = proc.communicate()
+        log_file.write_text((outs if outs else "") + f"\n[TIMEOUT after {timeout_minutes} min]\n", encoding="utf-8")
         log(f"  [TIMEOUT] Process killed after {timeout_minutes} min")
         if wip_timer:
             wip_timer.cancel()
