@@ -7,7 +7,8 @@
     "1_INVESTIGATE": "incomplete",
     "2_IMPLEMENT": "done:After each commit, output: git log -1 --pretty=format:\"%H\"",
     "3_CODE_REVIEW": "done",
-    "4_QA": "done"
+    "4_QA": "done",
+    "5_PUSH": "done:https://github.com/alvin-lim-lx/Riftbound-App/pull/21"
   },
   "ts": "20260422_093502"
 }
