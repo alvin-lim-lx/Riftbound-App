@@ -199,6 +199,50 @@ def push_branch_and_tag(branch, issue_num):
         run(f"git push origin {tag_name} --force 2>&1")
 
 
+def squash_wip_commits(branch, base_ref="origin/master"):
+    """Squash all WIP commits on the current branch into a single commit.
+
+    Finds all commits on the current branch that are NOT on base_ref and contain
+    "WIP" in the message. The non-WIP commits are kept as-is; all WIP commits
+    are soft-reset (their changes preserved as unstaged) and recommitted as one.
+
+    Returns the squashed commit hash, or None if no WIP commits found.
+    """
+    # Find commits on this branch that are WIP and not reachable from origin/master
+    wip_commits = run(
+        f"git log {base_ref}..HEAD --format='%H %s' 2>&1"
+    )
+    wip_lines = [l for l in wip_commits.strip().splitlines() if l and "WIP" in l]
+    if not wip_lines:
+        log("  [SQUASH] No WIP commits to squash")
+        return None
+
+    wip_hashes = [l.split()[0] for l in wip_lines]
+    log(f"  [SQUASH] Found {len(wip_hashes)} WIP commits to squash: {wip_hashes[0][:7]}..{wip_hashes[-1][:7]}")
+
+    squash_msg = f"WIP: fix — squashed {len(wip_hashes)} WIP commits"
+
+    # Soft-reset to just before the first WIP commit.
+    # All changes from WIP commits become unstaged working-tree changes.
+    # Non-WIP fix commits (if any) stay on top of origin/master.
+    target = wip_hashes[0]  # oldest WIP commit
+    result = run(f"git reset --soft {target} 2>&1")
+    if "error" in result.lower() or "failed" in result.lower():
+        log(f"  [SQUASH] Soft reset failed: {result[:100]}")
+        return None
+
+    result = run(
+        "git commit -m " + shlex.quote(squash_msg) + " --no-verify 2>&1"
+    )
+    if result.returncode != 0:
+        log(f"  [SQUASH] Squash commit failed: {result[:100]}")
+        return None
+
+    new_hash = run("git rev-parse HEAD 2>&1").strip()
+    log(f"  [SQUASH] Squashed into {new_hash[:7]}")
+    return new_hash
+
+
 # ─── GitHub helpers ────────────────────────────────────────────────────────────
 
 def gh_json(endpoint):
@@ -244,18 +288,21 @@ def get_untriaged_issues():
 
     LABEL LIFECYCLE:
       no label          → pipeline picks up, adds in-progress
-      in-progress       → pipeline picks up (resume from checkpoint)
+      in-progress       → pipeline is currently working this issue (resume from checkpoint)
       qa-failed         → pipeline picks up (retry IMPLEMENT+)
-      needs-review      → skip (human must review agent's diff)
+      needs-review      → skip (human must review agent's diff before retry)
       in-review         → skip (PR open, human reviewing)
       push-failed       → skip (manual intervention needed)
+      agent-error       → skip (human must review before retry)
       done / wontfix / duplicate / invalid → skip (human decision)
 
-    Skip set: issues with these labels are NEVER picked up.
+    NOTE: "in-progress" is intentionally NOT in the skip set. The pipeline adds
+    this label when it starts working an issue. If the script restarts while an
+    issue has this label, get_untriaged_issues() will skip it only if a prior
+    checkpoint exists for that issue (handled by find_issue_tag in the main loop).
     """
     all_issues = gh_json("issues?state=open&per_page=20")
     skip = {
-        "in-progress",   # currently being worked
         "in-review",     # PR open, human reviewing
         "needs-review",  # agent diff needs human review (not a retry)
         "push-failed",   # manual push needed
@@ -265,6 +312,7 @@ def get_untriaged_issues():
         "duplicate",     # human: duplicate
         "invalid",       # human: invalid
         # qa-failed: NOT skipped — agent retries IMPLEMENT+ from checkpoint
+        # in-progress: NOT skipped — if checkpoint exists, resume; else fresh start
     }
     result = []
     for i in all_issues:
@@ -353,7 +401,7 @@ def get_affected_tests(changed_files):
 
 # ─── Hermès spawn ─────────────────────────────────────────────────────────────
 
-def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None):
+def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None, max_tokens=None):
     """Spawn hermes with optional WIP commit timer. Returns (ok, timed_out)."""
     log_file = Path(log_path)
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -371,10 +419,15 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
         wip_timer.start()
         log(f"  [TIMER] WIP commit scheduled for {lead}s from now")
 
+    # Build hermes command args
+    cmd = ["hermes", "chat", "-q", prompt, "--source", "github-issue-agent", "--pass-session-id"]
+    if max_tokens:
+        cmd.extend(["--max-tokens", str(max_tokens)])
+
     # Pass the raw fd to subprocess — it writes directly to the temp file.
     # communicate() with stdout=PIPE returns empty since output goes to the fd.
     proc = subprocess.Popen(
-        ["hermes", "chat", "-q", prompt, "--source", "github-issue-agent", "--pass-session-id"],
+        cmd,
         stdin=subprocess.DEVNULL,
         stdout=tmp_fd,
         stderr=subprocess.STDOUT,
@@ -415,13 +468,11 @@ def _atomic_move(src: Path, dst: Path):
 
 
 def git_wip_commit(issue_num, subphase=""):
-    """Stage all changes and commit as WIP with a descriptive message."""
+    """Stage source-file changes only and commit as WIP with a descriptive message."""
     log(f"  [WIP-COMMIT] ~120s before timeout — committing WIP state...")
-    status = subprocess.run(
-        "git status --porcelain", shell=True, capture_output=True, text=True, cwd=WORKDIR
-    )
-    if not status.stdout.strip():
-        log("  [WIP] No changes to commit")
+    # Only commit if actual source files changed (not logs, checkpoints, etc.)
+    if not get_changed_source_files():
+        log("  [WIP] No source files changed — skipping WIP commit")
         return
     commit_msg = f"WIP: fix #{issue_num}" + (f" — {subphase}" if subphase else "")
     result = subprocess.run(
@@ -509,7 +560,7 @@ def build_implement_prompt(issue_num, title, body, findings, resume_subphase=Non
 ISSUE #{issue_num}: {title}
 
 YOUR INVESTIGATION:
-{findings[:4000] if findings else '(no prior findings — use your own investigation)'}
+{findings[:1500] if findings else '(no prior findings — use your own investigation)'}
 
 {INSTRUCT_IMPLEMENT}
 
@@ -690,26 +741,47 @@ Output "DONE" on its own line when the PR is created.
 
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
-def extract_result(log_path, prefix, multiline=False):
-    """Find a RESULT line or section in log."""
+def extract_result(log_path, prefix, multiline=False, from_end=False):
+    """Find a RESULT line or section in log.
+
+    Args:
+        log_path: Path to the log file.
+        prefix: String to search for.
+        multiline: If True, return the section from the last prefix line to the
+                    last DONE line (inclusive). If False, return just the matching line.
+        from_end: If True (and multiline=False), search for the LAST line containing
+                  prefix instead of the first. This is important for markers like
+                  "COMMIT:" where the prompt instruction at the top of the log may
+                  also contain the marker — we want the agent's final output at the end.
+    """
     try:
         with open(log_path) as f:
             content = f.read()
         if not multiline:
-            for line in content.splitlines():
-                if prefix in line:
-                    return line.strip()
-            return ""
-        # Multiline: find section from prefix header to DONE marker
+            lines = content.splitlines()
+            if from_end:
+                # Search from the bottom to find the last occurrence
+                for line in reversed(lines):
+                    if prefix in line:
+                        return line.strip()
+                return ""
+            else:
+                for line in lines:
+                    if prefix in line:
+                        return line.strip()
+                return ""
+        # Multiline: find section from the LAST prefix line to the last DONE marker
         lines = content.splitlines()
         done_indices = [i for i, l in enumerate(lines) if l.strip() == "DONE"]
         if not done_indices:
             return ""
-        for idx in reversed(done_indices):
-            for i in range(idx - 1, -1, -1):
-                if lines[i].startswith(prefix):
-                    return "\n".join(lines[i:idx + 1])
-        return ""
+        # Find the last prefix line before the last DONE
+        last_done = done_indices[-1]
+        prefix_indices = [i for i in range(last_done) if lines[i].startswith(prefix)]
+        if not prefix_indices:
+            return ""
+        start = prefix_indices[-1]
+        return "\n".join(lines[start:last_done + 1])
     except Exception:
         pass
     return ""
@@ -821,15 +893,32 @@ def main():
                     "issue": num, "title": title, "branch": branch,
                     "findings": findings, "phases": phases, "ts": run_ts
                 })
-                if not ok:
+                if not ok and not timed_out:
                     push_branch_and_tag(branch, num)
                     remove_label(num, "in-progress")
                     label_issue(num, ["agent-error"])
                     release_lock()
-                    log("  [AGENT-ERROR] Phase 1 failed — agent-error label added, exiting pipeline")
+                    log("  [AGENT-ERROR] Phase 1 crashed — agent-error label added, exiting pipeline")
                     break  # don't loop — human must review before retry
+                elif timed_out:
+                    # Timeout: save checkpoint, will retry from where we left off
+                    log("  [TIMEOUT] Phase 1 timed out — will retry next cycle")
+                    remove_label(num, "in-progress")
+                    label_issue(num, ["qa-failed"])  # reuse qa-failed to trigger retry
+                    push_branch_and_tag(branch, num)
+                    release_lock()
+                    continue
             else:
                 log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num} [SKIP — already done]")
+
+            # Guard: don't run IMPLEMENT with bad findings
+            if phases.get("1_INVESTIGATE") == "incomplete":
+                log("  [BLOCKED] Phase 1 incomplete — cannot proceed to IMPLEMENT with bad findings")
+                remove_label(num, "in-progress")
+                label_issue(num, ["agent-error"])
+                push_branch_and_tag(branch, num)
+                release_lock()
+                break
 
             # ── PHASE 2: IMPLEMENT ─────────────────────────────────────────
             if phases.get("2_IMPLEMENT", "").startswith("done:"):
@@ -849,14 +938,15 @@ def main():
                     str(implement_log),
                     timeout_minutes=IMPL_TIMEOUT_MIN,
                     issue_num=num,
-                    subphase=saved_subphase or "implement"
+                    subphase=saved_subphase or "implement",
+                    max_tokens=16000,
                 )
 
-                commit_line = extract_result(str(implement_log), "COMMIT:")
+                commit_line = extract_result(str(implement_log), "COMMIT:", from_end=True)
                 commit_hash = commit_line.replace("COMMIT:", "").strip() if commit_line else ""
                 log(f"  Phase 2 complete — commit: {commit_hash or '(none)'}")
 
-                last_subphase = extract_result(str(implement_log), "SUBPHASE:").replace("SUBPHASE:", "").strip()
+                last_subphase = extract_result(str(implement_log), "SUBPHASE:", from_end=True).replace("SUBPHASE:", "").strip()
 
                 phases["2_IMPLEMENT"] = f"done:{commit_hash}" if commit_hash else "incomplete"
                 save_checkpoint_on_branch(num, {
@@ -878,13 +968,21 @@ def main():
                                 timeout=90
                             )
                             log(f"  [VERIFY] Smoke: {'PASS' if 'error' not in smoke[:200] else 'FAIL'}")
-                elif not ok:
+                elif not ok and not timed_out:
                     push_branch_and_tag(branch, num)
                     remove_label(num, "in-progress")
                     label_issue(num, ["agent-error"])
                     release_lock()
-                    log("  [AGENT-ERROR] IMPLEMENT failed — agent-error label added, exiting pipeline")
+                    log("  [AGENT-ERROR] IMPLEMENT crashed — agent-error label added, exiting pipeline")
                     break  # don't loop — human must review before retry
+                elif timed_out:
+                    # Timeout: findings + partial code may be saved. Will retry IMPLEMENT.
+                    log("  [TIMEOUT] IMPLEMENT timed out — will retry next cycle")
+                    remove_label(num, "in-progress")
+                    label_issue(num, ["qa-failed"])  # reuse qa-failed to trigger retry
+                    push_branch_and_tag(branch, num)
+                    release_lock()
+                    continue
 
             # ── PHASE 3: CODE REVIEW ────────────────────────────────────────
             if phases.get("3_CODE_REVIEW") == "done":
@@ -896,7 +994,7 @@ def main():
                 log(f"  Changed files: {len(changed_files)}")
                 review_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase3.log"
                 review_log.parent.mkdir(parents=True, exist_ok=True)
-                ok, _ = spawn_hermes(
+                ok, timed_out = spawn_hermes(
                     build_code_review_prompt(num, title, diff),
                     str(review_log),
                     timeout_minutes=20,
@@ -906,16 +1004,36 @@ def main():
                 review_result = extract_result(str(review_log), "REVIEW_COMPLETE:")
                 log(f"  Phase 3 complete — {review_result}")
                 phases["3_CODE_REVIEW"] = "done" if (review_result and "APPROVED" in review_result) else "incomplete"
+                if not ok and not timed_out:
+                    log("  REVIEW: Agent crashed — needs human review")
+                    comment_issue(num,
+                        f"## Code Review: CRASHED\n\n"
+                        f"The code review agent crashed and could not complete.\n"
+                        f"The agent will retry on the next cycle.\n"
+                        f"Branch: `{branch}`"
+                    )
+                    remove_label(num, "in-progress")
+                    label_issue(num, ["agent-error"])
+                    push_branch_and_tag(branch, num)
+                    release_lock()
+                    break
+                elif timed_out:
+                    log("  REVIEW: Agent timed out — will retry next cycle")
+                    remove_label(num, "in-progress")
+                    label_issue(num, ["qa-failed"])
+                    push_branch_and_tag(branch, num)
+                    release_lock()
+                    continue
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
                     "findings": findings, "phases": phases, "ts": run_ts
                 })
                 if not review_result or "APPROVED" not in (review_result or ""):
-                    log("  REVIEW: NEEDS_CHANGES — will retry next cycle")
+                    log("  REVIEW: NEEDS_CHANGES — human must review")
                     comment_issue(num,
                         f"## Code Review: NEEDS_CHANGES\n\n"
                         f"The code review found issues that must be addressed.\n"
-                        f"The agent will retry automatically on the next cycle.\n"
+                        f"Human review required — the pipeline will not auto-retry.\n"
                         f"Branch: `{branch}`"
                     )
                     remove_label(num, "in-progress")
@@ -971,26 +1089,39 @@ def main():
 
                 qa_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase4.log"
                 qa_log.parent.mkdir(parents=True, exist_ok=True)
-                ok, _ = spawn_hermes(
+                ok, timed_out = spawn_hermes(
                     build_qa_prompt(num, title, changed_files,
                                    cap_output(backend_test_filtered),
                                    cap_output(backend_build_filtered),
                                    cap_output(frontend_build_filtered),
                                    ts_errors),
                     str(qa_log),
-                    timeout_minutes=20
+                    timeout_minutes=20,
+                    max_tokens=16000,
                 )
                 qa_result = extract_result(str(qa_log), "QA_COMPLETE:")
                 log(f"  Phase 4 complete — {qa_result}")
 
                 qa_pass = False
-                if qa_result:
+                if ok and qa_result:  # only trust qa_result if agent ran successfully
                     for line in qa_result.splitlines():
                         if line.strip().startswith("QA_COMPLETE:"):
                             qa_pass = line.strip().endswith(":PASS")
                             break
 
-                phases["4_QA"] = "done" if qa_pass else "fail"
+                # Determine checkpoint state:
+                # - crash (ok=False, timed_out=False): incomplete, will retry
+                # - timeout (timed_out=True): incomplete, will retry
+                # - agent ran (ok=True) with QA_PASS: done
+                # - agent ran (ok=True) without QA_PASS: fail, will retry
+                if not ok and not timed_out:
+                    phases["4_QA"] = "incomplete"
+                    log("  [QA] Agent crashed — will retry next cycle")
+                elif timed_out:
+                    phases["4_QA"] = "incomplete"
+                    log("  [QA] Agent timed out — will retry next cycle")
+                else:
+                    phases["4_QA"] = "done" if qa_pass else "fail"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
                     "findings": findings, "phases": phases, "ts": run_ts
@@ -1015,6 +1146,8 @@ def main():
                 pr_url = phases["5_PUSH"].replace("done:", "").strip()
                 log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num} [SKIP — done: {pr_url}]")
             else:
+                # Squash any WIP commits before pushing, so the PR has a clean history
+                squash_wip_commits(branch)
                 log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num}")
                 push_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase5.log"
                 push_log.parent.mkdir(parents=True, exist_ok=True)
