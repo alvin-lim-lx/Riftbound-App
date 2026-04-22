@@ -718,6 +718,7 @@ const zoneRowStyles: Record<string, React.CSSProperties> = {
     padding: '8px 16px',
     borderRadius: '10px',
     border: '1px solid',
+    minWidth: 0,
   },
   zone: {
     display: 'flex',
@@ -1428,7 +1429,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     height: '100vh',
-    width: '100vw',
+    width: '100%',
     background: 'linear-gradient(180deg, #0d1117 0%, #161b22 35%, #1a1a2e 65%, #0d1117 100%)',
     color: '#e8e8e8',
     fontFamily: '"Segoe UI", system-ui, sans-serif',
@@ -1458,6 +1459,7 @@ const styles: Record<string, React.CSSProperties> = {
   // Generic row
   row: {
     flexShrink: 0,
+    minWidth: 0,
   },
 
   // Battlefield row — takes all remaining space
