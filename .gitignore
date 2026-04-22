@@ -10,10 +10,6 @@ backend/data/*.db
 backend/data/*.db-shm
 backend/data/*.db-wal
 
-# Agent logs
-.agent_logs/
-.agent.lock
-
 # OS
 .DS_Store
 Thumbs.db
@@ -30,4 +26,11 @@ npm-debug.log*
 .vscode/
 .idea/
 *.swp
-*.swo
+__pycache__/
+*.pyc
+*.pyo
+
+# Agent pipeline artifacts
+.agent_logs/
+.agent.lock
+.agent_checkpoint_*.json

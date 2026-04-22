@@ -120,26 +120,47 @@ def get_git_diff(branch=None):
 
 
 def get_checkpoint_on_branch():
-    """Load .agent_checkpoint_{num}.json from current branch, or None."""
-    cp_files = sorted(WORKDIR.glob(".agent_checkpoint_*.json"))
-    if not cp_files:
-        return None
-    cp_file = cp_files[-1]
-    try:
-        with open(cp_file) as f:
-            return json.load(f)
-    except Exception:
-        return None
+    """Load checkpoint from local agent log dir, or None.
+
+    Legacy fallback: also check .agent_checkpoint_{num}.json in WORKDIR root.
+    """
+    # Prefer the new location: .agent_logs/issue-{num}_{ts}/checkpoint.json
+    # Find the most recent log dir for this issue number
+    log_dirs = sorted(WORKDIR.glob(f".agent_logs/issue-{num}_*/"))
+    for ld in reversed(log_dirs):
+        cp_file = ld / "checkpoint.json"
+        if cp_file.exists():
+            try:
+                with open(cp_file) as f:
+                    return json.load(f)
+            except Exception:
+                pass
+    # Legacy fallback
+    cp_files = sorted(WORKDIR.glob(f".agent_checkpoint_*.json"))
+    if cp_files:
+        try:
+            with open(cp_files[-1]) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return None
 
 
 def save_checkpoint_on_branch(num, data):
-    """Write .agent_checkpoint_{num}.json and commit it."""
-    cp_path = WORKDIR / f".agent_checkpoint_{num}.json"
+    """Write checkpoint to local .agent_logs/ dir — NOT committed to git."""
+    # ts is set at the start of main(); pass it through or infer from log dirs
+    log_dirs = sorted(WORKDIR.glob(f".agent_logs/issue-{num}_*/"))
+    if log_dirs:
+        cp_path = log_dirs[-1] / "checkpoint.json"
+    else:
+        # Fallback: create dir based on current time
+        ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
+        cp_dir = WORKDIR / f".agent_logs/issue-{num}_{ts_now}"
+        cp_dir.mkdir(parents=True, exist_ok=True)
+        cp_path = cp_dir / "checkpoint.json"
     with open(cp_path, "w") as f:
         json.dump(data, f, indent=2)
-    run("git add .agent_checkpoint_*.json 2>&1")
-    run("git commit -m 'checkpoint: update progress marker' --no-verify --amend 2>&1")
-    log("Checkpoint saved (amended)")
+    log(f"Checkpoint saved: {cp_path}")
 
 
 def find_issue_tag(num):
@@ -167,10 +188,10 @@ def update_issue_tag(num, branch):
     run(f"git tag {tag_name} 2>&1")      # create lightweight at HEAD
 
 
-def push_branch_and_tag(branch):
+def push_branch_and_tag(branch, issue_num):
     """Push branch and push/update the issue tag to origin."""
     run(f"git push -u origin {branch} 2>&1")
-    tag_name = f"{ISSUE_TAG_PREFIX}/{num}"
+    tag_name = f"{ISSUE_TAG_PREFIX}/{issue_num}"
     # Try push existing tag, or create new one on remote
     result = run(f"git push origin {tag_name} 2>&1")
     if "error" in result.lower() or "failed" in result.lower():
@@ -297,7 +318,7 @@ def get_affected_tests(changed_files):
     test_files = []
     for tf in changed_files:
         full = os.path.join(WORKDIR, tf)
-        if os.path.exists(full):
+        if not os.path.exists(full):
             continue
         glob_pattern = os.path.join(WORKDIR, "backend", "tests", "**",
                                     f"{os.path.basename(tf)}")
@@ -315,7 +336,8 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
     log_file = Path(log_path)
     log_file.parent.mkdir(parents=True, exist_ok=True)
 
-    # Atomic write: write to a .tmp file, rename on success
+    # Atomic write: open temp file, subprocess writes to it directly,
+    # then atomically rename to final path on success.
     tmp_path = log_file.with_suffix(".tmp")
     tmp_fd = os.open(str(tmp_path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
 
@@ -327,41 +349,39 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
         wip_timer.start()
         log(f"  [TIMER] WIP commit scheduled for {lead}s from now")
 
+    # Pass the raw fd to subprocess — it writes directly to the temp file.
+    # communicate() with stdout=PIPE returns empty since output goes to the fd.
     proc = subprocess.Popen(
         ["hermes", "chat", "-q", prompt, "--source", "github-issue-agent", "--pass-session-id"],
         stdin=subprocess.DEVNULL,
         stdout=tmp_fd,
         stderr=subprocess.STDOUT,
-        text=True,
         cwd=WORKDIR,
-        close_fds=True
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, cwd=WORKDIR
+        close_fds=True,
+        pass_fds=()  # don't pass any fds to child beyond stdout/stderr
     )
 
-    # tmp_fd is now dup'd into proc's fd table; close the original
+    # tmp_fd is now dup'd into proc's stdout; close the parent's copy
     os.close(tmp_fd)
 
     try:
-        outs, errs = proc.communicate(timeout=timeout_minutes * 60)
+        # communicate() will return empty b/c stdout is a fd not a pipe
+        outs, _ = proc.communicate(timeout=timeout_minutes * 60)
     except subprocess.TimeoutExpired:
         proc.kill()
-        outs, errs = proc.communicate()
+        proc.communicate()
         log(f"  [TIMEOUT] Process killed after {timeout_minutes} min")
         if wip_timer:
             wip_timer.cancel()
+        # tmp_path now contains partial output — rename to final path
         _atomic_move(tmp_path, log_file)
         return False, True
     finally:
         if wip_timer:
             wip_timer.cancel()
 
+    # On success: tmp_path has full output, atomically rename to log_file
     _atomic_move(tmp_path, log_file)
-    # Always write output log file after communicate()
-    try:
-        log_file.write_text(outs or "", encoding="utf-8")
-    except Exception:
-        pass
 
     return proc.returncode == 0, False
 
@@ -441,6 +461,9 @@ YOUR INVESTIGATION:
 {findings[:4000] if findings else '(no prior findings — use your own investigation)'}
 
 {SYSTEM_INSTRUCTION}
+
+SKILL TO LOAD (invoke NOW): test-driven-development
+Then follow RED-GREEN-REFACTOR for each change: write a failing test first, then make it pass, then refactor.
 
 {resume_note}
 
@@ -559,6 +582,9 @@ CHANGED FILES:
 {baseline_note}
 
 {SYSTEM_INSTRUCTION}
+
+SKILL TO LOAD (invoke NOW): verification-before-completion
+Then follow its two-stage verification process: verify command output BEFORE claiming PASS.
 
 QA OUTPUT:
 
@@ -742,7 +768,7 @@ def main():
                     "findings": findings, "phases": phases, "ts": ts
                 })
                 if not ok:
-                    push_branch_and_tag(branch)
+                    push_branch_and_tag(branch, num)
                     remove_label(num, "in-progress")
                     release_lock()
                     log("  [CHECKPOINT] Phase 1 incomplete — saved, will resume")
@@ -798,7 +824,7 @@ def main():
                             )
                             log(f"  [VERIFY] Smoke: {'PASS' if 'error' not in smoke[:200] else 'FAIL'}")
                 elif not ok:
-                    push_branch_and_tag(branch)
+                    push_branch_and_tag(branch, num)
                     release_lock()
                     log("  [CHECKPOINT] IMPLEMENT incomplete — saved progress")
                     continue
@@ -837,7 +863,7 @@ def main():
                     )
                     remove_label(num, "in-progress")
                     label_issue(num, ["needs-review"])
-                    push_branch_and_tag(branch)
+                    push_branch_and_tag(branch, num)
                     release_lock()
                     continue
 
@@ -923,14 +949,7 @@ def main():
                     )
                     remove_label(num, "in-progress")
                     label_issue(num, ["qa-failed"])
-                    push_branch_and_tag(branch)
-                    # Reset the checkpoint commit so it doesn't contaminate the next attempt
-                    try:
-                        subprocess.run(["git", "reset", "--soft", "HEAD~1"],
-                                       capture_output=True, timeout=10)
-                        log("  Checkpoint commit reset for retry")
-                    except Exception as e:
-                        log(f"  Warning: could not reset checkpoint: {e}")
+                    push_branch_and_tag(branch, num)
                     release_lock()
                     continue
 
@@ -962,7 +981,7 @@ def main():
                     )
                     remove_label(num, "in-progress")
                     label_issue(num, ["push-failed"])
-                    push_branch_and_tag(branch)
+                    push_branch_and_tag(branch, num)
                     release_lock()
                     continue
 
@@ -973,7 +992,7 @@ def main():
             log(f"  PR:     {pr_url}")
             remove_label(num, "in-progress")
             label_issue(num, ["in-review"])
-            push_branch_and_tag(branch)
+            push_branch_and_tag(branch, num)
 
         finally:
             release_lock()
