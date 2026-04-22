@@ -389,13 +389,9 @@ function canAutoAdvancePhase(state) {
         return false;
     }
     // Only auto-advance when the effect stack is empty (defensive: treat undefined as empty)
-    const result = !state.effectStack || state.effectStack.length === 0;
-    console.log(`[canAutoAdvance] phase=${state.phase} effectStackLen=${state.effectStack?.length} result=${result}`);
-    return result;
+    return !state.effectStack || state.effectStack.length === 0;
 }
 function advancePhase(state) {
-    // DEBUG
-    const dbgPhase = state.phase;
     // Handle Action sub-phases
     if (state.phase === 'FirstMain') {
         const next = enterPhase(state, 'Combat');
@@ -419,12 +415,8 @@ function advancePhase(state) {
             const nextPhase = PHASE_ORDER[currentIdx + 1];
             const nextState = enterPhase(state, nextPhase);
             // After entering next phase, check if THAT phase also auto-advances.
-            // Only recurse if the phase we entered is still an A-B-C-D phase AND
-            // the CURRENT phase still has an empty stack (checking again after the
-            // enterPhase call in case that call pushed an effect to the stack).
-            if (AUTO_ADVANCE_PHASES.includes(nextPhase)
-                && canAutoAdvancePhase(nextState)
-                && canAutoAdvancePhase(state)) {
+            // Only recurse if the phase we entered is still an A-B-C-D phase.
+            if (AUTO_ADVANCE_PHASES.includes(nextPhase) && canAutoAdvancePhase(nextState)) {
                 return advancePhase(nextState);
             }
             return nextState;
