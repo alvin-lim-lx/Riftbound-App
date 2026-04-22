@@ -722,6 +722,7 @@ def main():
                 })
                 if not ok:
                     push_branch_and_tag(branch)
+                    remove_label(num, "in-progress")
                     release_lock()
                     log("  [CHECKPOINT] Phase 1 incomplete — saved, will resume")
                     continue
