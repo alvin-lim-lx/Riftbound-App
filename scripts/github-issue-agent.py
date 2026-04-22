@@ -648,11 +648,17 @@ def main():
     log("Riftbound-App Issue Agent — Tag-Based Pipeline")
     log("=" * 60)
 
-    # ── 1. Sync git ─────────────────────────────────────────────────────────
-    log("[SYNC] Fetching latest origin/master...")
+    # ── 1. Sync git — fast-forward only, zero conflicts ─────────────────────
+    log("[SYNC] Fetching and fast-forwarding to origin/master...")
     fetch_master()
     run("git checkout master 2>&1")
-    run("git pull origin master 2>&1")
+    result = run("git merge origin/master --ff-only 2>&1")
+    if result != "":
+        # --ff-only fails if local has diverged — push local commits first
+        log("  [SYNC] Local master diverged — pushing local commits first...")
+        run("git push origin master 2>&1")
+        result = run("git merge origin/master --ff-only 2>&1")
+    log(f"  [SYNC] master is up-to-date with origin/master")
 
     if not acquire_lock():
         log("Another agent is running — exiting.")
@@ -688,8 +694,9 @@ def main():
                 checkout_ok = run(f"git checkout {existing_branch} 2>&1")
                 current = current_branch()
                 if current == existing_branch:
-                    # Rebase onto latest master to sync
-                    log(f"  [REBASE] Rebasing onto origin/master...")
+                    # Rebase onto latest origin/master — fetch first
+                    log(f"  [REBASE] Fetching and rebasing onto origin/master...")
+                    fetch_master()
                     rebase_result = run(f"git rebase origin/master 2>&1")
                     if "CONFLICT" in rebase_result:
                         log(f"  [REBASE] Conflicts — aborting and starting fresh branch")
