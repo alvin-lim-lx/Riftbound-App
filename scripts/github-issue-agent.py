@@ -232,7 +232,8 @@ def remove_label(issue_num, label):
 
 
 def comment_issue(issue_num, body):
-    run(f'gh issue comment #{issue_num} -b "{body.replace(chr(10), "\\n")}" 2>&1', capture=False)
+    escaped = body.replace(chr(10), "\\n")
+    run(f'gh issue comment #{issue_num} -b "{escaped}" 2>&1', capture=False)
 
 
 def close_issue(issue_num, reason="completed"):

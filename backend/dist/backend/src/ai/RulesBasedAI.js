@@ -148,6 +148,11 @@ class RulesBasedAI {
                 const score = 8;
                 return { action, score, reason: 'Use rune for mana' };
             }
+            case 'Mulligan': {
+                // Keep all cards — no penalty, no bonus
+                const score = 5;
+                return { action, score, reason: 'Mulligan — keep all' };
+            }
             default:
                 return { action, score: 1, reason: 'Default' };
         }
