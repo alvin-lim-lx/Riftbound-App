@@ -1,0 +1,10 @@
+{
+  "issue": 22,
+  "title": "checkpoint: update progress marker",
+  "branch": "fix/issue-22_20260422_215630",
+  "findings": "",
+  "phases": {
+    "1_INVESTIGATE": "done"
+  },
+  "ts": "20260422_215630"
+}

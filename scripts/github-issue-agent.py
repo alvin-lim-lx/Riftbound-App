@@ -325,8 +325,8 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
         log(f"  [TIMER] WIP commit scheduled for {lead}s from now")
 
     proc = subprocess.Popen(
-        ["hermes", "--acp", "--stdio"],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        ["hermes", "chat", "-q", prompt, "--source", "github-issue-agent", "--pass-session-id"],
+        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         text=True, cwd=WORKDIR
     )
 
@@ -343,7 +343,7 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
     streamer.start()
 
     try:
-        outs, errs = proc.communicate(input=prompt, timeout=timeout_minutes * 60)
+        outs, errs = proc.communicate(timeout=timeout_minutes * 60)
     except subprocess.TimeoutExpired:
         proc.kill()
         outs, errs = proc.communicate()
