@@ -4,18 +4,22 @@ GitHub Issue Agent for Riftbound-App — Tag-Based Branch Pipeline
 
 PHASES:
   1. INVESTIGATE  — understand the issue, explore codebase
-  2. IMPLEMENT     — write the fix
-  3. CODE REVIEW   — hermes reviews its own diff
-  4. QA            — run tests, build attempts
-  5. PUSH          — post PR link
+  2. IMPLEMENT    — write the fix (TDD, sub-phase commits)
+  3. CODE REVIEW  — hermes reviews its own diff
+  4. QA           — run tests and builds, verify fix
+  5. PUSH         — create PR
 
 BRANCH STRATEGY:
   - Each issue gets a lightweight tag: refs/tags/issue/{num} → current working branch
-  - Branch name: fix/issue-{num}_{timestamp} (fresh per attempt)
+  - Branch name: fix/issue-{num}_{ts} (fresh per attempt, resume picks up existing)
   - On resume: checkout tag's branch, rebase onto latest origin/master
-  - Checkpoint stored on branch as .agent_checkpoint_{num}.json (committed)
+  - Checkpoint stored locally as .agent_logs/issue-{num}_{ts}/checkpoint.json
+    (NOT committed to git — only the branch and tag are shared)
 
-Lock: .agent.lock file + gh issue label "in-progress"
+LOCKING:
+  - .agent.lock file + gh issue label "in-progress"
+  - Pipeline retries qa-failed and agent-error issues automatically
+  - "needs-review" and "in-review" labels mean human is reviewing — pipeline skips
 """
 
 import subprocess
@@ -147,17 +151,14 @@ def get_checkpoint_on_branch():
 
 
 def save_checkpoint_on_branch(num, data):
-    """Write checkpoint to local .agent_logs/ dir — NOT committed to git."""
-    # ts is set at the start of main(); pass it through or infer from log dirs
-    log_dirs = sorted(WORKDIR.glob(f".agent_logs/issue-{num}_*/"))
-    if log_dirs:
-        cp_path = log_dirs[-1] / "checkpoint.json"
-    else:
-        # Fallback: create dir based on current time
-        ts_now = datetime.now().strftime("%Y%m%d_%H%M%S")
-        cp_dir = WORKDIR / f".agent_logs/issue-{num}_{ts_now}"
-        cp_dir.mkdir(parents=True, exist_ok=True)
-        cp_path = cp_dir / "checkpoint.json"
+    """Write checkpoint to .agent_logs/issue-{num}_{ts}/checkpoint.json — NOT committed to git.
+
+    Uses ts from data dict to determine the correct log directory.
+    """
+    ts = data.get("ts") or datetime.now().strftime("%Y%m%d_%H%M%S")
+    cp_dir = WORKDIR / f".agent_logs/issue-{num}_{ts}"
+    cp_dir.mkdir(parents=True, exist_ok=True)
+    cp_path = cp_dir / "checkpoint.json"
     with open(cp_path, "w") as f:
         json.dump(data, f, indent=2)
     log(f"Checkpoint saved: {cp_path}")
@@ -239,11 +240,32 @@ def close_issue(issue_num, reason="completed"):
 
 
 def get_untriaged_issues():
-    all_issues = gh_json("issues?state=open&labels=no-area-assigned&per_page=20")
-    if not all_issues:
-        all_issues = gh_json("issues?state=open&per_page=20")
-    skip = {"in-progress", "done", "in-review", "agent-error", "needs-review",
-            "qa-failed", "push-failed", "completed"}
+    """Return open issues the pipeline should work on.
+
+    LABEL LIFECYCLE:
+      no label          → pipeline picks up, adds in-progress
+      in-progress       → pipeline picks up (resume from checkpoint)
+      qa-failed         → pipeline picks up (retry IMPLEMENT+)
+      needs-review      → skip (human must review agent's diff)
+      in-review         → skip (PR open, human reviewing)
+      push-failed       → skip (manual intervention needed)
+      done / wontfix / duplicate / invalid → skip (human decision)
+
+    Skip set: issues with these labels are NEVER picked up.
+    """
+    all_issues = gh_json("issues?state=open&per_page=20")
+    skip = {
+        "in-progress",   # currently being worked
+        "in-review",     # PR open, human reviewing
+        "needs-review",  # agent diff needs human review (not a retry)
+        "push-failed",   # manual push needed
+        "agent-error",   # agent crashed — human reviews before retry
+        "done",          # merged and closed
+        "wontfix",       # human: won't fix
+        "duplicate",     # human: duplicate
+        "invalid",       # human: invalid
+        # qa-failed: NOT skipped — agent retries IMPLEMENT+ from checkpoint
+    }
     result = []
     for i in all_issues:
         labels = [l["name"] for l in i.get("labels", [])]
@@ -414,11 +436,40 @@ def git_wip_commit(issue_num, subphase=""):
 
 # ─── Prompt builders ───────────────────────────────────────────────────────────
 
-SYSTEM_INSTRUCTION = """CRITICAL CONSTRAINTS:
+# ─── Phase-specific instructions ─────────────────────────────────────────────
+
+# INVESTIGATE: explore freely, run tests, understand the codebase
+INSTRUCT_INVESTIGATE = """CRITICAL CONSTRAINTS:
+- Only explore files under /home/panda/riftbound
+- Do NOT modify any files — investigation only
+- Do NOT commit or push
+- You may run existing tests to understand behavior"""
+
+# IMPLEMENT: write code, TDD, commit each sub-phase, no new deps
+INSTRUCT_IMPLEMENT = """CRITICAL CONSTRAINTS:
 - Only modify files under /home/panda/riftbound
 - Do NOT run npm install or add new dependencies
 - Do NOT push
 - Always commit after each meaningful sub-task"""
+
+# CODE_REVIEW: run lint/types, review only, do not modify code
+INSTRUCT_CODE_REVIEW = """CRITICAL CONSTRAINTS:
+- Only read files under /home/panda/riftbound — do NOT modify any code
+- Do NOT push
+- Run lint and type checks but do not make changes based on them
+  (if you find issues, document them — the next IMPLEMENT cycle fixes them)"""
+
+# QA: build and test freely — this is where we verify the fix
+INSTRUCT_QA = """CRITICAL CONSTRAINTS:
+- You may run any build or test commands needed to verify the fix
+- Do NOT push
+- If tests fail, investigate and run additional tests as needed"""
+
+# PUSH: push only, no code changes
+INSTRUCT_PUSH = """CRITICAL CONSTRAINTS:
+- Do NOT modify any files
+- Do NOT run build/test commands
+- Push the branch and create the PR"""
 
 
 def build_investigate_prompt(issue_num, title, body):
@@ -429,7 +480,7 @@ ISSUE #{issue_num}: {title}
 {body[:4000]}
 ---
 
-{SYSTEM_INSTRUCTION}
+{INSTRUCT_INVESTIGATE}
 
 SKILL TO LOAD (invoke NOW): brainstorming
 Then use brainstorming to deeply understand the issue and explore the codebase.
@@ -460,7 +511,7 @@ ISSUE #{issue_num}: {title}
 YOUR INVESTIGATION:
 {findings[:4000] if findings else '(no prior findings — use your own investigation)'}
 
-{SYSTEM_INSTRUCTION}
+{INSTRUCT_IMPLEMENT}
 
 SKILL TO LOAD (invoke NOW): test-driven-development
 Then follow RED-GREEN-REFACTOR for each change: write a failing test first, then make it pass, then refactor.
@@ -506,7 +557,7 @@ ISSUE #{issue_num}: {title}
 YOUR CHANGES (git diff vs origin/master):
 {diff[:8000] if diff else '(no changes detected)'}
 
-{SYSTEM_INSTRUCTION}
+{INSTRUCT_CODE_REVIEW}
 
 SKILL TO LOAD (invoke NOW): requesting-code-review
 Then perform a thorough code review following its checklist and two-stage process.
@@ -581,7 +632,7 @@ CHANGED FILES:
 
 {baseline_note}
 
-{SYSTEM_INSTRUCTION}
+{INSTRUCT_QA}
 
 SKILL TO LOAD (invoke NOW): verification-before-completion
 Then follow its two-stage verification process: verify command output BEFORE claiming PASS.
@@ -620,7 +671,7 @@ def build_push_prompt(issue_num, title, branch):
 ISSUE #{issue_num}: {title}
 BRANCH: {branch}
 
-{SYSTEM_INSTRUCTION}
+{INSTRUCT_PUSH}
 
 STEPS:
 1. Verify the branch is clean: git status
@@ -745,15 +796,18 @@ def main():
             cp = get_checkpoint_on_branch() if resumed else None
             findings = ""
             phases = {}
+            # Preserve the original ts so we write back to the same log dir
+            run_ts = ts
             if cp and resumed:
                 findings = cp.get("findings", "")
                 phases = cp.get("phases", {})
-                log(f"  [CHECKPOINT] Loaded: phase={phases.get('2_IMPLEMENT')}, subphase={cp.get('impl_subphase')}")
+                run_ts = cp.get("ts", ts)  # use original ts, not fresh one
+                log(f"  [CHECKPOINT] Loaded: phase={phases.get('2_IMPLEMENT')}, subphase={cp.get('impl_subphase')}, ts={run_ts}")
 
             # ── PHASE 1: INVESTIGATE ────────────────────────────────────────
             if not phases.get("1_INVESTIGATE"):
                 log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num}")
-                investigate_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase1.log"
+                investigate_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase1.log"
                 investigate_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, _ = spawn_hermes(
                     build_investigate_prompt(num, title, body),
@@ -765,14 +819,15 @@ def main():
                 phases["1_INVESTIGATE"] = "done" if ok else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": ts
+                    "findings": findings, "phases": phases, "ts": run_ts
                 })
                 if not ok:
                     push_branch_and_tag(branch, num)
                     remove_label(num, "in-progress")
+                    label_issue(num, ["agent-error"])
                     release_lock()
-                    log("  [CHECKPOINT] Phase 1 incomplete — saved, will resume")
-                    continue
+                    log("  [AGENT-ERROR] Phase 1 failed — agent-error label added, exiting pipeline")
+                    break  # don't loop — human must review before retry
             else:
                 log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num} [SKIP — already done]")
 
@@ -782,7 +837,7 @@ def main():
                 log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num} [SKIP — committed: {commit_hash}]")
             else:
                 log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num}")
-                implement_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase2.log"
+                implement_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase2.log"
                 implement_log.parent.mkdir(parents=True, exist_ok=True)
 
                 saved_subphase = cp.get("impl_subphase") if cp else None
@@ -806,7 +861,7 @@ def main():
                 phases["2_IMPLEMENT"] = f"done:{commit_hash}" if commit_hash else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": ts,
+                    "findings": findings, "phases": phases, "ts": run_ts,
                     "impl_subphase": last_subphase or None,
                 })
 
@@ -825,9 +880,11 @@ def main():
                             log(f"  [VERIFY] Smoke: {'PASS' if 'error' not in smoke[:200] else 'FAIL'}")
                 elif not ok:
                     push_branch_and_tag(branch, num)
+                    remove_label(num, "in-progress")
+                    label_issue(num, ["agent-error"])
                     release_lock()
-                    log("  [CHECKPOINT] IMPLEMENT incomplete — saved progress")
-                    continue
+                    log("  [AGENT-ERROR] IMPLEMENT failed — agent-error label added, exiting pipeline")
+                    break  # don't loop — human must review before retry
 
             # ── PHASE 3: CODE REVIEW ────────────────────────────────────────
             if phases.get("3_CODE_REVIEW") == "done":
@@ -837,7 +894,7 @@ def main():
                 changed_files = get_changed_source_files()
                 diff = get_git_diff()
                 log(f"  Changed files: {len(changed_files)}")
-                review_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase3.log"
+                review_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase3.log"
                 review_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, _ = spawn_hermes(
                     build_code_review_prompt(num, title, diff),
@@ -851,7 +908,7 @@ def main():
                 phases["3_CODE_REVIEW"] = "done" if (review_result and "APPROVED" in review_result) else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": ts
+                    "findings": findings, "phases": phases, "ts": run_ts
                 })
                 if not review_result or "APPROVED" not in (review_result or ""):
                     log("  REVIEW: NEEDS_CHANGES — will retry next cycle")
@@ -881,7 +938,7 @@ def main():
                     phases["4_QA"] = "done"
                     save_checkpoint_on_branch(num, {
                         "issue": num, "title": title, "branch": branch,
-                        "findings": findings, "phases": phases, "ts": ts
+                        "findings": findings, "phases": phases, "ts": run_ts
                     })
                     release_lock()
                     continue
@@ -912,7 +969,7 @@ def main():
                     return "\n".join(lines[:MAX_QA_LINES]) + \
                         (f"\n... [{len(lines)-MAX_QA_LINES}] more lines" if len(lines) > MAX_QA_LINES else "")
 
-                qa_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase4.log"
+                qa_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase4.log"
                 qa_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, _ = spawn_hermes(
                     build_qa_prompt(num, title, changed_files,
@@ -936,7 +993,7 @@ def main():
                 phases["4_QA"] = "done" if qa_pass else "fail"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": ts
+                    "findings": findings, "phases": phases, "ts": run_ts
                 })
 
                 if not qa_pass:
@@ -945,7 +1002,7 @@ def main():
                         f"## QA Check: FAILED\n\n"
                         f"QA phase found failures. The agent will retry automatically.\n"
                         f"Branch: `{branch}`\n"
-                        f"QA log: `.agent_logs/issue-{num}_{ts}/phase4.log`"
+                        f"QA log: `.agent_logs/issue-{num}_{run_ts}/phase4.log`"
                     )
                     remove_label(num, "in-progress")
                     label_issue(num, ["qa-failed"])
@@ -959,7 +1016,7 @@ def main():
                 log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num} [SKIP — done: {pr_url}]")
             else:
                 log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num}")
-                push_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase5.log"
+                push_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase5.log"
                 push_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, _ = spawn_hermes(
                     build_push_prompt(num, title, branch),
@@ -971,7 +1028,7 @@ def main():
                 phases["5_PUSH"] = f"done:{pr_url}" if pr_url else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": ts
+                    "findings": findings, "phases": phases, "ts": run_ts
                 })
                 if not pr_url:
                     comment_issue(num,
@@ -997,19 +1054,5 @@ def main():
         finally:
             release_lock()
             log("\nAgent run complete.")
-
-
-def _handle_failure(issue_num, title, branch, reason):
-    log(f"\n[FATAL] {reason}")
-    comment_issue(issue_num,
-        f"## Agent Failed: {reason}\n\n"
-        f"The agent encountered an error and could not complete this issue.\n"
-        f"Branch `{branch}` may contain partial work."
-    )
-    remove_label(issue_num, "in-progress")
-    label_issue(issue_num, ["agent-error"])
-    run("git checkout master 2>&1")
-
-
 if __name__ == "__main__":
     main()
