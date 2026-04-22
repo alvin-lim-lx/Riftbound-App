@@ -450,7 +450,7 @@ COMMIT FORMAT:
   (On a line by itself — so the pipeline can capture the hash)
 
 TIMEOUT SAFETY:
-- If you are approaching the time limit (~23 min), commit what you have NOW.
+- If you are approaching the time limit (~25 min), commit what you have NOW.
 - Partial commits are fine — the pipeline will resume from your last sub-phase.
 - The WIP commit is automatic on the server side; your job is to ensure every
   meaningful step is already committed before that happens.
