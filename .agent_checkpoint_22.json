@@ -5,8 +5,8 @@
   "findings": "",
   "phases": {
     "1_INVESTIGATE": "done",
-    "2_IMPLEMENT": "incomplete"
+    "2_IMPLEMENT": "incomplete",
+    "3_CODE_REVIEW": "incomplete"
   },
-  "ts": "20260422_220702",
-  "impl_subphase": null
+  "ts": "20260422_220702"
 }
