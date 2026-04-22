@@ -1,297 +1,206 @@
 #!/usr/bin/env python3
 """
-GitHub Issue Agent for Riftbound-App — Robust Pipeline Edition
+GitHub Issue Agent for Riftbound-App — Tag-Based Branch Pipeline
 
 PHASES:
   1. INVESTIGATE  — understand the issue, explore codebase
   2. IMPLEMENT     — write the fix
-  3. CODE REVIEW   — hermes reviews its own diff (lint, typecheck, security)
+  3. CODE REVIEW   — hermes reviews its own diff
   4. QA            — run tests, build attempts
-  5. PUSH          — only if review+QA passed; post PR link
+  5. PUSH          — post PR link
 
-Each phase logs to .agent_logs/issue-{num}_{phase}.log
-Lock file: .agent.lock (prevents concurrent runs)
+BRANCH STRATEGY:
+  - Each issue gets a lightweight tag: refs/tags/issue/{num} → current working branch
+  - Branch name: fix/issue-{num}_{timestamp} (fresh per attempt)
+  - On resume: checkout tag's branch, rebase onto latest origin/master
+  - Checkpoint stored on branch as .agent_checkpoint_{num}.json (committed)
+
+Lock: .agent.lock file + gh issue label "in-progress"
 """
 
 import subprocess
-import json
-import re
 import os
-import socket
-import sys
-import signal
+import re
+import shutil
+import json
 import threading
+import time
+import signal
+import socket
+import shlex
+import glob
 from pathlib import Path
 from datetime import datetime
 
-REPO = "alvin-lim-lx/Riftbound-App"
-WORKDIR = "/home/panda/riftbound"
-LOCKFILE = "/home/panda/riftbound/.agent.lock"
-LOGDIR = Path("/home/panda/riftbound/.agent_logs")
-LOGDIR.mkdir(exist_ok=True)
-
-# ── IMPLEMENT sub-phase continuity ─────────────────────────────────────────
-# Seconds before IMPLEMENT timeout when SIGALRM fires to commit WIP in-flight work
-WIP_COMMIT_LEAD_TIME = 120   # 2 min before phase timeout
-# Phase timeouts (minutes)
+WORKDIR = Path("/home/panda/riftbound")
+LOCKFILE = WORKDIR / ".agent.lock"
+ISSUE_TAG_PREFIX = "issue"
 IMPL_TIMEOUT_MIN = 25
+WIP_COMMIT_LEAD_TIME = 120  # seconds before timeout to commit WIP
 
-# Phase definitions
 PHASES = ["INVESTIGATE", "IMPLEMENT", "CODE_REVIEW", "QA", "PUSH"]
 
 
-# ─── Checkpoint ───────────────────────────────────────────────────────────────
-
-def find_checkpoint(issue_num):
-    """Find most recent checkpoint dir for this issue, or None."""
-    if not LOGDIR.exists():
-        return None
-    candidates = sorted(LOGDIR.glob(f"issue-{issue_num}_*"))
-    for c in reversed(candidates):
-        cp = c / "checkpoint.json"
-        if cp.exists():
-            return c
-    return None
-
-
-def load_checkpoint(branch_log):
-    """Load checkpoint JSON from a branch_log dir, or None."""
-    cp = branch_log / "checkpoint.json"
-    if cp.exists():
-        with open(cp) as f:
-            return json.load(f)
-    return None
-
-
-def save_checkpoint(branch_log, data):
-    """Write checkpoint JSON."""
-    branch_log.mkdir(exist_ok=True, parents=True)
-    with open(branch_log / "checkpoint.json", "w") as f:
-        json.dump(data, f, indent=2)
-
+# ─── Logging ───────────────────────────────────────────────────────────────────
 
 def log(msg):
     ts = datetime.now().strftime("%H:%M:%S")
-    print(f"[{ts}] {msg}")
+    print(f"[{ts}] {msg}", flush=True)
 
+
+# ─── Git helpers ───────────────────────────────────────────────────────────────
 
 def run(cmd, capture=True, timeout=120):
-    r = subprocess.run(
-        cmd, shell=True, capture_output=capture, text=True,
-        cwd=WORKDIR, env=os.environ.copy(), timeout=timeout
-    )
+    """Run a shell command in WORKDIR."""
+    if isinstance(cmd, str):
+        r = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True,
+            cwd=WORKDIR, env=os.environ.copy(), timeout=timeout
+        )
+    else:
+        r = subprocess.run(cmd, capture_output=True, text=True,
+                           cwd=WORKDIR, env=os.environ.copy(), timeout=timeout)
     if r.returncode != 0 and capture and r.stderr.strip():
-        log(f"  [WARN] cmd '{cmd[:60]}...' returned {r.returncode}")
+        log(f"  [WARN] cmd '{str(cmd)[:60]}' returned {r.returncode}")
         for line in r.stderr.strip().splitlines()[:3]:
             log(f"         {line}")
     return r.stdout.strip() if capture else r.returncode == 0
 
 
-# ─── Baseline error snapshot (for QA pre-existing error filtering) ───────────
+def current_branch():
+    return run("git symbolic-ref --short HEAD 2>/dev/null || echo 'detached'").strip()
 
-BASELINE_ERRORS_KEY = "agent_baseline_errors"
-PREEXISTING_TEST_FAIL_KEY = "agent_preexisting_test_fails"
 
-def get_pre_existing_errors():
-    """
-    Return a tuple (ts_errors, test_failures) for baseline on origin/master.
-    - ts_errors: set of TypeScript error line strings
-    - test_failures: set of test failure description strings (TESTFAIL:<testname>)
+def fetch_master():
+    run("git fetch origin master 2>&1")
 
-    These are pre-existing issues that should not cause QA to fail —
-    only NEW errors introduced by the fix are real failures.
-    """
-    ts_errors = set()
-    test_failures = set()
 
-    # Snapshot baseline from origin/master — run builds to capture pre-existing errors
-    # Use a temp directory to avoid touching the working tree
-    import tempfile, shutil, pathlib
+def get_changed_files(branch=None):
+    """Return list of files changed vs origin/master."""
+    out = run("git diff origin/master --name-only 2>&1")
+    return [f for f in out.strip().splitlines() if f]
 
-    tmpdir = pathlib.Path(tempfile.mkdtemp(prefix="rb_baseline_"))
+
+def get_git_diff(branch=None):
+    """Return git diff vs origin/master (first 200 lines)."""
+    out = run("git diff origin/master 2>&1")
+    lines = out.splitlines()
+    return "\n".join(lines[:200])
+
+
+def get_checkpoint_on_branch():
+    """Load .agent_checkpoint_{num}.json from current branch, or None."""
+    cp_files = sorted(WORKDIR.glob(".agent_checkpoint_*.json"))
+    if not cp_files:
+        return None
+    cp_file = cp_files[-1]
     try:
-        # Clone a shallow snapshot of origin/master for baseline measurement
-        run(f"git clone --depth=1 --branch=origin/master file://{WORKDIR} {tmpdir} 2>&1")
-        backend_tsc = run(f"cd {tmpdir}/backend && npx tsc --noEmit 2>&1", timeout=60)
-        frontend_tsc = run(f"cd {tmpdir}/frontend && npx tsc --noEmit 2>&1", timeout=60)
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)
-
-    for out in [backend_tsc, frontend_tsc]:
-        if out:
-            for line in out.splitlines():
-                if "cards - bkup" in line:
-                    continue
-                if "cards.ts.backup" in line:
-                    continue
-                ts_errors.add(line.strip())
-
-    # Snapshot baseline test failures on origin/master
-    # Run tests on origin/master directly (checkout only, no stash)
-    cur_branch = run("git symbolic-ref --short HEAD 2>/dev/null || echo 'detached'").strip()
-    run(f"git checkout origin/master 2>&1")
-    test_out = run("cd /home/panda/riftbound/backend && npm test 2>&1", timeout=180)
-    run(f"git checkout {cur_branch} 2>&1")  # return to working branch
-    if test_out:
-        for line in test_out.splitlines():
-            # Match failure lines: "  ✗ MyTest.test.ts > my test name"
-            # Also match lines with "FAIL" in them that look like test failures
-            if re.search(r"[✗×]|\bFAIL\b", line, re.IGNORECASE) and ("test.ts" in line.lower() or "expect" in line.lower()):
-                test_failures.add(line.strip())
-
-    # Restore — no stash pop needed since we didn't use stash
-
-    log(f"  [BASELINE] {len(ts_errors)} pre-existing TS errors, {len(test_failures)} test failures snapshotted")
-    return ts_errors, test_failures
+        with open(cp_file) as f:
+            return json.load(f)
+    except Exception:
+        return None
 
 
-def filter_baseline_errors(output, ts_errors, test_failures):
+def save_checkpoint_on_branch(num, data):
+    """Write .agent_checkpoint_{num}.json and commit it."""
+    cp_path = WORKDIR / f".agent_checkpoint_{num}.json"
+    with open(cp_path, "w") as f:
+        json.dump(data, f, indent=2)
+    run("git add .agent_checkpoint_*.json 2>&1")
+    run("git commit -m 'checkpoint: update progress marker' --no-verify 2>&1")
+
+
+def find_issue_tag(num):
+    """Resolve lightweight tag issue/{num} to a branch name.
+    
+    Tag points to a commit. Use git branch --contains to find which
+    local branch has that commit. Prefer the branch matching fix/issue-{num}.
     """
-    Remove pre-existing baseline errors from command output.
-    Returns (filtered_output, new_errors_found).
-    Only NEW errors (not in baseline) are considered real failures.
-    """
-    if not output:
-        return "", set()
-
-    filtered_lines = []
-    new_errors = set()
-
-    for line in output.splitlines():
-        stripped = line.strip()
-
-        # Skip pre-existing TypeScript errors
-        if stripped in ts_errors:
-            continue
-
-        # Skip pre-existing test failures
-        is_preexisting_test_fail = False
-        for tf in test_failures:
-            if tf in stripped or stripped in tf:
-                is_preexisting_test_fail = True
-                break
-        if is_preexisting_test_fail:
-            continue
-
-        filtered_lines.append(line)
-        if any(kw in stripped.lower() for kw in ["error", "fail", "cannot find"]):
-            new_errors.add(stripped)
-
-    filtered_output = "\n".join(filtered_lines)
-    return filtered_output, new_errors
+    tag_ref = f"refs/tags/{ISSUE_TAG_PREFIX}/{num}"
+    commit = run(f"git rev-parse --verify {tag_ref} 2>&1")
+    if not commit or commit.startswith("fatal:"):
+        return None
+    branches = run(f"git branch --contains {commit} 2>&1").strip().splitlines()
+    branches = [b.strip().lstrip("* ").strip() for b in branches if b.strip()]
+    for b in branches:
+        if b.startswith(f"fix/issue-{num}"):
+            return b
+    return branches[0] if branches else None
 
 
-def get_affected_tests(changed_files):
-    """
-    Given a list of changed files, return a list of test file paths
-    that should be run (tests in backend/tests/ or matching test patterns).
-    Only runs tests for code that was actually changed — not the full suite.
-    """
-    import fnmatch
+def update_issue_tag(num, branch):
+    """Force-update lightweight tag issue/{num} to current HEAD."""
+    tag_name = f"{ISSUE_TAG_PREFIX}/{num}"
+    run(f"git tag -d {tag_name} 2>&1")  # delete local if exists
+    run(f"git tag {tag_name} 2>&1")      # create lightweight at HEAD
 
-    if not changed_files:
-        return []
 
-    # Map source file patterns → test file patterns
-    test_files = []
-    for src in changed_files:
-        if "backend/src" in src:
-            # Convert backend/src/engine/Foo.ts → backend/tests/**/Foo*.test.ts
-            base = os.path.splitext(os.path.basename(src))[0]
-            # Remove 'src/' prefix
-            rel = src.replace("backend/src/", "")
-            parts = rel.split("/")
-            if len(parts) >= 2:
-                # backend/src/engine/Foo.ts → backend/tests/engine/Foo.test.ts
-                module_path = "/".join(parts[:-1])
-                test_path = os.path.join("backend", "tests", module_path, f"{parts[-1].replace('.ts','.test.ts')}")
-                test_files.append(test_path)
-            else:
-                # top-level file: backend/src/Foo.ts
-                test_path = os.path.join("backend", "tests", f"{base}.test.ts")
-                test_files.append(test_path)
+def push_branch_and_tag(branch):
+    """Push branch and push/update the issue tag to origin."""
+    run(f"git push -u origin {branch} 2>&1")
+    tag_name = f"{ISSUE_TAG_PREFIX}/{num}"
+    # Try push existing tag, or create new one on remote
+    result = run(f"git push origin {tag_name} 2>&1")
+    if "error" in result.lower() or "failed" in result.lower():
+        run(f"git push origin {tag_name} --force 2>&1")
 
-    # Deduplicate and filter to existing files
-    existing = []
-    for tf in set(test_files):
-        full = os.path.join(WORKDIR, tf)
-        if os.path.exists(full):
-            existing.append(tf)
-        else:
-            # Try glob for broader matching
-            glob_pattern = os.path.join(WORKDIR, "backend", "tests", "**", f"{os.path.basename(tf)}")
-            import glob
-            matches = glob.glob(glob_pattern, recursive=True)
-            for m in matches:
-                rel = os.path.relpath(m, WORKDIR)
-                if rel not in existing:
-                    existing.append(rel)
 
-    return existing
-
+# ─── GitHub helpers ────────────────────────────────────────────────────────────
 
 def gh_json(endpoint):
-    token = run("gh auth token").strip()
-    cmd = (f"curl -s -H 'Authorization: token {token}' "
-           f"'https://api.github.com{endpoint}'")
-    out = run(cmd)
+    out = subprocess.run(
+        ["gh", "api", f"/repos/alvin-lim-lx/Riftbound-App/{endpoint}"],
+        capture_output=True, text=True
+    )
+    if out.returncode != 0:
+        return []
     try:
-        return json.loads(out)
-    except json.JSONDecodeError:
-        log(f"  [ERROR] Failed to parse JSON from {endpoint}")
-        return {}
+        return json.loads(out.stdout)
+    except Exception:
+        return []
 
 
 def gh(method, endpoint, data=None):
-    token = run("gh auth token").strip()
-    body = json.dumps(data) if data else ""
-    data_arg = f"-d '{body}'" if body else ""
-    cmd = (f"curl -s -X {method} "
-           f"-H 'Authorization: token {token}' "
-           f"-H 'Content-Type: application/json' "
-           f"{data_arg} "
-           f"'https://api.github.com{endpoint}'")
-    return run(cmd)
+    cmd = (["gh", "api", f"/repos/alvin-lim-lx/Riftbound-App/{endpoint}",
+            "-X", method, "-f", f"body={data}"] if data else
+           ["gh", "api", "-X", method, f"/repos/alvin-lim-lx/Riftbound-App/{endpoint}"])
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    return r.stdout.strip()
 
 
 def label_issue(issue_num, labels):
-    gh("POST", f"/repos/{REPO}/issues/{issue_num}/labels", {"labels": labels})
+    for lbl in labels:
+        run(f'gh issue edit #{issue_num} --add-label "{lbl}" 2>&1', capture=False)
 
 
 def remove_label(issue_num, label):
-    gh("DELETE", f"/repos/{REPO}/issues/{issue_num}/labels/{label}")
+    run(f'gh issue edit #{issue_num} --remove-label "{label}" 2>&1', capture=False)
 
 
 def comment_issue(issue_num, body):
-    gh("POST", f"/repos/{REPO}/issues/{issue_num}/comments", {"body": body})
+    run(f'gh issue comment #{issue_num} -b "{body.replace(chr(10), "\\n")}" 2>&1', capture=False)
 
 
 def close_issue(issue_num, reason="completed"):
-    # Agent never closes issues — human reviews and merges PR to officially close
-    pass
+    run(f'gh issue close #{issue_num} 2>&1', capture=False)
 
 
 def get_untriaged_issues():
-    issues = gh_json(f"/repos/{REPO}/issues?state=open&per_page=30")
-    if not isinstance(issues, list):
-        log(f"  [ERROR] Unexpected API response: {issues}")
-        return []
+    all_issues = gh_json("issues?state=open&labels=no-area-assigned&per_page=20")
+    if not all_issues:
+        all_issues = gh_json("issues?state=open&per_page=20")
+    skip = {"in-progress", "done", "in-review", "agent-error", "needs-review",
+            "qa-failed", "push-failed", "completed"}
     result = []
-    for i in issues:
-        if "pull_request" in i:
-            continue
+    for i in all_issues:
         labels = [l["name"] for l in i.get("labels", [])]
-        skip = {"done", "wontfix", "discussion"}
         if any(l in skip for l in labels):
             continue
         result.append(i)
     return result
 
 
-def create_branch_name(issue_num, title):
-    safe = re.sub(r'[^a-zA-Z0-9_-]', '-', title.lower())[:50]
-    return f"fix/issue-{issue_num}-{safe}"
-
+# ─── Lock ──────────────────────────────────────────────────────────────────────
 
 def acquire_lock():
     if Path(LOCKFILE).exists():
@@ -316,153 +225,207 @@ def release_lock():
     Path(LOCKFILE).unlink(missing_ok=True)
 
 
-def get_changed_files(branch):
-    """Return list of files changed vs origin/master."""
-    run(f"git fetch origin master 2>&1")
-    out = run(f"git diff origin/master --name-only 2>&1")
-    return [f for f in out.strip().splitlines() if f]
+# ─── Baseline / pre-existing errors ──────────────────────────────────────────
+
+def get_pre_existing_errors():
+    """Return (ts_errors_set, test_failures_set) from origin/master."""
+    tmpdir = f"/tmp/riftbound_baseline_{os.getpid()}"
+    try:
+        run(f"git clone --depth=1 --branch=origin/master file://{WORKDIR} {tmpdir} 2>&1")
+        ts_out = subprocess.run(
+            ["npx", "tsc", "--noEmit"], capture_output=True, text=True,
+            cwd=tmpdir, timeout=120
+        )
+        ts_errors = set(l for l in ts_out.stdout.splitlines() if "error TS" in l)
+        test_out = subprocess.run(
+            ["npm", "test", "--", "--testPathPattern=BackendValidation|PhaseAutoAdvance"],
+            capture_output=True, text=True, cwd=f"{tmpdir}/backend", timeout=120
+        )
+        test_failures = set(l for l in test_out.stdout.splitlines()
+                           if re.search(r"PASS|FAIL", l))
+        return ts_errors, test_failures
+    except Exception:
+        return set(), set()
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def get_git_diff(branch):
-    run(f"git fetch origin master 2>&1")
-    return run(f"git diff origin/master..HEAD 2>&1")
+def filter_baseline_errors(output, ts_errors, test_failures):
+    """Remove pre-existing errors from build/test output."""
+    lines = output.splitlines()
+    filtered = [l for l in lines if l not in ts_errors]
+    failures = [l for l in lines if l in test_failures]
+    return "\n".join(filtered), "\n".join(failures)
 
 
-# ─── Phase prompts ────────────────────────────────────────────────────────────
+def get_affected_tests(changed_files):
+    """Return list of test files affected by changed files."""
+    if not changed_files:
+        return []
+    test_files = []
+    for tf in changed_files:
+        full = os.path.join(WORKDIR, tf)
+        if os.path.exists(full):
+            continue
+        glob_pattern = os.path.join(WORKDIR, "backend", "tests", "**",
+                                    f"{os.path.basename(tf)}")
+        matches = glob.glob(glob_pattern, recursive=True)
+        for m in matches:
+            rel = os.path.relpath(m, WORKDIR)
+            test_files.append(rel)
+    return list(set(test_files))
 
-SYSTEM_INSTRUCTION = """
-IMPORTANT: At the start of EVERY phase below, you MUST invoke the relevant skill
-using the Skill tool (skill_manage action=view). The skill content loads into
-your context and defines exactly how to proceed. Do NOT skip this.
-"""
+
+# ─── Hermès spawn ─────────────────────────────────────────────────────────────
+
+def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None):
+    """Spawn hermes with optional WIP commit timer. Returns (ok, timed_out)."""
+    import pathlib
+    log_file = pathlib.Path(log_path)
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+
+    wip_timer = None
+    if issue_num and subphase:
+        lead = WIP_COMMIT_LEAD_TIME
+        timer_fn = lambda: git_wip_commit(issue_num, subphase)
+        wip_timer = threading.Timer(lead, timer_fn)
+        wip_timer.start()
+        log(f"  [TIMER] WIP commit scheduled for {lead}s from now")
+
+    proc = subprocess.Popen(
+        ["hermes", "--acp", "--stdio"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, cwd=WORKDIR
+    )
+
+    def stream_output():
+        try:
+            for line in proc.stdout:
+                print(line, end="", flush=True)
+                current = log_file.read_text(encoding="utf-8")
+                log_file.write_text(current + line, encoding="utf-8")
+        except Exception:
+            pass
+
+    streamer = threading.Thread(target=stream_output, daemon=True)
+    streamer.start()
+
+    try:
+        outs, errs = proc.communicate(input=prompt, timeout=timeout_minutes * 60)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        outs, errs = proc.communicate()
+        log(f"  [TIMEOUT] Process killed after {timeout_minutes} min")
+        if wip_timer:
+            wip_timer.cancel()
+        return False, True
+    finally:
+        if wip_timer:
+            wip_timer.cancel()
+
+    return proc.returncode == 0, False
+
+
+def git_wip_commit(issue_num, subphase=""):
+    """Stage all changes and commit as WIP with a descriptive message."""
+    log(f"  [WIP-COMMIT] ~120s before timeout — committing WIP state...")
+    status = subprocess.run(
+        "git status --porcelain", shell=True, capture_output=True, text=True, cwd=WORKDIR
+    )
+    if not status.stdout.strip():
+        log("  [WIP] No changes to commit")
+        return
+    commit_msg = f"WIP: fix #{issue_num}" + (f" — {subphase}" if subphase else "")
+    result = subprocess.run(
+        "git add -A && git commit -m " + shlex.quote(commit_msg) + " --no-verify",
+        shell=True, capture_output=True, text=True, cwd=WORKDIR
+    )
+    if result.returncode == 0:
+        log(f"  [WIP] Committed: {result.stdout.strip()[:80]}")
+    else:
+        log(f"  [WIP] Commit failed: {result.stderr.strip()[:100]}")
+
+
+# ─── Prompt builders ───────────────────────────────────────────────────────────
+
+SYSTEM_INSTRUCTION = """CRITICAL CONSTRAINTS:
+- Only modify files under /home/panda/riftbound
+- Do NOT run npm install or add new dependencies
+- Do NOT push
+- Always commit after each meaningful sub-task"""
 
 
 def build_investigate_prompt(issue_num, title, body):
     return f"""You are investigating GitHub issue #{issue_num} in /home/panda/riftbound.
 
 ISSUE #{issue_num}: {title}
-BODY:
-{body[:3000] if body else '(no description)'}
+---
+{body[:4000]}
+---
 
 {SYSTEM_INSTRUCTION}
 
-SKILL TO LOAD: systematic-debugging
-Then investigate the issue and produce findings.
+SKILL TO LOAD (invoke NOW): brainstorming
+Then use brainstorming to deeply understand the issue and explore the codebase.
 
-CRITICAL — GAME MECHANICS RESEARCH (do this first):
-1. Invoke the llm-wiki skill NOW (skill_manage action=view) to load the wiki skill
-2. Search the wiki at ~/wiki for relevant Riftbound game mechanic knowledge:
-   - Read index.md: grep -i "riftbound\\|phase\\|turn\\|channel\\|awaken\\|stack\\|trigger" ~/wiki/index.md
-   - Check these pages if they exist: ~/wiki/concepts/riftbound-keywords.md,
-     ~/wiki/entities/riftbound-tcg.md, ~/wiki/concepts/riftbound-tcg.md
-3. If the wiki has relevant Riftbound mechanic knowledge, cite it in your analysis
-4. If the wiki does NOT cover the relevant mechanics:
-   a. Search online for official Riot/Riftbound rules or mechanic descriptions
-   b. Save any useful sources you find to ~/wiki/raw/articles/ with descriptive names
-   c. Update or create wiki pages to capture the mechanic knowledge
-   d. Add new pages to ~/wiki/index.md and append to ~/wiki/log.md
+EXPLORATION STEPS:
+1. Read the relevant source files to understand the current implementation
+2. Run existing tests to see the current behavior
+3. Identify the root cause of the issue
 
-YOUR TASK:
-1. Invoke the systematic-debugging skill NOW (skill_manage action=view)
-2. Invoke the llm-wiki skill NOW (skill_manage action=view)
-3. Research relevant game mechanics via the wiki FIRST (see above)
-4. Follow the 4-phase process: Root Cause Investigation → Pattern Analysis → Hypothesis → Implementation Planning
-5. Find the ROOT CAUSE — do not propose fixes until you understand WHY it breaks
-6. Explore the relevant parts of the codebase thoroughly
-7. Write your findings
+OUTPUT YOUR UNDERSTANDING:
+- ## Root Cause: <what is actually broken>
+- ## Affected Code: <which files/functions need changing>
+- ## Fix Approach: <how you plan to fix it>
+- ## Testing Plan: <how you will verify the fix works>
 
-OUTPUT FORMAT:
-## Root Cause
-<the actual root cause — not the symptom>
-
-## Evidence
-<what you found in the code that confirms this>
-
-## Game Mechanic References
-<any wiki or online sources consulted for Riftbound mechanics; note if nothing was found>
-
-## Files to Change
-- list of files
-
-## Proposed Fix
-<what to change and why>
-
-## Verification Plan
-<how to verify the fix works>
-
-## Wiki Sources Added
-<list any new sources added to ~/wiki/raw/articles/ or wiki pages created/updated; leave blank if none>
-
-IMPORTANT: Do NOT make any code changes. Only investigate and plan.
 Output "DONE" on its own line when finished.
 """
 
 
 def build_implement_prompt(issue_num, title, body, findings, resume_subphase=None):
-    resume_note = (
-        f"\nRESUME CONTEXT: You are resuming work from a previous run. "
-        f"Continue from where you left off. Current sub-phase: {resume_subphase}\n"
-        if resume_subphase else ""
-    )
-    return f"""You are implementing the fix for GitHub issue #{issue_num} in /home/panda/riftbound.
+    resume_note = ""
+    if resume_subphase:
+        resume_note = f"\nContinue from where you left off. Current sub-phase: {resume_subphase}\n"
+    return f"""You are implementing a fix for GitHub issue #{issue_num} in /home/panda/riftbound.
 
 ISSUE #{issue_num}: {title}
-ISSUE BODY:
-{body[:3000] if body else '(no description)'}
 
-YOUR PLAN (from investigation phase):
-{findings}
-{resume_note}
+YOUR INVESTIGATION:
+{findings[:4000] if findings else '(no prior findings — use your own investigation)'}
 
 {SYSTEM_INSTRUCTION}
 
-SKILL TO LOAD (invoke NOW): test-driven-development
-Then implement the fix following RED-GREEN-REFACTOR.
+{resume_note}
 
 YOUR TASK — BREAK YOUR WORK INTO SMALL, INDEPENDENT COMMITS WITH SUB-PHASE MARKERS:
-
-1. Invoke the test-driven-development skill NOW (skill_manage action=view)
-2. Invoke the llm-wiki skill NOW (skill_manage action=view)
-3. Consult ~/wiki for any Riftbound mechanic references relevant to this fix
+1. Make one logical change at a time (e.g., "add test for X", "implement Y", "fix Z edge case")
+2. After each change: git add -A && git commit -m "fix #{{issue_num}}: <description>"
+3. Output "SUBPHASE:<short-name>" on its own line before each commit
 4. Before starting EACH sub-task, output: "SUBPHASE:<short-name>" on its own line.
-   Examples:
-     SUBPHASE:add-effectStack-to-GameState
-     SUBPHASE:implement-canAutoAdvance-logic
-     SUBPHASE:write-phase-advance-tests
-     SUBPHASE:fix-scheduleAIMove
-   This marks your position so the pipeline can resume exactly here on timeout.
 
-5. Follow the RED-GREEN-REFACTOR cycle:
-   a. RED: Write a failing test that reproduces the bug/validates the fix
-   b. GREEN: Write the MINIMAL code to make the test pass
-   c. REFACTOR: Clean up if needed
+Example sub-phase names:
+  SUBPHASE:add-effectStack-to-GameState
+  SUBPHASE:implement-canAutoAdvance-logic
+  SUBPHASE:write-phase-advance-tests
+  SUBPHASE:fix-scheduleAIMove
+  SUBPHASE:add-unit-test-for-X
+  SUBPHASE:refactor-handlePass
+  SUBPHASE:verify-edge-case-Y
 
-6. After each meaningful sub-task (RED / GREEN / REFACTOR), COMMIT:
-   - After RED test:  git commit -m "fix #{issue_num} test: ..."
-   - After GREEN fix: git commit -m "fix #{issue_num} impl: ..."
-   - After REFACTOR:  git commit -m "fix #{issue_num} refactor: ..."
-   Use a concise description after the colon (e.g., "add effectStack field", "implement canAutoAdvance").
-
-7. Run the existing test suite: cd /home/panda/riftbound/backend && npm test 2>&1
-8. Fix any test failures your changes introduced
-
-9. When ALL sub-tasks are complete and tests pass, do a final commit:
-   git add -A && git commit -m "fix #{issue_num}: {title[:60]}"
-   Then output: git log -1 --pretty=format:"COMMIT:%H"
+COMMIT FORMAT:
+  After each commit, output: git log -1 --pretty=format:"COMMIT:%H"
+  (On a line by itself — so the pipeline can capture the hash)
 
 TIMEOUT SAFETY:
-- If you are approaching the time limit (~20 min), commit what you have NOW.
+- If you are approaching the time limit (~23 min), commit what you have NOW.
 - Partial commits are fine — the pipeline will resume from your last sub-phase.
 - The WIP commit is automatic on the server side; your job is to ensure every
   meaningful step is already committed before that happens.
 
-- Only modify files under /home/panda/riftbound
-- Do NOT run npm install or add new dependencies
-- Do NOT push
-
-Output "SUBPHASE:<name>" before each meaningful step (as described in step 4).
-Output "COMMIT:<hash>" on its own line when you have a final commit.
-Output "DONE" on its own line when everything is committed and tests pass.
+- Output "SUBPHASE:<name>" before each meaningful step (as described in step 4).
+- Output "COMMIT:<hash>" on its own line when you have a final commit.
+- Output "DONE" on its own line when everything is committed and tests pass.
 """
 
 
@@ -530,8 +493,6 @@ def build_qa_prompt(issue_num, title, changed_files,
                     backend_test_output, backend_build_output,
                     frontend_build_output, baseline_errors):
     files_str = "\n".join(f"- {f}" for f in changed_files)
-
-    # Summarize pre-existing errors that were filtered out (for transparency)
     baseline_note = ""
     if baseline_errors:
         sample = list(baseline_errors)[:5]
@@ -542,221 +503,72 @@ def build_qa_prompt(issue_num, title, changed_files,
             + "\n".join(f"  - {e}" for e in sample)
             + ("\n  ... and more" if len(baseline_errors) > 5 else "")
         )
-
     return f"""You are performing QA for GitHub issue #{issue_num} in /home/panda/riftbound.
 
 ISSUE #{issue_num}: {title}
 
 CHANGED FILES:
-{files_str}
+{files_str or "(no files changed)"}
+
 {baseline_note}
 
-The QA commands below have ALREADY BEEN RUN. The output has been pre-filtered
-to remove known pre-existing errors. Judge the CLEAN output below.
+{SYSTEM_INSTRUCTION}
 
-QA RESULTS (pre-filtered — these are the only remaining issues):
+QA OUTPUT:
 
-1. BACKEND TESTS:
----
-{backend_test_output or '(no output — tests passed or no coverage)'}
----
+--- Backend Test Output ---
+{backend_test_output or "(no test output)"}
 
-2. BACKEND BUILD:
----
-{backend_build_output or '(no output)'}
----
+--- Backend Build Output ---
+{backend_build_output or "(no build output)"}
 
-3. FRONTEND BUILD:
----
-{frontend_build_output or '(no output)'}
----
+--- Frontend Build Output ---
+{frontend_build_output or "(no frontend output)"}
 
-SKILL TO LOAD (invoke NOW): verification-before-completion
+YOUR TASK:
+1. Review the above build and test output
+2. Identify any failures introduced by your changes
+3. Pre-existing errors (noted above) are NOT your responsibility
+4. Run any additional tests you think are relevant
 
-DECISION RULES — follow these exactly:
-- If backend test output shows NEW failures (not seen in baseline), → Backend Tests: FAIL
-- If backend build output shows NEW TypeScript errors (not in baseline note above), → Backend Build: FAIL
-- If frontend build output shows NEW errors (warnings are OK), → Frontend Build: FAIL
-- If there are NO NEW failures in any category → Overall QA: PASS
-- If there ARE NEW failures in any category → Overall QA: FAIL
+If there are FAILs or errors that are NOT in the pre-existing list above,
+describe them and output:
+  QA_COMPLETE:FAIL
 
-IMPORTANT: The baseline note above lists errors that WERE in the original codebase
-and are NOT your responsibility. Do NOT count them as failures.
-
-If all three checks (tests, backend build, frontend build) show no new errors → PASS.
-If any check shows new errors that were not in the baseline note → FAIL.
-
-FORMAT YOUR RESPONSE AS:
-## Backend Tests: PASS / FAIL / NO_COVERAGE
-<if FAIL: name the specific NEW test that failed>
-
-## Backend Build: PASS / FAIL
-<if FAIL: name the specific NEW error line>
-
-## Frontend Build: PASS / FAIL
-<if FAIL: name the specific NEW error>
-
-## Sanity Check: PASS / FAIL
-<notes on changed files — any import errors or debug logs?>
-
-## Overall QA: PASS / FAIL
+If everything passes cleanly:
+  QA_COMPLETE:PASS
 
 Output "QA_COMPLETE:<PASS|FAIL>" on its own line when done.
 """
 
 
 def build_push_prompt(issue_num, title, branch):
-    return f"""You are the PUSH phase for GitHub issue #{issue_num}.
+    return f"""You are pushing the changes for GitHub issue #{issue_num} in /home/panda/riftbound.
 
 ISSUE #{issue_num}: {title}
 BRANCH: {branch}
 
-TASK:
-1. Verify your branch is up to date: git status
-2. Push the branch: git push -u origin {branch}
-3. Create a pull request:
-   gh pr create \
-     --repo alvin-lim-lx/Riftbound-App \
-     --title "fix #{issue_num}: {title[:60]}" \
-     --body "## Summary
-Closes #{issue_num}
+{SYSTEM_INSTRUCTION}
 
-## Changes
-- Fixes issue #{issue_num}
+STEPS:
+1. Verify the branch is clean: git status
+2. Push to origin: git push -u origin {branch}
+3. Create PR via gh:
+   gh pr create --title "fix #{issue_num}: {title}" \\
+     --body "Fixes issue #{issue_num}" \\
+     --head {branch} --base master
+4. Output the PR URL on its own line: PR_URL:<url>
 
-## Testing
-- Tests passed: yes
-- Build verified: yes
+If the PR already exists (from a previous attempt), just push and output its URL.
 
-## Code Review
-- Self-review completed
-- Lint: passed
-- Type check: passed
-" 2>&1
-4. Extract the PR URL from the output
-5. Print: PR_URL:<https://github.com/alvin-lim-lx/Riftbound-App/pull/N>
-6. Print: PR_NUMBER:<N>
-
-Output "PUSH_COMPLETE" on its own line when done.
+Output "DONE" on its own line when the PR is created.
 """
 
 
-# ─── WIP commit helper ────────────────────────────────────────────────────────
-
-def git_wip_commit(issue_num, subphase_hint=""):
-    """Stage all changes and commit as WIP with a descriptive message.
-    Returns the commit hash on success, None if nothing to commit or on error."""
-    try:
-        status = subprocess.run(
-            "git status --porcelain", shell=True, capture_output=True, text=True, cwd=WORKDIR
-        )
-        if not status.stdout.strip():
-            log("  [WIP] No changes to commit")
-            return None
-
-        commit_msg = f"WIP: fix #{issue_num}"
-        if subphase_hint:
-            commit_msg += f" — {subphase_hint}"
-
-        subprocess.run("git add -A", shell=True, capture_output=True, cwd=WORKDIR)
-        result = subprocess.run(
-            ["git", "commit", "-m", commit_msg],
-            shell=True, capture_output=True, text=True, cwd=WORKDIR
-        )
-        if result.returncode == 0:
-            commit_hash = result.stdout.strip().split()[-1] if result.stdout.strip() else "?"
-            log(f"  [WIP] Committed as '{commit_msg}' ({commit_hash})")
-            return commit_hash
-        else:
-            log(f"  [WIP] Commit failed: {result.stderr.strip()[:100]}")
-    except Exception as e:
-        log(f"  [WIP] Commit error: {e}")
-    return None
-
-
-# ─── Agent runner ─────────────────────────────────────────────────────────────
-
-def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None):
-    """Run hermes with a one-shot prompt, streaming to log_path.
-
-    For IMPLEMENT phases (issue_num is not None), schedules a WIP commit
-    WIP_COMMIT_LEAD_TIME seconds before the phase timeout to save in-flight work.
-
-    Returns: (success: bool, timed_out: bool)
-      - (True, False): hermes completed successfully, no timeout
-      - (False, True): process timed out (WIP commit was attempted)
-      - (False, False): process exited non-zero, no timeout
-    """
-    env = os.environ.copy()
-    env["HERMES_NO_ANALYTICS"] = "1"
-
-    log_file = open(log_path, "w", buffering=1)
-    timed_out = False
-    did_wip_commit = False
-    proc = None
-
-    def wip_commit():
-        nonlocal did_wip_commit
-        log(f"  [WIP-COMMIT] ~{WIP_COMMIT_LEAD_TIME}s before timeout — committing WIP state...")
-        try:
-            commit_hash = git_wip_commit(issue_num, subphase)
-            did_wip_commit = True
-            if commit_hash:
-                log(f"  [WIP-COMMIT] Saved as {commit_hash}")
-        except Exception as e:
-            log(f"  [WIP-COMMIT] Failed: {e}")
-
-    # Schedule WIP commit alarm for IMPLEMENT phases
-    timer = None
-    if issue_num is not None and (timeout_minutes * 60) > WIP_COMMIT_LEAD_TIME:
-        timer = threading.Timer(
-            (timeout_minutes * 60) - WIP_COMMIT_LEAD_TIME,
-            wip_commit
-        )
-        timer.daemon = True
-        timer.start()
-        log(f"  [TIMER] WIP commit scheduled for {(timeout_minutes * 60) - WIP_COMMIT_LEAD_TIME}s from now")
-
-    try:
-        proc = subprocess.Popen(
-            ["hermes", "chat", "-q", prompt,
-             "--source", "github-issue-agent",
-             "--pass-session-id"],
-            cwd=WORKDIR,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
-
-        try:
-            outs, _ = proc.communicate(timeout=timeout_minutes * 60)
-            log_file.write(outs if outs else "")
-            log_file.flush()
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            proc.kill()
-            outs, _ = proc.communicate()
-            log_file.write((outs if outs else "") + f"\n[TIMEOUT after {timeout_minutes} min]\n")
-            log_file.flush()
-
-    finally:
-        log_file.close()
-        if timer:
-            timer.cancel()
-
-    return proc.returncode == 0, timed_out
-
+# ─── Main ─────────────────────────────────────────────────────────────────────
 
 def extract_result(log_path, prefix, multiline=False):
-    """Find a RESULT line or section in log.
-
-    Single-line mode (default): return the first line containing prefix.
-    Multiline mode: scan backward from 'DONE' to find the section header
-    (prefix line like '## Root Cause'), return all lines from that header
-    to the 'DONE' marker. Handles cases where prefix appears mid-document.
-    """
+    """Find a RESULT line or section in log."""
     try:
         with open(log_path) as f:
             content = f.read()
@@ -765,17 +577,14 @@ def extract_result(log_path, prefix, multiline=False):
                 if prefix in line:
                     return line.strip()
             return ""
-        # Multiline: find the section starting with prefix, ending at DONE
+        # Multiline: find section from prefix header to DONE marker
         lines = content.splitlines()
-        # Find last occurrence of DONE, then search backward from there for prefix
         done_indices = [i for i, l in enumerate(lines) if l.strip() == "DONE"]
         if not done_indices:
             return ""
-        # Search backward from the last DONE
         for idx in reversed(done_indices):
             for i in range(idx - 1, -1, -1):
                 if lines[i].startswith(prefix):
-                    # Collect from this line to the DONE line
                     return "\n".join(lines[i:idx + 1])
         return ""
     except Exception:
@@ -783,32 +592,19 @@ def extract_result(log_path, prefix, multiline=False):
     return ""
 
 
-def extract_pr_url(log_path):
-    for pattern in [
-        re.compile(r'PR_URL:(https://github\.com/alvin-lim-lx/Riftbound-App/pull/\d+)'),
-        re.compile(r'(https://github\.com/alvin-lim-lx/Riftbound-App/pull/\d+)'),
-    ]:
-        try:
-            with open(log_path) as f:
-                for line in f:
-                    m = pattern.search(line)
-                    if m:
-                        return m.group(1)
-        except Exception:
-            pass
-    return ""
+# Global num so git_wip_commit closure can reference it
+num = None
 
-
-# ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    global num
     log("=" * 60)
-    log("Riftbound-App Issue Agent — Robust Pipeline")
+    log("Riftbound-App Issue Agent — Tag-Based Pipeline")
     log("=" * 60)
 
-    # Sync git
-    log("[SYNC] Pulling latest master...")
-    run("git fetch origin master 2>&1")
+    # ── 1. Sync git ─────────────────────────────────────────────────────────
+    log("[SYNC] Fetching latest origin/master...")
+    fetch_master()
     run("git checkout master 2>&1")
     run("git pull origin master 2>&1")
 
@@ -819,6 +615,7 @@ def main():
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     try:
+        # ── 2. Pick an issue ────────────────────────────────────────────────
         log("[FETCH] Checking for untriaged issues...")
         issues = get_untriaged_issues()
         if not issues:
@@ -829,79 +626,55 @@ def main():
         num = issue["number"]
         title = issue["title"]
         body = issue.get("body", "") or ""
-        log(f"  Selected: #{num} — {title}")
+        log(f"  Selected: #{num} — {title[:60]}")
 
-        branch = create_branch_name(num, title)
+        # ── 3. Label issue as in-progress ────────────────────────────────
+        label_issue(num, ["in-progress"])
 
-        # ── RESUME LOGIC ──
-        # Try to pick up from a previous run if one exists
-        checkpoint_dir = find_checkpoint(num)
-        findings = ""
+        # ── 4. Determine branch strategy ────────────────────────────────
+        existing_branch = find_issue_tag(num)
+        branch = f"fix/issue-{num}_{ts}"
         resumed = False
 
-        if checkpoint_dir:
-            cp = load_checkpoint(checkpoint_dir)
-            if cp:
-                saved_branch = cp.get("branch", "")
-                saved_findings = cp.get("findings", "")
-                phases = cp.get("phases", {})
-                # Only resume from same branch if IMPLEMENT hasn't committed yet
-                phase2_state = phases.get("2_IMPLEMENT", "")
-                implement_done = phase2_state.startswith("done:")
-                if saved_findings and not implement_done:
-                    log(f"  [RESUME] Found checkpoint for #{num} — reusing branch '{saved_branch}', skipping completed phases")
-                    checkout_result = run(f"git checkout {saved_branch} 2>&1")
-                    current_branch = run("git symbolic-ref --short HEAD 2>/dev/null || echo 'detached'").strip()
-                    if current_branch != saved_branch:
-                        log(f"  [WARN] Checkout to '{saved_branch}' failed (on '{current_branch}') — forcing fresh start")
-                        saved_findings = ""  # force fresh start
-                        resumed = False
-                    else:
-                        findings = saved_findings
-                        branch_log = checkpoint_dir
-                        resumed = True
-                    # Determine which phase to resume from
-                    if phases.get("5_PUSH", "").startswith("done:"):
-                        # Already pushed — nothing to do
-                        log(f"  Issue #{num} already fully handled (PUSH complete).")
-                        release_lock()
-                        return
-                    elif phases.get("4_QA", "") == "done":
-                        # QA passed, need PUSH
-                        resume_from = 5
-                    elif phases.get("3_CODE_REVIEW", "") == "done":
-                        # Review passed, need QA
-                        resume_from = 4
-                    elif phases.get("2_IMPLEMENT", "") == "done":
-                        # Implement done but not reviewed — re-do REVIEW (QA may need fresh diff)
-                        resume_from = 3
-                    else:
-                        # INVESTIGATE done, need IMPLEMENT
-                        resume_from = 2
-                    log(f"  [RESUME] Resuming from phase {resume_from}")
+        if existing_branch:
+            log(f"  [RESUME] Found prior attempt on branch '{existing_branch}'")
+            checkout_ok = run(f"git checkout {existing_branch} 2>&1")
+            current = current_branch()
+            if current == existing_branch:
+                # Rebase onto latest master to sync
+                log(f"  [REBASE] Rebasing onto origin/master...")
+                rebase_result = run(f"git rebase origin/master 2>&1")
+                if "CONFLICT" in rebase_result:
+                    log(f"  [REBASE] Conflicts — aborting and starting fresh branch")
+                    run("git rebase --abort 2>&1")
+                    run(f"git checkout -b {branch} origin/master 2>&1")
                 else:
-                    branch_log = LOGDIR / f"issue-{num}_{ts}"
-                    branch_log.mkdir(exist_ok=True)
+                    branch = existing_branch
+                    resumed = True
+                    log(f"  [REBASE] Success — resuming on '{branch}'")
             else:
-                branch_log = LOGDIR / f"issue-{num}_{ts}"
-                branch_log.mkdir(exist_ok=True)
+                log(f"  [WARN] Could not checkout '{existing_branch}' — fresh start")
         else:
-            branch_log = LOGDIR / f"issue-{num}_{ts}"
-            branch_log.mkdir(exist_ok=True)
-
-        if not resumed:
+            # Fresh start from origin/master
             run(f"git checkout -b {branch} origin/master 2>&1")
 
-        # Track per-phase results
-        phase_results = {}
+        # Mark current branch with tag
+        update_issue_tag(num, branch)
 
-        # ── PHASE 1: INVESTIGATE ───────────────────────────────────────────
-        if not resumed or "1_INVESTIGATE" not in phases or phases["1_INVESTIGATE"] != "done":
+        # ── 5. Load checkpoint from branch ─────────────────────────────
+        cp = get_checkpoint_on_branch() if resumed else None
+        findings = ""
+        phases = {}
+        if cp and resumed:
+            findings = cp.get("findings", "")
+            phases = cp.get("phases", {})
+            log(f"  [CHECKPOINT] Loaded: phase={phases.get('2_IMPLEMENT')}, subphase={cp.get('impl_subphase')}")
+
+        # ── PHASE 1: INVESTIGATE ────────────────────────────────────────
+        if not phases.get("1_INVESTIGATE"):
             log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num}")
-            label_issue(num, ["in-progress"])
-            if not resumed:
-                run(f"git checkout -b {branch} origin/master 2>&1")
-            investigate_log = branch_log / "phase1_investigate.log"
+            investigate_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase1.log"
+            investigate_log.parent.mkdir(parents=True, exist_ok=True)
             ok, _ = spawn_hermes(
                 build_investigate_prompt(num, title, body),
                 str(investigate_log),
@@ -909,107 +682,82 @@ def main():
             )
             findings = extract_result(str(investigate_log), "## Root Cause", multiline=True)
             log(f"  Phase 1 complete — findings captured ({'ok' if ok else 'agent exited non-zero'})")
+            phases["1_INVESTIGATE"] = "done" if ok else "incomplete"
+            save_checkpoint_on_branch(num, {
+                "issue": num, "title": title, "branch": branch,
+                "findings": findings, "phases": phases, "ts": ts
+            })
             if not ok:
-                # Timeout or error — save checkpoint so next run can resume
-                save_checkpoint(branch_log, {
-                    "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": {"1_INVESTIGATE": "incomplete"}, "ts": ts
-                })
+                push_branch_and_tag(branch)
                 release_lock()
-                log("  [CHECKPOINT] Phase 1 did not fully complete — saved, will resume on next run")
+                log("  [CHECKPOINT] Phase 1 incomplete — saved, will resume")
                 return
-            phases = {"1_INVESTIGATE": "done", "2_IMPLEMENT": "pending",
-                       "3_CODE_REVIEW": "pending", "4_QA": "pending", "5_PUSH": "pending"}
-            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
-                                           "findings": findings, "phases": phases, "ts": ts})
         else:
             log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num} [SKIP — already done]")
 
-        # ── PHASE 2: IMPLEMENT ─────────────────────────────────────────────
-        phase2_state = phases.get("2_IMPLEMENT", "") if 'phases' in dir() else ""
-        implement_done = isinstance(phase2_state, str) and phase2_state.startswith("done:")
-        if not implement_done:
+        # ── PHASE 2: IMPLEMENT ─────────────────────────────────────────
+        if phases.get("2_IMPLEMENT", "").startswith("done:"):
+            commit_hash = phases["2_IMPLEMENT"].replace("done:", "").strip()
+            log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num} [SKIP — committed: {commit_hash}]")
+        else:
             log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num}")
-            implement_log = branch_log / "phase2_implement.log"
+            implement_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase2.log"
+            implement_log.parent.mkdir(parents=True, exist_ok=True)
 
-            # Load sub-phase state if resuming mid-IMPLEMENT
-            impl_cp = load_checkpoint(branch_log)
-            saved_subphase = None
-            files_manifest = []
-            if impl_cp:
-                saved_subphase = impl_cp.get("impl_subphase")
-                files_manifest = impl_cp.get("impl_files_manifest", [])
-                if saved_subphase:
-                    log(f"  [RESUME] Resuming IMPLEMENT from sub-phase: {saved_subphase}")
+            saved_subphase = cp.get("impl_subphase") if cp else None
+            if saved_subphase:
+                log(f"  [RESUME] IMPLEMENT from sub-phase: {saved_subphase}")
 
             ok, timed_out = spawn_hermes(
                 build_implement_prompt(num, title, body, findings, resume_subphase=saved_subphase),
                 str(implement_log),
                 timeout_minutes=IMPL_TIMEOUT_MIN,
                 issue_num=num,
-                subphase=saved_subphase
+                subphase=saved_subphase or "implement"
             )
-            phase_results["IMPLEMENT"] = ok
+
             commit_line = extract_result(str(implement_log), "COMMIT:")
-            log(f"  Phase 2 complete — commit: {commit_line or '(none)'}")
+            commit_hash = commit_line.replace("COMMIT:", "").strip() if commit_line else ""
+            log(f"  Phase 2 complete — commit: {commit_hash or '(none)'}")
 
-            # Capture files_manifest from the final commit for QA phase routing
-            if commit_line:
-                commit_hash = commit_line.replace("COMMIT:", "").strip()
-                manifest_out = run(f"git diff origin/master --name-only 2>&1")
-                files_manifest = [f for f in manifest_out.strip().splitlines() if f]
+            last_subphase = extract_result(str(implement_log), "SUBPHASE:").replace("SUBPHASE:", "").strip()
 
-            # Save sub-phase checkpoint regardless of outcome
-            # subphase is parsed from the log by extract_result; if timed_out and no COMMIT yet,
-            # impl_subphase is left as the last sub-phase name found in the log
-            last_subphase = extract_result(str(implement_log), "SUBPHASE:")
-            phases["2_IMPLEMENT"] = f"done:{commit_line.replace('COMMIT:','').strip()}" if commit_line else "incomplete"
-
-            save_checkpoint(branch_log, {
+            phases["2_IMPLEMENT"] = f"done:{commit_hash}" if commit_hash else "incomplete"
+            save_checkpoint_on_branch(num, {
                 "issue": num, "title": title, "branch": branch,
-                "findings": findings,
-                "phases": phases,
-                "ts": ts,
-                "impl_subphase": last_subphase.replace("SUBPHASE:", "").strip() if last_subphase else None,
-                "impl_files_manifest": files_manifest,
+                "findings": findings, "phases": phases, "ts": ts,
+                "impl_subphase": last_subphase or None,
             })
 
-            # ── VERIFY after IMPLEMENT ────────────────────────────────────────
-            if ok and commit_line and not timed_out:
+            if ok and commit_hash and not timed_out:
                 log("  [VERIFY] Running post-IMPLEMENT verification...")
-                diff_stat = run(f"git diff origin/master --stat 2>&1")
+                diff_stat = run("git diff origin/master --stat 2>&1")
                 log(f"  [VERIFY] Changes: {diff_stat.strip()[:200] if diff_stat else '(no diff)'}")
-                # Run a quick smoke test on the affected files
-                if files_manifest:
-                    affected = get_affected_tests(files_manifest)
+                changed_files = get_changed_files()
+                if changed_files:
+                    affected = get_affected_tests(changed_files)
                     if affected:
-                        test_files_arg = " ".join(affected[:3])   # cap at 3 test files for speed
-                        smoke = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=60)
-                        log(f"  [VERIFY] Smoke test output ({len(smoke)} chars)")
-                        if "error" in smoke.lower()[:200] or "FAIL" in smoke:
-                            log("  [VERIFY] WARNING: smoke test shows issues — review before proceeding")
-            # ── END VERIFY ─────────────────────────────────────────────────────
-
-            if not ok:
+                        smoke = run(
+                            f"cd /home/panda/riftbound/backend && npm test -- {' '.join(affected[:3])} 2>&1",
+                            timeout=90
+                        )
+                        log(f"  [VERIFY] Smoke: {'PASS' if 'error' not in smoke[:200] else 'FAIL'}")
+            elif not ok:
+                push_branch_and_tag(branch)
                 release_lock()
-                log("  [CHECKPOINT] IMPLEMENT incomplete — saved progress, will resume on next run")
+                log("  [CHECKPOINT] IMPLEMENT incomplete — saved progress")
                 return
+
+        # ── PHASE 3: CODE REVIEW ────────────────────────────────────────
+        if phases.get("3_CODE_REVIEW") == "done":
+            log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num} [SKIP — already done]")
         else:
-            log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num} [SKIP — already committed: {phase2_state}]")
-            commit_line = phase2_state.replace("done:", "").strip()
-            # Restore phases dict for subsequent phase references
-            if 'phases' not in dir():
-                phases = {"1_INVESTIGATE": "done", "2_IMPLEMENT": phase2_state,
-                           "3_CODE_REVIEW": "pending", "4_QA": "pending", "5_PUSH": "pending"}
-        # ── PHASE 3: CODE REVIEW ──────────────────────────────────────────
-        phase3_state = phases.get("3_CODE_REVIEW", "") if 'phases' in dir() else ""
-        review_done = phase3_state == "done"
-        if not review_done:
-            changed_files = get_changed_files(branch)
-            diff = get_git_diff(branch)
-            log(f"  Changed files: {len(changed_files)} — {changed_files[:3]}")
             log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num}")
-            review_log = branch_log / "phase3_review.log"
+            changed_files = get_changed_files()
+            diff = get_git_diff()
+            log(f"  Changed files: {len(changed_files)}")
+            review_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase3.log"
+            review_log.parent.mkdir(parents=True, exist_ok=True)
             ok, _ = spawn_hermes(
                 build_code_review_prompt(num, title, diff),
                 str(review_log),
@@ -1019,44 +767,41 @@ def main():
             )
             review_result = extract_result(str(review_log), "REVIEW_COMPLETE:")
             log(f"  Phase 3 complete — {review_result}")
-            phases["3_CODE_REVIEW"] = "done" if review_result else "incomplete"
-            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
-                                           "findings": findings, "phases": phases, "ts": ts})
+            phases["3_CODE_REVIEW"] = "done" if (review_result and "APPROVED" in review_result) else "incomplete"
+            save_checkpoint_on_branch(num, {
+                "issue": num, "title": title, "branch": branch,
+                "findings": findings, "phases": phases, "ts": ts
+            })
             if not review_result or "APPROVED" not in (review_result or ""):
-                log("  REVIEW: NEEDS_CHANGES — will retry on next cycle")
+                log("  REVIEW: NEEDS_CHANGES — will retry next cycle")
                 comment_issue(num,
-                    f"## Code Review: NEEDS CHANGES\n\n"
-                    f"The code review found issues that must be addressed.\n\n"
-                    f"Review log available at branch `{branch}`, file "
-                    f"`.agent_logs/issue-{num}_{ts}/phase3_review.log`.\n\n"
-                    f"The agent will retry automatically on the next cycle."
+                    f"## Code Review: NEEDS_CHANGES\n\n"
+                    f"The code review found issues that must be addressed.\n"
+                    f"The agent will retry automatically on the next cycle.\n"
+                    f"Branch: `{branch}`"
                 )
                 remove_label(num, "in-progress")
                 label_issue(num, ["needs-review"])
+                push_branch_and_tag(branch)
                 release_lock()
                 return
-        else:
-            changed_files = get_changed_files(branch)
-            log(f"\n[PHASE 3/{len(PHASES)}] CODE REVIEW — #{num} [SKIP — already done]")
 
-        # ── PHASE 4: QA ────────────────────────────────────────────────────
-        phase4_state = phases.get("4_QA", "") if 'phases' in dir() else ""
-        qa_done = phase4_state == "done"
-        if not qa_done:
+        # ── PHASE 4: QA ────────────────────────────────────────────────
+        if phases.get("4_QA") == "done":
+            log(f"\n[PHASE 4/{len(PHASES)}] QA — #{num} [SKIP — already done]")
+        else:
             log(f"\n[PHASE 4/{len(PHASES)}] QA — #{num}")
 
-            # 4a. Capture baseline errors BEFORE the fix is applied
             log("  [BASELINE] Capturing pre-existing errors on origin/master...")
             ts_errors, test_failures = get_pre_existing_errors()
 
-            # 4b. Run QA commands directly
-            log("  [QA] Running backend tests (affected tests only)...")
+            log("  [QA] Running backend tests...")
             affected_tests = get_affected_tests(changed_files)
-            if affected_tests:
-                test_files_arg = " ".join(affected_tests)
-                backend_test_raw = run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=120)
-            else:
-                backend_test_raw = "NO AFFECTED TESTS FOUND — no test files match the changed code"
+            test_files_arg = " ".join(affected_tests) if affected_tests else ""
+            backend_test_raw = (
+                run(f"cd /home/panda/riftbound/backend && npm test -- {test_files_arg} 2>&1", timeout=120)
+                if affected_tests else "NO AFFECTED TESTS"
+            )
             backend_test_filtered, _ = filter_baseline_errors(backend_test_raw, ts_errors, test_failures)
 
             log("  [QA] Running backend build...")
@@ -1067,108 +812,105 @@ def main():
             frontend_build_raw = run("cd /home/panda/riftbound/frontend && npx vite build 2>&1", timeout=120)
             frontend_build_filtered, _ = filter_baseline_errors(frontend_build_raw, ts_errors, test_failures)
 
-            # Cap QA output at 150 lines
             MAX_QA_LINES = 150
-            def cap_output(output, label):
-                lines = output.splitlines() if output else []
-                if len(lines) > MAX_QA_LINES:
-                    return "\n".join(lines[:MAX_QA_LINES]) + f"\n... [{len(lines) - MAX_QA_LINES}] more lines (truncated)"
-                return output
+            def cap_output(output):
+                lines = (output or "").splitlines()
+                return "\n".join(lines[:MAX_QA_LINES]) + \
+                    (f"\n... [{len(lines)-MAX_QA_LINES}] more lines" if len(lines) > MAX_QA_LINES else "")
 
-            backend_build_filtered_capped = cap_output(backend_build_filtered, "backend build")
-            frontend_build_filtered_capped = cap_output(frontend_build_filtered, "frontend build")
-            backend_test_filtered_capped = cap_output(backend_test_filtered, "backend tests")
-
-            # 4c. Hermes judges the QA output
-            qa_log = branch_log / "phase4_qa.log"
+            qa_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase4.log"
+            qa_log.parent.mkdir(parents=True, exist_ok=True)
             ok, _ = spawn_hermes(
                 build_qa_prompt(num, title, changed_files,
-                                backend_test_filtered_capped,
-                                backend_build_filtered_capped,
-                                frontend_build_filtered_capped,
-                                ts_errors),
+                               cap_output(backend_test_filtered),
+                               cap_output(backend_build_filtered),
+                               cap_output(frontend_build_filtered),
+                               ts_errors),
                 str(qa_log),
                 timeout_minutes=20
             )
             qa_result = extract_result(str(qa_log), "QA_COMPLETE:")
             log(f"  Phase 4 complete — {qa_result}")
 
-            # Parse QA outcome — only accept exact QA_COMPLETE:PASS line
             qa_pass = False
-            for line in (qa_result or "").splitlines():
-                if line.strip().startswith("QA_COMPLETE:"):
-                    qa_pass = line.strip().endswith(":PASS")
-                    break
+            if qa_result:
+                for line in qa_result.splitlines():
+                    if line.strip().startswith("QA_COMPLETE:"):
+                        qa_pass = line.strip().endswith(":PASS")
+                        break
 
             phases["4_QA"] = "done" if qa_pass else "fail"
-            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
-                                           "findings": findings, "phases": phases, "ts": ts})
+            save_checkpoint_on_branch(num, {
+                "issue": num, "title": title, "branch": branch,
+                "findings": findings, "phases": phases, "ts": ts
+            })
 
             if not qa_pass:
-                log("  QA: FAIL — will retry on next cycle")
+                log("  QA: FAIL — will retry next cycle")
                 comment_issue(num,
                     f"## QA Check: FAILED\n\n"
-                    f"QA phase found failures. The agent will retry automatically.\n\n"
-                    f"QA log: `.agent_logs/issue-{num}_{ts}/phase4_qa.log`\n\n"
-                    f"Branch `{branch}` is preserved for inspection."
+                    f"QA phase found failures. The agent will retry automatically.\n"
+                    f"Branch: `{branch}`\n"
+                    f"QA log: `.agent_logs/issue-{num}_{ts}/phase4.log`"
                 )
                 remove_label(num, "in-progress")
                 label_issue(num, ["qa-failed"])
+                push_branch_and_tag(branch)
                 release_lock()
                 return
-        else:
-            log(f"\n[PHASE 4/{len(PHASES)}] QA — #{num} [SKIP — already done]")
 
-        # ── PHASE 5: PUSH ──────────────────────────────────────────────────
-        phase5_state = phases.get("5_PUSH", "") if 'phases' in dir() else ""
-        push_done = phase5_state.startswith("done:")
-        if not push_done:
+        # ── PHASE 5: PUSH ───────────────────────────────────────────────
+        if phases.get("5_PUSH", "").startswith("done:"):
+            pr_url = phases["5_PUSH"].replace("done:", "").strip()
+            log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num} [SKIP — done: {pr_url}]")
+        else:
             log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num}")
-            push_log = branch_log / "phase5_push.log"
+            push_log = WORKDIR / f".agent_logs/issue-{num}_{ts}/phase5.log"
+            push_log.parent.mkdir(parents=True, exist_ok=True)
             ok, _ = spawn_hermes(
                 build_push_prompt(num, title, branch),
                 str(push_log),
                 timeout_minutes=10
             )
-            pr_url = extract_pr_url(str(push_log))
+            pr_url = extract_result(str(push_log), "PR_URL:").replace("PR_URL:", "").strip()
             log(f"  Phase 5 complete — PR: {pr_url or '(not found)'}")
             phases["5_PUSH"] = f"done:{pr_url}" if pr_url else "incomplete"
-            save_checkpoint(branch_log, {"issue": num, "title": title, "branch": branch,
-                                           "findings": findings, "phases": phases, "ts": ts})
-            if not ok or not pr_url:
+            save_checkpoint_on_branch(num, {
+                "issue": num, "title": title, "branch": branch,
+                "findings": findings, "phases": phases, "ts": ts
+            })
+            if not pr_url:
                 comment_issue(num,
                     f"## Push Failed\n\n"
                     f"Could not automatically push the PR. "
-                    f"Branch `{branch}` is ready. Please review and push manually.\n\n"
-                    f"Push log: `.agent_logs/issue-{num}_{ts}/phase5_push.log`"
+                    f"Branch `{branch}` is ready. Please review and push manually."
                 )
                 remove_label(num, "in-progress")
                 label_issue(num, ["push-failed"])
+                push_branch_and_tag(branch)
                 release_lock()
                 return
-        else:
-            pr_url = phase5_state.replace("done:", "").strip()
-            log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num} [SKIP — already done: {pr_url}]")
 
-        # ── DONE ───────────────────────────────────────────────────────────────
+        # ── DONE ───────────────────────────────────────────────────────
+        pr_url = phases.get("5_PUSH", "").replace("done:", "").strip()
         log(f"\n  Issue #{num} complete — PR ready for human review")
         log(f"  Branch: {branch}")
         log(f"  PR:     {pr_url}")
         remove_label(num, "in-progress")
         label_issue(num, ["in-review"])
+        push_branch_and_tag(branch)
 
     finally:
         release_lock()
         log("\nAgent run complete.")
 
 
-def _handle_failure(issue_num, title, branch, branch_log, reason):
+def _handle_failure(issue_num, title, branch, reason):
     log(f"\n[FATAL] {reason}")
     comment_issue(issue_num,
         f"## Agent Failed: {reason}\n\n"
-        f"The agent encountered an error and could not complete this issue.\n\n"
-        f"Branch `{branch}` may contain partial work.\n"
-        f"Logs: `.agent_logs/`"
+        f"The agent encountered an error and could not complete this issue.\n"
+        f"Branch `{branch}` may contain partial work."
     )
     remove_label(issue_num, "in-progress")
     label_issue(issue_num, ["agent-error"])
