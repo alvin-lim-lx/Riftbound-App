@@ -5,8 +5,8 @@
   "findings": "",
   "phases": {
     "1_INVESTIGATE": "incomplete",
-    "2_IMPLEMENT": "done:After each commit, output: git log -1 --pretty=format:\"%H\""
+    "2_IMPLEMENT": "done:After each commit, output: git log -1 --pretty=format:\"%H\"",
+    "3_CODE_REVIEW": "done"
   },
-  "ts": "20260422_090951",
-  "impl_subphase": "3. Output \"<short-name>\" on its own line before each commit"
+  "ts": "20260422_090951"
 }
