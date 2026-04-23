@@ -17,6 +17,19 @@ import {
   createGame, executeAction, resolveShowdown, advancePhase,
   canAutoAdvancePhase, getLegalActions, type ActionResult
 } from '../engine/GameEngine';
+
+/**
+ * Auto-advance loop for A-B-C-D phases.
+ * After each action, keeps advancing through Awaken→Beginning→Channel→Draw
+ * until either the effect stack blocks further advancement or we reach Action phase.
+ */
+function autoAdvanceABCDPhases(game: LiveGame): void {
+  while (canAutoAdvancePhase(game.state)) {
+    const nextState = advancePhase(game.state);
+    game.state = nextState;
+    if (game.state.phase === 'GameOver') return;
+  }
+}
 import { RulesBasedAI } from '../ai/RulesBasedAI';
 import { CARDS } from '../../shared/src/cards';
 import { randomId } from '../engine/utils';
@@ -357,6 +370,12 @@ export class GameServer {
             }
           }
 
+          // Auto-advance through A-B-C-D phases (Awaken→Beginning→Channel→Draw)
+          // when effect stack is empty, BEFORE broadcasting state
+          if (game.state.phase !== 'GameOver') {
+            autoAdvanceABCDPhases(game);
+          }
+
           this.broadcastGameState(game);
 
           // Handle game over
@@ -388,6 +407,12 @@ export class GameServer {
         const result = executeAction(game.state, passAction);
         if (result.success && result.newState) {
           game.state = result.newState;
+
+          // Auto-advance through A-B-C-D phases after pass
+          if (game.state.phase !== 'GameOver') {
+            autoAdvanceABCDPhases(game);
+          }
+
           this.broadcastGameState(game);
           this.scheduleAIMove(game);
         }

@@ -161,9 +161,9 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       current = advancePhase(current);
       phasesVisited.push(current.phase);
 
-      // Should now be in Action phase
-      expect(current.phase).toBe('Action');
-      expect(phasesVisited).toEqual(['Awaken', 'Beginning', 'Channel', 'Draw', 'Action']);
+      // Should now be in Action phase (represented as FirstMain sub-phase)
+      expect(current.phase).toBe('FirstMain');
+      expect(phasesVisited).toEqual(['Awaken', 'Beginning', 'Channel', 'Draw', 'FirstMain']);
     });
 
     it('blocks on Beginning phase when start-of-turn effect is on the stack', () => {
