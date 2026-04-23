@@ -707,7 +707,7 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       background: bg,
       borderColor: borderColor,
     }}>
-      {/* Base */}
+      {/* Base — left-aligned */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#7c3aed88' }}>BASE</div>
         <div ref={baseRef} style={zoneRowStyles.cardArea}>
@@ -723,35 +723,38 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
         </div>
       </div>
 
-      {/* Legend */}
-      <div style={zoneRowStyles.zone}>
-        <div style={{ ...zoneRowStyles.zoneLabel, color: '#d4a84388' }}>LEGEND</div>
-        <div ref={legendRef} style={zoneRowStyles.cardArea}>
-          {legendIds.length > 0 ? (
-            legendIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={legendH} />
-            ))
-          ) : (
-            <div style={{ ...zoneRowStyles.empty, borderColor: '#d4a84333' }}>
-              <span style={{ color: '#d4a84333', fontSize: '20px' }}>◆</span>
-            </div>
-          )}
+      {/* Legend + Champion — grouped and flushed right */}
+      <div style={{ display: 'flex', alignItems: 'stretch', gap: '12px', marginLeft: 'auto' }}>
+        {/* Legend */}
+        <div style={zoneRowStyles.zone}>
+          <div style={{ ...zoneRowStyles.zoneLabel, color: '#d4a84388' }}>LEGEND</div>
+          <div ref={legendRef} style={zoneRowStyles.cardArea}>
+            {legendIds.length > 0 ? (
+              legendIds.map(id => (
+                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={legendH} />
+              ))
+            ) : (
+              <div style={{ ...zoneRowStyles.empty, borderColor: '#d4a84333' }}>
+                <span style={{ color: '#d4a84333', fontSize: '20px' }}>◆</span>
+              </div>
+            )}
+          </div>
         </div>
-      </div>
 
-      {/* Champion */}
-      <div style={zoneRowStyles.zone}>
-        <div style={{ ...zoneRowStyles.zoneLabel, color: '#3b82f688' }}>CHAMPION</div>
-        <div ref={champRef} style={zoneRowStyles.cardArea}>
-          {championIds.length > 0 ? (
-            championIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={champH} />
-            ))
-          ) : (
-            <div style={{ ...zoneRowStyles.empty, borderColor: '#3b82f633' }}>
-              <span style={{ color: '#3b82f633', fontSize: '20px' }}>★</span>
-            </div>
-          )}
+        {/* Champion */}
+        <div style={zoneRowStyles.zone}>
+          <div style={{ ...zoneRowStyles.zoneLabel, color: '#3b82f688' }}>CHAMPION</div>
+          <div ref={champRef} style={zoneRowStyles.cardArea}>
+            {championIds.length > 0 ? (
+              championIds.map(id => (
+                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={champH} />
+              ))
+            ) : (
+              <div style={{ ...zoneRowStyles.empty, borderColor: '#3b82f633' }}>
+                <span style={{ color: '#3b82f633', fontSize: '20px' }}>★</span>
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
