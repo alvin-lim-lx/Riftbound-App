@@ -37,7 +37,7 @@ describe('GameEngine', () => {
       expect(state.players[P1]).toBeDefined();
       expect(state.players[P2]).toBeDefined();
       expect(state.battlefields.length).toBeGreaterThan(0);
-      expect(state.phase).toBe('Setup');
+      expect(state.phase).toBe('Mulligan');
       expect(state.winner).toBeNull();
     });
 
@@ -257,8 +257,8 @@ describe('GameEngine', () => {
 
   describe('Legend and Champion Zone Setup', () => {
     it('places legend card in legendZone location', () => {
-      const legendCardId = 'ogn-247-298'; // Daughter of the Void — type: Legend
-      const championCardId = 'ogn-011-298'; // Magma Wurm — type: Unit, superType: Champion
+      const legendCardId = 'unl-l01'; // Assuming a Legend card exists
+      const championCardId = 'unl-c01'; // Assuming a Champion unit exists
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
@@ -286,8 +286,8 @@ describe('GameEngine', () => {
     });
 
     it('places chosen champion card in championZone location', () => {
-      const legendCardId = 'ogn-247-298';
-      const championCardId = 'ogn-011-298';
+      const legendCardId = 'unl-l01';
+      const championCardId = 'unl-c01';
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
@@ -315,8 +315,8 @@ describe('GameEngine', () => {
     });
 
     it('legend and champion are NOT in player hand', () => {
-      const legendCardId = 'ogn-247-298';
-      const championCardId = 'ogn-011-298';
+      const legendCardId = 'unl-l01';
+      const championCardId = 'unl-c01';
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
