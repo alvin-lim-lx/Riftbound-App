@@ -1038,7 +1038,7 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
   },
   bfPanel: {
     minWidth: '200px',
-    flex: 1,
+    flex: 0,  // flex:0 prevents overflow — panels size to content, no grow
     display: 'flex',
     flexDirection: 'column',
     background: 'rgba(255,255,255,0.04)',
