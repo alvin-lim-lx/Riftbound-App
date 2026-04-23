@@ -24,15 +24,7 @@ export function HandZone({ playerId, playerName, allCards, cardDefs, isOpponent,
   const playablePhases: Phase[] = ['FirstMain', 'SecondMain', 'Combat', 'Showdown'];
 
   return (
-    <div style={styles.container}>
-      <div style={styles.header}>
-        <span style={styles.name}>{playerName}</span>
-        <span style={styles.label}>{isOpponent ? 'Hand (hidden)' : 'Hand'}</span>
-        {!isOpponent && mana !== undefined && (
-          <span style={styles.mana}>◆ {mana}</span>
-        )}
-      </div>
-      <div style={styles.cards}>
+    <div style={styles.cards}>
         {player.map(card => {
           if (isOpponent) {
             return (
@@ -63,7 +55,6 @@ export function HandZone({ playerId, playerName, allCards, cardDefs, isOpponent,
           <div style={styles.empty}>No cards</div>
         )}
       </div>
-    </div>
   );
 }
 

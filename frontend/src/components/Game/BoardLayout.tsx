@@ -105,10 +105,12 @@ interface CardStackProps {
   onClick?: () => void;
   size?: 'sm' | 'md';
   hidden?: boolean; // true = show card back (for hidden decks)
+  maxHeightPx?: number;
 }
 
-function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onClick, size = 'md', hidden }: CardStackProps) {
-  const dims = size === 'sm' ? { w: 64, h: 86 } : { w: 80, h: 108 };
+function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onClick, size = 'md', hidden, maxHeightPx }: CardStackProps) {
+  const baseDims = size === 'sm' ? { w: 64, h: 86 } : { w: 80, h: 108 };
+  const dims = maxHeightPx ? { w: Math.round(baseDims.w * (maxHeightPx / baseDims.h)), h: maxHeightPx } : baseDims;
   const stackColors = ['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.12)'];
 
   return (
@@ -153,6 +155,7 @@ function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onCl
             showStats={true}
             showKeywords={false}
             size={size === 'sm' ? 'sm' : 'md'}
+            maxHeight={maxHeightPx}
           />
         ) : (
           <div style={{
@@ -181,6 +184,8 @@ const stackStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '4px',
     cursor: 'pointer',
+    flexShrink: 1,
+    minHeight: 0,
   },
   label: {
     fontSize: '9px',
@@ -492,7 +497,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
           const total = cards.length;
           const center = (total - 1) / 2;
           const offset = i - center;
-          const yShift = Math.abs(offset) * -10;
+          const yShift = Math.max(Math.abs(offset) * -8, -40);
           const rotate = offset * 2;
           const zIndex = total - Math.abs(offset);
 
@@ -503,7 +508,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
                 transform: `translateY(${yShift}px) rotate(${rotate}deg)`,
                 zIndex,
                 transition: 'transform 0.2s ease',
-                flexShrink: 0,
+                flexShrink: 1,
               }}
             >
               <CardArtView
@@ -513,6 +518,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
                 showStats={true}
                 showKeywords={true}
                 size="md"
+                maxHeight={80}
                 onClick={() => onCardClick?.(card.instanceId)}
               />
             </div>
@@ -530,10 +536,10 @@ const handStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '8px 12px',
-    background: 'rgba(239,68,68,0.05)',
-    borderRadius: '10px',
-    border: '1px solid rgba(239,68,68,0.15)',
     minWidth: '160px',
+    flexShrink: 1,
+    minHeight: 0,
+    flex: 1,
   },
   playerContainer: {
     display: 'flex',
@@ -541,10 +547,10 @@ const handStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '8px 12px',
-    background: 'rgba(34,197,94,0.05)',
-    borderRadius: '10px',
-    border: '1px solid rgba(34,197,94,0.15)',
     minWidth: '200px',
+    flexShrink: 1,
+    minHeight: 0,
+    flex: 1,
   },
   zoneLabel: {
     fontSize: '9px',
@@ -558,6 +564,9 @@ const handStyles: Record<string, React.CSSProperties> = {
     gap: '4px',
     flexWrap: 'wrap',
     justifyContent: 'center',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   cardBack: {
     width: '44px',
@@ -579,6 +588,9 @@ const handStyles: Record<string, React.CSSProperties> = {
     alignItems: 'flex-end',
     gap: '0px',
     padding: '0 8px',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   countBadge: {
     fontSize: '12px',
@@ -593,6 +605,8 @@ const handStyles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     fontStyle: 'italic',
     padding: '4px 8px',
+    flexShrink: 1,
+    minHeight: 0,
   },
   emptyText: {
     color: '#555',
@@ -604,28 +618,34 @@ const handStyles: Record<string, React.CSSProperties> = {
 // ─────────────────────────────────────────
 // ZoneCard — renders a single card in a zone (base/champ/legend)
 // ─────────────────────────────────────────
+// ZoneCard — renders a single card in a zone (base/champ/legend)
+// maxHeightPx: measured available height for the card
 interface ZoneCardProps {
   cardId: string;
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
   isOpponent: boolean;
   size?: 'sm' | 'md' | 'lg';
+  maxHeightPx?: number;
 }
 
-function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md' }: ZoneCardProps) {
+function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md', maxHeightPx }: ZoneCardProps) {
   const card = allCards[cardId];
   if (!card) return null;
   const def = cardDefs[card.cardId];
 
   return (
-    <CardArtView
-      card={card}
-      cardDef={def}
-      isOpponent={isOpponent}
-      showStats={false}
-      showKeywords={false}
-      size={size}
-    />
+    <div style={{ flexShrink: 1, minWidth: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <CardArtView
+        card={card}
+        cardDef={def}
+        isOpponent={isOpponent}
+        showStats={false}
+        showKeywords={false}
+        size={size}
+        maxHeight={maxHeightPx}
+      />
+    </div>
   );
 }
 
@@ -642,6 +662,35 @@ interface ZoneRowProps {
 
 function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowProps) {
   if (!player) return null;
+
+  const baseRef = React.useRef<HTMLDivElement>(null);
+  const legendRef = React.useRef<HTMLDivElement>(null);
+  const champRef = React.useRef<HTMLDivElement>(null);
+  const [baseH, setBaseH] = React.useState(60);
+  const [legendH, setLegendH] = React.useState(60);
+  const [champH, setChampH] = React.useState(60);
+
+  React.useLayoutEffect(() => {
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const id = entry.target === baseRef.current ? 'base'
+          : entry.target === legendRef.current ? 'legend'
+          : 'champ';
+        const h = entry.contentRect.height;
+        if (id === 'base') setBaseH(h);
+        else if (id === 'legend') setLegendH(h);
+        else setChampH(h);
+      }
+    });
+    if (baseRef.current) observer.observe(baseRef.current);
+    if (legendRef.current) observer.observe(legendRef.current);
+    if (champRef.current) observer.observe(champRef.current);
+    // Fire immediately with current sizes
+    if (baseRef.current) setBaseH(baseRef.current.clientHeight);
+    if (legendRef.current) setLegendH(legendRef.current.clientHeight);
+    if (champRef.current) setChampH(champRef.current.clientHeight);
+    return () => observer.disconnect();
+  }, []);
 
   const { baseIds, championIds, legendIds } = partitionPlayerZones(
     playerId, allCards, cardDefs
@@ -661,10 +710,10 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       {/* Base */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#7c3aed88' }}>BASE</div>
-        <div style={zoneRowStyles.cardArea}>
+        <div ref={baseRef} style={zoneRowStyles.cardArea}>
           {baseIds.length > 0 ? (
             baseIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" />
+              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={baseH} />
             ))
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#7c3aed33' }}>
@@ -677,10 +726,10 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       {/* Legend */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#d4a84388' }}>LEGEND</div>
-        <div style={zoneRowStyles.cardArea}>
+        <div ref={legendRef} style={zoneRowStyles.cardArea}>
           {legendIds.length > 0 ? (
             legendIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" />
+              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={legendH} />
             ))
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#d4a84333' }}>
@@ -693,10 +742,10 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       {/* Champion */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#3b82f688' }}>CHAMPION</div>
-        <div style={zoneRowStyles.cardArea}>
+        <div ref={champRef} style={zoneRowStyles.cardArea}>
           {championIds.length > 0 ? (
             championIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" />
+              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={champH} />
             ))
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#3b82f633' }}>
@@ -712,41 +761,50 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
 const zoneRowStyles: Record<string, React.CSSProperties> = {
   row: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'stretch',
     justifyContent: 'center',
     gap: '12px',
-    padding: '8px 16px',
-    borderRadius: '10px',
+    padding: '2px 16px',
+    borderRadius: '6px',
     border: '1px solid',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   zone: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: '4px',
+    gap: '2px',
     flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   zoneLabel: {
     fontSize: '9px',
     textTransform: 'uppercase',
     letterSpacing: '1.5px',
     fontWeight: 700,
+    flexShrink: 0,
   },
   cardArea: {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
-    minHeight: '90px',
-    minWidth: '80px',
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   empty: {
-    width: '64px',
-    height: '86px',
+    flex: 1,
+    minHeight: 0,
     border: '1px dashed',
     borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    minWidth: '64px',
+    maxWidth: '100%',
   },
 };
 
@@ -768,6 +826,24 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
 
+  const rowRef = React.useRef<HTMLDivElement>(null);
+  const [rowH, setRowH] = React.useState(0);
+
+  React.useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setRowH(entry.contentRect.height);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  // Reserve ~44px for labels + count text; rest for card art
+  const cardMaxH = Math.max(20, rowH - 44);
+
   // Top card of main deck — always hidden (never revealed to players)
   // The deck count is shown but the top card is never exposed
   const _deckTopId = player.deck[player.deck.length - 1]; // intentionally unused — deck is hidden
@@ -780,7 +856,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
   const handVisible = !isOpponent;
 
   return (
-    <div style={deckAreaStyles.row}>
+    <div ref={rowRef} style={deckAreaStyles.row}>
       {/* Graveyard (left) */}
       <CardStack
         count={player.discardPile.length}
@@ -790,6 +866,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
         accentColor="#6b7280"
         isPlayer={!isOpponent}
         size="sm"
+        maxHeightPx={cardMaxH}
       />
 
       {/* Hand (center) */}
@@ -809,6 +886,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
         isPlayer={!isOpponent}
         size="sm"
         hidden={true}
+        maxHeightPx={cardMaxH}
       />
     </div>
   );
@@ -821,6 +899,9 @@ const deckAreaStyles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     gap: '16px',
     padding: '6px 16px',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
 };
 
@@ -858,152 +939,106 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
         const canAttack = myTurn && myUnits.some(u => u.ready && !u.exhausted);
 
         return (
-          <div key={bf.id} style={{ ...bfRowStyles.bfPanel, borderColor: bfColor + '55' }}>
-            {/* Battlefield card art + header */}
-            <div style={{ ...bfRowStyles.bfHeader, background: bfColor + '22', borderBottom: `1px solid ${bfColor}44` }}>
-              <div style={bfRowStyles.bfArtWrapper}>
-                <CardArtView
-                  card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
-                  cardDef={CARDS[bf.cardId] ?? cardDefinitions[bf.cardId]}
-                  isOpponent={false}
-                  showStats={false}
-                  showKeywords={false}
-                  size="sm"
-                />
-                <span style={{ ...bfRowStyles.bfName, color: bfColor }}>{bf.name}</span>
-              </div>
-              <div style={bfRowStyles.bfMeta}>
-                {bf.controllerId && (
-                  <span style={{
-                    ...bfRowStyles.controller,
-                    color: bf.controllerId === playerId ? '#22c55e' : '#ef4444',
-                  }}>
-                    {bf.controllerId === playerId ? 'You' : 'Enemy'}
-                  </span>
-                )}
-                {bf.scoringPlayerId && (
-                  <span style={bfRowStyles.scoring}>● Scoring</span>
+          <div key={bf.id} style={{ ...bfRowStyles.bfPanel, borderColor: bfColor + '55', flexDirection: 'row' }}>
+            {/* Left: player units */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
+              <div style={bfRowStyles.rowLabel}>Your</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                {myUnits.length === 0 ? (
+                  <div style={{ ...bfRowStyles.emptyState, fontSize: '11px' }}>—</div>
+                ) : (
+                  myUnits.map(unit => {
+                    const def = cardDefinitions[unit.cardId];
+                    const might = unit.currentStats.might ?? unit.stats.might ?? 0;
+                    const health = unit.currentStats.health ?? unit.stats.health ?? 1;
+                    const isReady = unit.ready && !unit.exhausted;
+                    return (
+                      <div
+                        key={unit.instanceId}
+                        style={{
+                          ...bfRowStyles.unitChip,
+                          borderColor: '#22c55e',
+                          opacity: isReady ? 1 : 0.6,
+                        }}
+                        title={def?.name}
+                      >
+                        <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
+                        <div style={bfRowStyles.unitStats}>
+                          <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
+                          <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
+                        </div>
+                        <div style={{ ...bfRowStyles.readyDot, background: isReady ? '#22c55e' : '#555' }} />
+                      </div>
+                    );
+                  })
                 )}
               </div>
             </div>
 
-            {/* Unit rows */}
-            <div style={bfRowStyles.unitArea}>
-              {bf.units.length === 0 ? (
-                <div style={bfRowStyles.emptyState}>
-                  {bf.controllerId
-                    ? `${bf.controllerId === playerId ? 'Your' : 'Enemy'} territory`
-                    : 'Unconquered'}
-                </div>
-              ) : (
-                <>
-                  {enemyUnits.length > 0 && (
-                    <div style={bfRowStyles.unitRow}>
-                      <div style={bfRowStyles.rowLabel}>Enemy</div>
-                      <div style={bfRowStyles.unitRowInner}>
-                        {enemyUnits.map(unit => {
-                          const def = cardDefinitions[unit.cardId];
-                          const might = unit.currentStats.might ?? unit.stats.might ?? 0;
-                          const health = unit.currentStats.health ?? unit.stats.health ?? 1;
-                          const isReady = unit.ready && !unit.exhausted;
-                          const isTarget = selectedTargetId === unit.instanceId;
-
-                          return (
-                            <div
-                              key={unit.instanceId}
-                              style={{
-                                ...bfRowStyles.unitChip,
-                                borderColor: isTarget ? '#fbbf24' : '#ef4444',
-                                opacity: isReady ? 1 : 0.6,
-                                transform: isReady ? 'scale(1)' : 'scale(0.95)',
-                                boxShadow: isTarget ? `0 0 10px #fbbf2460` : '0 1px 3px rgba(0,0,0,0.2)',
-                                cursor: 'pointer',
-                              }}
-                              onClick={() => selectTarget(unit.instanceId)}
-                              title={def?.name}
-                            >
-                              <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
-                              {def?.keywords && def.keywords.length > 0 && (
-                                <div style={bfRowStyles.keywords}>
-                                  {def.keywords.slice(0, 2).map(kw => (
-                                    <span key={kw} style={bfRowStyles.keyword}>{kw}</span>
-                                  ))}
-                                </div>
-                              )}
-                              <div style={bfRowStyles.unitStats}>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
-                              </div>
-                              <div style={{
-                                ...bfRowStyles.readyDot,
-                                background: isReady ? '#22c55e' : '#555',
-                              }} />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {myUnits.length > 0 && (
-                    <div style={bfRowStyles.unitRow}>
-                      <div style={bfRowStyles.rowLabel}>Your</div>
-                      <div style={bfRowStyles.unitRowInner}>
-                        {myUnits.map(unit => {
-                          const def = cardDefinitions[unit.cardId];
-                          const might = unit.currentStats.might ?? unit.stats.might ?? 0;
-                          const health = unit.currentStats.health ?? unit.stats.health ?? 1;
-                          const isReady = unit.ready && !unit.exhausted;
-
-                          return (
-                            <div
-                              key={unit.instanceId}
-                              style={{
-                                ...bfRowStyles.unitChip,
-                                borderColor: '#22c55e',
-                                opacity: isReady ? 1 : 0.6,
-                                transform: isReady ? 'scale(1)' : 'scale(0.95)',
-                              }}
-                              title={def?.name}
-                            >
-                              <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
-                              {def?.keywords && def.keywords.length > 0 && (
-                                <div style={bfRowStyles.keywords}>
-                                  {def.keywords.slice(0, 2).map(kw => (
-                                    <span key={kw} style={bfRowStyles.keyword}>{kw}</span>
-                                  ))}
-                                </div>
-                              )}
-                              <div style={bfRowStyles.unitStats}>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
-                              </div>
-                              <div style={{
-                                ...bfRowStyles.readyDot,
-                                background: isReady ? '#22c55e' : '#555',
-                              }} />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                </>
+            {/* Center: battlefield card art */}
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '80px', padding: '4px 8px', gap: '2px' }}>
+              <CardArtView
+                card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
+                cardDef={CARDS[bf.cardId] ?? cardDefinitions[bf.cardId]}
+                isOpponent={false}
+                showStats={false}
+                showKeywords={false}
+                size="sm"
+                landscape={true}
+              />
+              <span style={{ fontSize: '10px', fontWeight: 700, color: bfColor }}>{bf.name}</span>
+              {bf.controllerId && (
+                <span style={{ fontSize: '9px', color: bf.controllerId === playerId ? '#22c55e' : '#ef4444' }}>
+                  {bf.controllerId === playerId ? 'You' : 'Enemy'}
+                </span>
+              )}
+              {bf.scoringPlayerId && (
+                <span style={{ fontSize: '9px', color: '#d4a843' }}>● Scoring</span>
+              )}
+              {canAttack && (
+                <button style={{ ...bfRowStyles.attackBtn, fontSize: '11px', padding: '4px 12px' }}>
+                  Attack
+                </button>
               )}
             </div>
 
-            {canAttack && (
-              <button
-                style={bfRowStyles.attackBtn}
-                onClick={() => {
-                  const readyUnit = myUnits.find(u => u.ready && !u.exhausted);
-                  if (readyUnit) {
-                    handleAction('Attack', { attackerId: readyUnit.instanceId, targetBattlefieldId: bf.id });
-                  }
-                }}
-              >
-                Attack
-              </button>
-            )}
+            {/* Right: opponent units */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
+              <div style={bfRowStyles.rowLabel}>Enemy</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                {enemyUnits.length === 0 ? (
+                  <div style={{ ...bfRowStyles.emptyState, fontSize: '11px' }}>—</div>
+                ) : (
+                  enemyUnits.map(unit => {
+                    const def = cardDefinitions[unit.cardId];
+                    const might = unit.currentStats.might ?? unit.stats.might ?? 0;
+                    const health = unit.currentStats.health ?? unit.stats.health ?? 1;
+                    const isReady = unit.ready && !unit.exhausted;
+                    const isTarget = selectedTargetId === unit.instanceId;
+                    return (
+                      <div
+                        key={unit.instanceId}
+                        style={{
+                          ...bfRowStyles.unitChip,
+                          borderColor: isTarget ? '#fbbf24' : '#ef4444',
+                          opacity: isReady ? 1 : 0.6,
+                          cursor: 'pointer',
+                        }}
+                        onClick={() => selectTarget(unit.instanceId)}
+                        title={def?.name}
+                      >
+                        <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
+                        <div style={bfRowStyles.unitStats}>
+                          <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
+                          <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
+                        </div>
+                        <div style={{ ...bfRowStyles.readyDot, background: isReady ? '#22c55e' : '#555' }} />
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
         );
       })}
@@ -1025,6 +1060,8 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     alignItems: 'stretch',
     overflowX: 'auto',
     padding: '4px 0',
+    minHeight: 0,
+    flex: 1,
   },
   empty: {
     flex: 1,
@@ -1034,11 +1071,11 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     color: '#555',
     fontSize: '13px',
     fontStyle: 'italic',
-    minHeight: '120px',
+    minHeight: 0,
   },
   bfPanel: {
-    minWidth: '200px',
     flex: 1,
+    minWidth: '200px',
     display: 'flex',
     flexDirection: 'column',
     background: 'rgba(255,255,255,0.04)',
@@ -1046,8 +1083,11 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     border: '1px solid rgba(255,255,255,0.1)',
     overflow: 'hidden',
     boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
+    minHeight: 0,
   },
   bfHeader: {
+    height: '44px',
+    flexShrink: 0,
     padding: '7px 10px',
     display: 'flex',
     justifyContent: 'space-between',
@@ -1079,8 +1119,7 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
   unitArea: {
     flex: 1,
     padding: '8px',
-    minHeight: '80px',
-    display: 'flex',
+    minHeight: 0,
     flexDirection: 'column',
     gap: '6px',
   },
@@ -1088,6 +1127,9 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: '3px',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   rowLabel: {
     fontSize: '9px',
@@ -1099,6 +1141,9 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: '5px',
     flexWrap: 'wrap',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   emptyState: {
     flex: 1,
@@ -1108,6 +1153,7 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     color: '#555',
     fontSize: '12px',
     fontStyle: 'italic',
+    minHeight: 0,
   },
   unitChip: {
     display: 'inline-flex',
@@ -1427,13 +1473,14 @@ const styles: Record<string, React.CSSProperties> = {
   board: {
     display: 'flex',
     flexDirection: 'column',
-    height: '100vh',
+    height: '100dvh',
     width: '100%',
     background: 'linear-gradient(180deg, #0d1117 0%, #161b22 35%, #1a1a2e 65%, #0d1117 100%)',
     color: '#e8e8e8',
     fontFamily: '"Segoe UI", system-ui, sans-serif',
     overflow: 'hidden',
     position: 'relative',
+    minHeight: 0,
   },
   connecting: {
     display: 'flex',
@@ -1450,17 +1497,19 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    padding: '6px 16px',
-    gap: '6px',
+    padding: '3px 16px',
+    gap: '3px',
     minHeight: 0,
   },
 
-  // Generic row
+  // All 5 rows use equal height — 20% each
   row: {
-    flexShrink: 0,
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
 
-  // Battlefield row — takes all remaining space
+  // Battlefield row — same equal height
   battlefieldRow: {
     flex: 1,
     display: 'flex',
