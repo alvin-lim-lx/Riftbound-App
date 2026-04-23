@@ -262,16 +262,7 @@ function createGame(playerIds, playerNames, options = {}) {
         cardDefinitions: cards_1.CARDS,
         winner: null,
         scoreLimit,
-        actionLog: [
-            {
-                id: (0, utils_1.randomId)(),
-                type: 'GameStart',
-                message: `Game started — ${playerNames[0]} vs ${playerNames[1]}`,
-                turn: 0,
-                phase: 'Setup',
-                timestamp: Date.now(),
-            }
-        ],
+        actionLog: [],
         createdAt: Date.now(),
         isPvP,
         effectStack: [], // empty effect stack at game start
@@ -285,92 +276,42 @@ function executeAction(state, action) {
     if (action.playerId !== state.activePlayerId) {
         return { success: false, error: 'Not your turn.', action };
     }
+    // Clone state and add action to log before routing to handler.
+    // All state-mutating handlers work on cloned state and return newState,
+    // so we push the action to the clone's actionLog here — handlers that
+    // call deepClone() preserve the log entry.
+    const stateWithLog = deepClone(state);
+    stateWithLog.actionLog.push(action);
     // Route to handler
     switch (action.type) {
-        case 'Pass': {
-            const result = handlePass(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'PlayUnit': {
-            const result = handlePlayUnit(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'PlaySpell': {
-            const result = handlePlaySpell(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'PlayGear': {
-            const result = handlePlayGear(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'EquipGear': {
-            const result = handleEquipGear(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'MoveUnit': {
-            const result = handleMoveUnit(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'Attack': {
-            const result = handleAttack(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'DrawRune': {
-            const result = handleDrawRune(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'UseRune': {
-            const result = handleUseRune(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'HideCard': {
-            const result = handleHideCard(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'ReactFromHidden': {
-            const result = handleReactFromHidden(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'UseAbility': {
-            const result = handleUseAbility(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'Concede': {
-            const result = handleConcede(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
-        case 'Mulligan': {
-            const result = handleMulligan(state, action);
-            if (result.success && result.newState)
-                result.newState.actionLog.push(action);
-            return result;
-        }
+        case 'Pass':
+            return handlePass(stateWithLog, action);
+        case 'PlayUnit':
+            return handlePlayUnit(stateWithLog, action);
+        case 'PlaySpell':
+            return handlePlaySpell(stateWithLog, action);
+        case 'PlayGear':
+            return handlePlayGear(stateWithLog, action);
+        case 'EquipGear':
+            return handleEquipGear(stateWithLog, action);
+        case 'MoveUnit':
+            return handleMoveUnit(stateWithLog, action);
+        case 'Attack':
+            return handleAttack(stateWithLog, action);
+        case 'DrawRune':
+            return handleDrawRune(stateWithLog, action);
+        case 'UseRune':
+            return handleUseRune(stateWithLog, action);
+        case 'HideCard':
+            return handleHideCard(stateWithLog, action);
+        case 'ReactFromHidden':
+            return handleReactFromHidden(stateWithLog, action);
+        case 'UseAbility':
+            return handleUseAbility(stateWithLog, action);
+        case 'Concede':
+            return handleConcede(stateWithLog, action);
+        case 'Mulligan':
+            return handleMulligan(stateWithLog, action);
         default:
             return { success: false, error: `Unknown action type: ${action.type}`, action };
     }
@@ -394,17 +335,14 @@ function canAutoAdvancePhase(state) {
 function advancePhase(state) {
     // Handle Action sub-phases
     if (state.phase === 'FirstMain') {
-        const next = enterPhase(state, 'Combat');
-        return withPhaseLog(next, 'FirstMain', 'Combat');
+        return enterPhase(state, 'Combat');
     }
     if (state.phase === 'Combat') {
-        const next = enterPhase(state, 'SecondMain');
-        return withPhaseLog(next, 'Combat', 'SecondMain');
+        return enterPhase(state, 'SecondMain');
     }
     if (state.phase === 'SecondMain') {
         // End of action phase — advance to End
-        const next = enterPhase(state, 'End');
-        return withPhaseLog(next, 'SecondMain', 'End');
+        return enterPhase(state, 'End');
     }
     const currentIdx = PHASE_ORDER.indexOf(state.phase);
     if (currentIdx === -1)
@@ -428,26 +366,15 @@ function advancePhase(state) {
     }
     // Stack non-empty or non-auto-advance phase: enter next phase (await player input)
     if (currentIdx < PHASE_ORDER.length - 1) {
-        const nextPhase = PHASE_ORDER[currentIdx + 1];
-        const next = enterPhase(state, nextPhase);
-        return withPhaseLog(next, state.phase, nextPhase);
+        return enterPhase(state, PHASE_ORDER[currentIdx + 1]);
     }
     else {
         return startNewTurn(state);
     }
 }
-function withPhaseLog(state, fromPhase, toPhase) {
-    const newState = deepClone(state);
-    newState.actionLog.push(makeLog(newState, newState.activePlayerId, 'PhaseChange', `Phase changed from ${fromPhase} to ${toPhase}`));
-    return newState;
-}
 function startNewTurn(state) {
     const nextPlayerId = getOpponentId(state, state.activePlayerId);
-    const newState = deepClone(state);
-    newState.turn = state.turn + 1;
-    newState.activePlayerId = nextPlayerId;
-    newState.effectStack = (state.effectStack ?? []).slice(); // clear effect stack on new turn
-    newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange', `Turn ${newState.turn} begins for ${nextPlayerId}`));
+    const newState = { ...state, turn: state.turn + 1, activePlayerId: nextPlayerId };
     return enterPhase(newState, 'Awaken');
 }
 function enterPhase(state, phase) {

@@ -317,16 +317,7 @@ export function createGame(
     cardDefinitions: CARDS,
     winner: null,
     scoreLimit,
-    actionLog: [
-      {
-        id: randomId(),
-        type: 'GameStart' as const,
-        message: `Game started — ${playerNames[0]} vs ${playerNames[1]}`,
-        turn: 0,
-        phase: 'Setup' as Phase,
-        timestamp: Date.now(),
-      }
-    ],
+    actionLog: [],
     createdAt: Date.now(),
     isPvP,
     effectStack: [],  // empty effect stack at game start
@@ -346,78 +337,43 @@ export function executeAction(
     return { success: false, error: 'Not your turn.', action };
   }
 
+  // Clone state and add action to log before routing to handler.
+  // All state-mutating handlers work on cloned state and return newState,
+  // so we push the action to the clone's actionLog here — handlers that
+  // call deepClone() preserve the log entry.
+  const stateWithLog: GameState = deepClone(state);
+  stateWithLog.actionLog.push(action);
+
   // Route to handler
   switch (action.type) {
-    case 'Pass': {
-      const result = handlePass(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'PlayUnit': {
-      const result = handlePlayUnit(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'PlaySpell': {
-      const result = handlePlaySpell(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'PlayGear': {
-      const result = handlePlayGear(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'EquipGear': {
-      const result = handleEquipGear(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'MoveUnit': {
-      const result = handleMoveUnit(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'Attack': {
-      const result = handleAttack(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'DrawRune': {
-      const result = handleDrawRune(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'UseRune': {
-      const result = handleUseRune(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'HideCard': {
-      const result = handleHideCard(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'ReactFromHidden': {
-      const result = handleReactFromHidden(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'UseAbility': {
-      const result = handleUseAbility(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'Concede': {
-      const result = handleConcede(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'Mulligan': {
-      const result = handleMulligan(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
+    case 'Pass':
+      return handlePass(stateWithLog, action);
+    case 'PlayUnit':
+      return handlePlayUnit(stateWithLog, action);
+    case 'PlaySpell':
+      return handlePlaySpell(stateWithLog, action);
+    case 'PlayGear':
+      return handlePlayGear(stateWithLog, action);
+    case 'EquipGear':
+      return handleEquipGear(stateWithLog, action);
+    case 'MoveUnit':
+      return handleMoveUnit(stateWithLog, action);
+    case 'Attack':
+      return handleAttack(stateWithLog, action);
+    case 'DrawRune':
+      return handleDrawRune(stateWithLog, action);
+    case 'UseRune':
+      return handleUseRune(stateWithLog, action);
+    case 'HideCard':
+      return handleHideCard(stateWithLog, action);
+    case 'ReactFromHidden':
+      return handleReactFromHidden(stateWithLog, action);
+    case 'UseAbility':
+      return handleUseAbility(stateWithLog, action);
+    case 'Concede':
+      return handleConcede(stateWithLog, action);
+    case 'Mulligan':
+      return handleMulligan(stateWithLog, action);
     default:
       return { success: false, error: `Unknown action type: ${action.type}`, action };
   }
@@ -446,29 +402,29 @@ export function canAutoAdvancePhase(state: GameState): boolean {
 export function advancePhase(state: GameState): GameState {
   // Handle Action sub-phases
   if (state.phase === 'FirstMain') {
-    const next = enterPhase(state, 'Combat');
-    return withPhaseLog(next, 'FirstMain', 'Combat');
+    return enterPhase(state, 'Combat');
   }
   if (state.phase === 'Combat') {
-    const next = enterPhase(state, 'SecondMain');
-    return withPhaseLog(next, 'Combat', 'SecondMain');
+    return enterPhase(state, 'SecondMain');
   }
   if (state.phase === 'SecondMain') {
     // End of action phase — advance to End
-    const next = enterPhase(state, 'End');
-    return withPhaseLog(next, 'SecondMain', 'End');
+    return enterPhase(state, 'End');
   }
 
   const currentIdx = PHASE_ORDER.indexOf(state.phase);
   if (currentIdx === -1) return state;
 
-  // Auto-advance to next phase when effect stack is empty (A-B-C-D phases only)
-  // NOTE: Each call to advancePhase advances ONE phase. The caller (GameServer)
-  // is responsible for calling this repeatedly to chain through multiple A-B-C-D phases.
+  // Auto-advance through A-B-C-D phases when effect stack is empty
   if (canAutoAdvancePhase(state)) {
     if (currentIdx < PHASE_ORDER.length - 1) {
       const nextPhase = PHASE_ORDER[currentIdx + 1];
       const nextState = enterPhase(state, nextPhase);
+      // After entering next phase, check if THAT phase also auto-advances.
+      // Only recurse if the phase we entered is still an A-B-C-D phase.
+      if (AUTO_ADVANCE_PHASES.includes(nextPhase) && canAutoAdvancePhase(nextState)) {
+        return advancePhase(nextState);
+      }
       return nextState;
     } else {
       // End of turn — start new turn
@@ -478,37 +434,20 @@ export function advancePhase(state: GameState): GameState {
 
   // Stack non-empty or non-auto-advance phase: enter next phase (await player input)
   if (currentIdx < PHASE_ORDER.length - 1) {
-    const nextPhase = PHASE_ORDER[currentIdx + 1];
-    const next = enterPhase(state, nextPhase);
-    return withPhaseLog(next, state.phase, nextPhase);
+    return enterPhase(state, PHASE_ORDER[currentIdx + 1]);
   } else {
     return startNewTurn(state);
   }
 }
 
-function withPhaseLog(state: GameState, fromPhase: Phase, toPhase: Phase): GameState {
-  const newState = deepClone(state);
-  newState.actionLog.push(makeLog(newState, newState.activePlayerId, 'PhaseChange',
-    `Phase changed from ${fromPhase} to ${toPhase}`));
-  return newState;
-}
-
 export function startNewTurn(state: GameState): GameState {
   const nextPlayerId = getOpponentId(state, state.activePlayerId);
-  const newState = deepClone(state);
-  newState.turn = state.turn + 1;
-  newState.activePlayerId = nextPlayerId;
-  newState.effectStack = (state.effectStack ?? []).slice(); // clear effect stack on new turn
-  newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange',
-    `Turn ${newState.turn} begins for ${nextPlayerId}`));
+  const newState = { ...state, turn: state.turn + 1, activePlayerId: nextPlayerId };
   return enterPhase(newState, 'Awaken');
 }
 
 export function enterPhase(state: GameState, phase: Phase): GameState {
-  // Use deepClone to properly copy nested objects (players, allCards, etc.)
-  // so that phase execution functions can mutate safely without affecting the caller's state.
-  const newState = deepClone(state);
-  newState.phase = phase;
+  const newState: GameState = { ...state, phase };
 
   switch (phase) {
     case 'Setup':
