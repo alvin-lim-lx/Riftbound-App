@@ -342,7 +342,7 @@ function PlayerInfoBar({ player, isPlayer, allCards, cardDefs }: PlayerInfoBarPr
 }
 
 const infoBarStyles: Record<string, React.CSSProperties> = {
-  placeholder: { flex: 1, minWidth: '200px' },
+  placeholder: { flex: 1, minWidth: '160px' },
   bar: {
     display: 'flex',
     flexDirection: 'column',
@@ -351,7 +351,7 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     borderRadius: '10px',
     border: '1px solid',
     flex: 1,
-    minWidth: '200px',
+    minWidth: '160px',
     maxWidth: '320px',
   },
   nameScore: {
@@ -544,7 +544,7 @@ const handStyles: Record<string, React.CSSProperties> = {
     background: 'rgba(34,197,94,0.05)',
     borderRadius: '10px',
     border: '1px solid rgba(34,197,94,0.15)',
-    minWidth: '200px',
+    minWidth: '160px',
   },
   zoneLabel: {
     fontSize: '9px',
@@ -1023,7 +1023,7 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     gap: '12px',
     width: '100%',
     alignItems: 'stretch',
-    overflowX: 'auto',
+    overflow: 'hidden',
     padding: '4px 0',
   },
   empty: {
@@ -1037,7 +1037,7 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     minHeight: '120px',
   },
   bfPanel: {
-    minWidth: '200px',
+    minWidth: '160px',
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
@@ -1428,7 +1428,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     height: '100vh',
-    width: '100vw',
+    width: '100%',
     background: 'linear-gradient(180deg, #0d1117 0%, #161b22 35%, #1a1a2e 65%, #0d1117 100%)',
     color: '#e8e8e8',
     fontFamily: '"Segoe UI", system-ui, sans-serif',
