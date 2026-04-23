@@ -1431,7 +1431,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     height: '100vh',
-    width: '100vw',
+    width: '100%',
     background: 'linear-gradient(180deg, #0d1117 0%, #161b22 35%, #1a1a2e 65%, #0d1117 100%)',
     color: '#e8e8e8',
     fontFamily: '"Segoe UI", system-ui, sans-serif',
