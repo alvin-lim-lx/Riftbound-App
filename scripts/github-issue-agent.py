@@ -11,9 +11,9 @@ PHASES:
 
 BRANCH STRATEGY:
   - Each issue gets a lightweight tag: refs/tags/issue/{num} → current working branch
-  - Branch name: fix/issue-{num}_{ts} (fresh per attempt, resume picks up existing)
+  - Branch name: fix/issue-{num} (stable, reused on every resume)
   - On resume: checkout tag's branch, rebase onto latest origin/master
-  - Checkpoint stored locally as .agent_logs/issue-{num}_{ts}/checkpoint.json
+  - Checkpoint stored locally as .agent_logs/issue-{num}/checkpoint.json
     (NOT committed to git — only the branch and tag are shared)
 
 LOCKING:
@@ -124,22 +124,15 @@ def get_git_diff(branch=None):
 
 
 def get_checkpoint_on_branch():
-    """Load checkpoint from local agent log dir, or None.
-
-    Legacy fallback: also check .agent_checkpoint_{num}.json in WORKDIR root.
-    """
-    # Prefer the new location: .agent_logs/issue-{num}_{ts}/checkpoint.json
-    # Find the most recent log dir for this issue number
-    log_dirs = sorted(WORKDIR.glob(f".agent_logs/issue-{num}_*/"))
-    for ld in reversed(log_dirs):
-        cp_file = ld / "checkpoint.json"
-        if cp_file.exists():
-            try:
-                with open(cp_file) as f:
-                    return json.load(f)
-            except Exception:
-                pass
-    # Legacy fallback
+    """Load checkpoint from local agent log dir, or None."""
+    cp_file = WORKDIR / f".agent_logs/issue-{num}/checkpoint.json"
+    if cp_file.exists():
+        try:
+            with open(cp_file) as f:
+                return json.load(f)
+        except Exception:
+            pass
+    # Legacy fallback: .agent_checkpoint_{num}.json in WORKDIR root
     cp_files = sorted(WORKDIR.glob(f".agent_checkpoint_*.json"))
     if cp_files:
         try:
@@ -151,12 +144,8 @@ def get_checkpoint_on_branch():
 
 
 def save_checkpoint_on_branch(num, data):
-    """Write checkpoint to .agent_logs/issue-{num}_{ts}/checkpoint.json — NOT committed to git.
-
-    Uses ts from data dict to determine the correct log directory.
-    """
-    ts = data.get("ts") or datetime.now().strftime("%Y%m%d_%H%M%S")
-    cp_dir = WORKDIR / f".agent_logs/issue-{num}_{ts}"
+    """Write checkpoint to .agent_logs/issue-{num}/checkpoint.json — NOT committed to git."""
+    cp_dir = WORKDIR / f".agent_logs/issue-{num}"
     cp_dir.mkdir(parents=True, exist_ok=True)
     cp_path = cp_dir / "checkpoint.json"
     with open(cp_path, "w") as f:
@@ -814,8 +803,6 @@ def main():
         log("Another agent is running — exiting.")
         return
 
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-
     while True:
         try:
             # ── 2. Pick an issue ────────────────────────────────────────────────
@@ -836,7 +823,7 @@ def main():
 
             # ── 4. Determine branch strategy ────────────────────────────────
             existing_branch = find_issue_tag(num)
-            branch = f"fix/issue-{num}_{ts}"
+            branch = f"fix/issue-{num}"
             resumed = False
 
             if existing_branch:
@@ -844,18 +831,31 @@ def main():
                 checkout_ok = run(f"git checkout {existing_branch} 2>&1")
                 current = current_branch()
                 if current == existing_branch:
-                    # Rebase onto latest origin/master — fetch first
-                    log(f"  [REBASE] Fetching and rebasing onto origin/master...")
-                    fetch_master()
-                    rebase_result = run(f"git rebase origin/master 2>&1")
-                    if "CONFLICT" in rebase_result:
-                        log(f"  [REBASE] Conflicts — aborting and starting fresh branch")
-                        run("git rebase --abort 2>&1")
-                        run(f"git checkout -b {branch} origin/master 2>&1")
+                    # Rename old timestamped branch to the new canonical name
+                    if existing_branch != f"fix/issue-{num}":
+                        log(f"  [MIGRATE] Renaming '{existing_branch}' → 'fix/issue-{num}'")
+                        rename_result = run(f"git branch -m {existing_branch} fix/issue-{num} 2>&1")
+                        if "error" in rename_result.lower() or "failed" in rename_result.lower():
+                            log(f"  [WARN] Could not rename branch — starting fresh")
+                            run(f"git checkout -b fix/issue-{num} origin/master 2>&1")
+                            branch = f"fix/issue-{num}"
+                            resumed = False
+                        else:
+                            branch = f"fix/issue-{num}"
+                            resumed = True
+                            log(f"  [MIGRATE] Branch renamed — resuming on 'fix/issue-{num}'")
                     else:
-                        branch = existing_branch
                         resumed = True
-                        log(f"  [REBASE] Success — resuming on '{branch}'")
+                        # Rebase onto latest origin/master — fetch first
+                        log(f"  [REBASE] Fetching and rebasing onto origin/master...")
+                        fetch_master()
+                        rebase_result = run(f"git rebase origin/master 2>&1")
+                        if "CONFLICT" in rebase_result:
+                            log(f"  [REBASE] Conflicts — aborting and starting fresh branch")
+                            run("git rebase --abort 2>&1")
+                            run(f"git checkout -b {branch} origin/master 2>&1")
+                        else:
+                            log(f"  [REBASE] Success — resuming on '{branch}'")
                 else:
                     log(f"  [WARN] Could not checkout '{existing_branch}' — fresh start")
             else:
@@ -869,18 +869,15 @@ def main():
             cp = get_checkpoint_on_branch() if resumed else None
             findings = ""
             phases = {}
-            # Preserve the original ts so we write back to the same log dir
-            run_ts = ts
             if cp and resumed:
                 findings = cp.get("findings", "")
                 phases = cp.get("phases", {})
-                run_ts = cp.get("ts", ts)  # use original ts, not fresh one
-                log(f"  [CHECKPOINT] Loaded: phase={phases.get('2_IMPLEMENT')}, subphase={cp.get('impl_subphase')}, ts={run_ts}")
+                log(f"  [CHECKPOINT] Loaded: phase={phases.get('2_IMPLEMENT')}, subphase={cp.get('impl_subphase')}")
 
             # ── PHASE 1: INVESTIGATE ────────────────────────────────────────
             if not phases.get("1_INVESTIGATE"):
                 log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num}")
-                investigate_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase1.log"
+                investigate_log = WORKDIR / f".agent_logs/issue-{num}/phase1.log"
                 investigate_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, _ = spawn_hermes(
                     build_investigate_prompt(num, title, body),
@@ -892,7 +889,7 @@ def main():
                 phases["1_INVESTIGATE"] = "done" if ok else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": run_ts
+                    "findings": findings, "phases": phases,
                 })
                 if not ok and not timed_out:
                     push_branch_and_tag(branch, num)
@@ -927,7 +924,7 @@ def main():
                 log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num} [SKIP — committed: {commit_hash}]")
             else:
                 log(f"\n[PHASE 2/{len(PHASES)}] IMPLEMENT — #{num}")
-                implement_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase2.log"
+                implement_log = WORKDIR / f".agent_logs/issue-{num}/phase2.log"
                 implement_log.parent.mkdir(parents=True, exist_ok=True)
 
                 saved_subphase = cp.get("impl_subphase") if cp else None
@@ -952,7 +949,7 @@ def main():
                 phases["2_IMPLEMENT"] = f"done:{commit_hash}" if commit_hash else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": run_ts,
+                    "findings": findings, "phases": phases,
                     "impl_subphase": last_subphase or None,
                 })
 
@@ -993,7 +990,7 @@ def main():
                 changed_files = get_changed_source_files()
                 diff = get_git_diff()
                 log(f"  Changed files: {len(changed_files)}")
-                review_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase3.log"
+                review_log = WORKDIR / f".agent_logs/issue-{num}/phase3.log"
                 review_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, timed_out = spawn_hermes(
                     build_code_review_prompt(num, title, diff),
@@ -1027,7 +1024,7 @@ def main():
                     continue
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": run_ts
+                    "findings": findings, "phases": phases
                 })
                 if not review_result or "APPROVED" not in (review_result or ""):
                     log("  REVIEW: NEEDS_CHANGES — human must review")
@@ -1057,7 +1054,7 @@ def main():
                     phases["4_QA"] = "done"
                     save_checkpoint_on_branch(num, {
                         "issue": num, "title": title, "branch": branch,
-                        "findings": findings, "phases": phases, "ts": run_ts
+                        "findings": findings, "phases": phases
                     })
                     release_lock()
                     continue
@@ -1088,7 +1085,7 @@ def main():
                     return "\n".join(lines[:MAX_QA_LINES]) + \
                         (f"\n... [{len(lines)-MAX_QA_LINES}] more lines" if len(lines) > MAX_QA_LINES else "")
 
-                qa_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase4.log"
+                qa_log = WORKDIR / f".agent_logs/issue-{num}/phase4.log"
                 qa_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, timed_out = spawn_hermes(
                     build_qa_prompt(num, title, changed_files,
@@ -1125,7 +1122,7 @@ def main():
                     phases["4_QA"] = "done" if qa_pass else "fail"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": run_ts
+                    "findings": findings, "phases": phases
                 })
 
                 if not qa_pass:
@@ -1134,7 +1131,7 @@ def main():
                         f"## QA Check: FAILED\n\n"
                         f"QA phase found failures. The agent will retry automatically.\n"
                         f"Branch: `{branch}`\n"
-                        f"QA log: `.agent_logs/issue-{num}_{run_ts}/phase4.log`"
+                        f"QA log: `.agent_logs/issue-{num}/phase4.log`"
                     )
                     remove_label(num, "in-progress")
                     label_issue(num, ["qa-failed"])
@@ -1150,7 +1147,7 @@ def main():
                 # Squash any WIP commits before pushing, so the PR has a clean history
                 squash_wip_commits(branch)
                 log(f"\n[PHASE 5/{len(PHASES)}] PUSH — #{num}")
-                push_log = WORKDIR / f".agent_logs/issue-{num}_{run_ts}/phase5.log"
+                push_log = WORKDIR / f".agent_logs/issue-{num}/phase5.log"
                 push_log.parent.mkdir(parents=True, exist_ok=True)
                 ok, _ = spawn_hermes(
                     build_push_prompt(num, title, branch),
@@ -1162,7 +1159,7 @@ def main():
                 phases["5_PUSH"] = f"done:{pr_url}" if pr_url else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
-                    "findings": findings, "phases": phases, "ts": run_ts
+                    "findings": findings, "phases": phases
                 })
                 if not pr_url:
                     comment_issue(num,
