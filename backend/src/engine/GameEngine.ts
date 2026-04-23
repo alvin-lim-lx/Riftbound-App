@@ -443,6 +443,9 @@ export function canAutoAdvancePhase(state: GameState): boolean {
   return !state.effectStack || state.effectStack.length === 0;
 }
 
+// Alias for backwards compatibility with tests
+export const canAutoAdvance = canAutoAdvancePhase;
+
 export function advancePhase(state: GameState): GameState {
   // Handle Action sub-phases
   if (state.phase === 'FirstMain') {

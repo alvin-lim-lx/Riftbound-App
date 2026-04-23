@@ -12,6 +12,7 @@
  * - All card definitions are cached in gameState.cardDefinitions
  */
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.canAutoAdvance = void 0;
 exports.createGame = createGame;
 exports.executeAction = executeAction;
 exports.canAutoAdvancePhase = canAutoAdvancePhase;
@@ -391,6 +392,8 @@ function canAutoAdvancePhase(state) {
     // Only auto-advance when the effect stack is empty (defensive: treat undefined as empty)
     return !state.effectStack || state.effectStack.length === 0;
 }
+// Alias for backwards compatibility with tests
+exports.canAutoAdvance = canAutoAdvancePhase;
 function advancePhase(state) {
     // Handle Action sub-phases
     if (state.phase === 'FirstMain') {
