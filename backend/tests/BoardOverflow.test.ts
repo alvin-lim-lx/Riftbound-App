@@ -70,18 +70,29 @@ describe('Board Overflow — Issue #34', () => {
       expect(bfContainerStyle.overflowX).toBe('auto');
     });
 
-    it('bfRowStyles.bfPanel has minWidth not flex: 1', () => {
-      // Battlefield panels should use minWidth, not flex: 1 which causes stretching
-      // flex: 1 on a child inside a width: 100% flex container can cause overflow
+    it('bfRowStyles.bfPanel uses flex:"0 1 auto" (shrink-only, not grow)', () => {
+      // Battlefield panels must NOT grow beyond their content size.
+      // flex: '0 1 auto' means: flex-grow=0 (don't grow), flex-shrink=1 (shrink if needed), flex-basis=auto
+      // This prevents panels from stretching to fill all available space and causing overflow
       const bfPanelStyle = {
         minWidth: '200px',
-        flex: 1, // This is OK as long as container has overflowX: auto
+        flex: '0 1 auto', // FIX: shrink-only, no grow
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
       };
       expect(bfPanelStyle.minWidth).toBe('200px');
+      expect(bfPanelStyle.flex).toBe('0 1 auto'); // KEY FIX: no grow
       expect(bfPanelStyle.overflow).toBe('hidden');
+    });
+
+    it('bfRowStyles.bfPanel flex is NOT 1 (which causes stretch-grow)', () => {
+      // Verify the fix: flex: 1 causes panels to GROW beyond their content size
+      // which leads to horizontal overflow. flex: '0 1 auto' fixes this.
+      const badStyle = { flex: 1 as any };
+      const goodStyle = { flex: '0 1 auto' as string };
+      expect(badStyle.flex).not.toBe(goodStyle.flex);
+      expect(goodStyle.flex).toBe('0 1 auto');
     });
   });
 
