@@ -223,7 +223,7 @@ def squash_wip_commits(branch, base_ref="origin/master"):
     result = run(
         "git commit -m " + shlex.quote(squash_msg) + " --no-verify 2>&1"
     )
-    if result.returncode != 0:
+    if "error" in result.lower() or "failed" in result.lower():
         log(f"  [SQUASH] Squash commit failed: {result[:100]}")
         return None
 
