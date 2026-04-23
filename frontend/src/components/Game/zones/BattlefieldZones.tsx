@@ -214,7 +214,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     gap: '12px',
     width: '100%',
-    alignItems: 'stretch',
+    alignItems: 'flex-start', // FIX: don't stretch children beyond their content width (fixes #36)
     overflowX: 'auto',
   },
   bfPanel: {

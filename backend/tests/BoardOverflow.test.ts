@@ -150,6 +150,48 @@ describe('Board Overflow — Issue #34', () => {
       expect(hasFlexStart).toBe(true); // After fix: flex-start SHOULD be present
     });
 
+    it('BattlefieldZones styles.container also uses flex-start (not stretch)', () => {
+      // Issue #36: BattlefieldZones.tsx also has alignItems: 'stretch' in its container style
+      // This test verifies that fix as well.
+      const fs = require('fs');
+      const path = require('path');
+      const bfZonesPath = path.join(__dirname, '../../frontend/src/components/Game/zones/BattlefieldZones.tsx');
+      const content = fs.readFileSync(bfZonesPath, 'utf8');
+
+      const lines = content.split('\n');
+      let inContainer = false;
+      let braceCount = 0;
+      let containerBlock = '';
+
+      for (const line of lines) {
+        if (line.includes('container:')) {
+          inContainer = true;
+          braceCount = 0;
+          containerBlock = line + '\n';
+          for (const char of line) {
+            if (char === '{') braceCount++;
+            if (char === '}') braceCount--;
+          }
+          if (braceCount === 0) break;
+          continue;
+        }
+        if (inContainer) {
+          containerBlock += line + '\n';
+          for (const char of line) {
+            if (char === '{') braceCount++;
+            if (char === '}') braceCount--;
+          }
+          if (braceCount === 0) break;
+        }
+      }
+
+      expect(containerBlock).toContain('alignItems');
+      const hasStretch = containerBlock.includes("alignItems: 'stretch'") || containerBlock.includes('alignItems: "stretch"');
+      const hasFlexStart = containerBlock.includes("alignItems: 'flex-start'") || containerBlock.includes('alignItems: "flex-start"');
+      expect(hasStretch).toBe(false); // After fix: stretch should NOT be present
+      expect(hasFlexStart).toBe(true); // After fix: flex-start SHOULD be present
+    });
+
     it('bfRowStyles.unitRowInner wraps units without causing overflow', () => {
       // Issue #36: flexWrap: wrap on unit rows should not cause overflow
       const unitRowInner = {
