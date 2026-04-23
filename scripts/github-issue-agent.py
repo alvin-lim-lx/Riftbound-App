@@ -1093,7 +1093,7 @@ def main():
                     str(qa_log),
                     timeout_minutes=20,
                 )
-                qa_result = extract_result(str(qa_log), "QA_COMPLETE:")
+                qa_result = extract_result(str(qa_log), "QA_COMPLETE:", from_end=True)
                 log(f"  Phase 4 complete — {qa_result}")
 
                 qa_pass = False
