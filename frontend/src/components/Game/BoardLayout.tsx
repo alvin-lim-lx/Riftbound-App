@@ -353,6 +353,7 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     flex: 1,
     minWidth: '200px',
     maxWidth: '320px',
+    overflow: 'hidden', // prevent bar content from overflowing
   },
   nameScore: {
     display: 'flex',
@@ -545,6 +546,7 @@ const handStyles: Record<string, React.CSSProperties> = {
     borderRadius: '10px',
     border: '1px solid rgba(34,197,94,0.15)',
     minWidth: '200px',
+    overflowX: 'hidden', // prevent hand overflow from spilling out
   },
   zoneLabel: {
     fontSize: '9px',
@@ -579,6 +581,7 @@ const handStyles: Record<string, React.CSSProperties> = {
     alignItems: 'flex-end',
     gap: '0px',
     padding: '0 8px',
+    overflowX: 'hidden', // prevent fanned cards from overflowing viewport
   },
   countBadge: {
     fontSize: '12px',
