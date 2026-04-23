@@ -497,7 +497,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
           const total = cards.length;
           const center = (total - 1) / 2;
           const offset = i - center;
-          const yShift = Math.abs(offset) * -10;
+          const yShift = Math.max(Math.abs(offset) * -8, -40);
           const rotate = offset * 2;
           const zIndex = total - Math.abs(offset);
 
@@ -508,7 +508,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
                 transform: `translateY(${yShift}px) rotate(${rotate}deg)`,
                 zIndex,
                 transition: 'transform 0.2s ease',
-                flexShrink: 0,
+                flexShrink: 1,
               }}
             >
               <CardArtView
@@ -518,6 +518,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
                 showStats={true}
                 showKeywords={true}
                 size="md"
+                maxHeight={80}
                 onClick={() => onCardClick?.(card.instanceId)}
               />
             </div>
@@ -535,10 +536,10 @@ const handStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '8px 12px',
-    background: 'rgba(239,68,68,0.05)',
-    borderRadius: '10px',
-    border: '1px solid rgba(239,68,68,0.15)',
     minWidth: '160px',
+    flexShrink: 1,
+    minHeight: 0,
+    flex: 1,
   },
   playerContainer: {
     display: 'flex',
@@ -546,10 +547,10 @@ const handStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '6px',
     padding: '8px 12px',
-    background: 'rgba(34,197,94,0.05)',
-    borderRadius: '10px',
-    border: '1px solid rgba(34,197,94,0.15)',
     minWidth: '200px',
+    flexShrink: 1,
+    minHeight: 0,
+    flex: 1,
   },
   zoneLabel: {
     fontSize: '9px',
@@ -563,6 +564,9 @@ const handStyles: Record<string, React.CSSProperties> = {
     gap: '4px',
     flexWrap: 'wrap',
     justifyContent: 'center',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   cardBack: {
     width: '44px',
@@ -584,6 +588,9 @@ const handStyles: Record<string, React.CSSProperties> = {
     alignItems: 'flex-end',
     gap: '0px',
     padding: '0 8px',
+    flexShrink: 1,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   countBadge: {
     fontSize: '12px',
