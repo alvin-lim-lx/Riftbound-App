@@ -28,12 +28,14 @@ function makeAction(
 }
 
 describe('GameLog', () => {
-  describe('actionLog exists and starts empty', () => {
-    it('createGame initializes actionLog as empty array', () => {
+  describe('actionLog exists and has GameStart entry', () => {
+    it('createGame initializes actionLog with GameStart entry', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
       expect(state.actionLog).toBeDefined();
       expect(Array.isArray(state.actionLog)).toBe(true);
-      expect(state.actionLog.length).toBe(0);
+      expect(state.actionLog.length).toBe(1);
+      expect(state.actionLog[0].type).toBe('GameStart');
+      expect((state.actionLog[0] as any).message).toContain('Game started');
     });
   });
 
