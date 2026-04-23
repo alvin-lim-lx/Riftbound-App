@@ -317,16 +317,7 @@ export function createGame(
     cardDefinitions: CARDS,
     winner: null,
     scoreLimit,
-    actionLog: [
-      {
-        id: randomId(),
-        type: 'GameStart' as const,
-        message: `Game started — ${playerNames[0]} vs ${playerNames[1]}`,
-        turn: 0,
-        phase: 'Setup' as Phase,
-        timestamp: Date.now(),
-      }
-    ],
+    actionLog: [],
     createdAt: Date.now(),
     isPvP,
     effectStack: [],  // empty effect stack at game start
@@ -554,7 +545,21 @@ function executeMulliganPhase(state: GameState): GameState {
   // Rule 116 / 117 / 118: Players may mulligan once per game.
   // The activePlayerId at this point is the player who chose first (hasGoneFirst=true).
   // They get the first mulligan action.
-  return state;
+
+  // Log game start when entering Mulligan phase (first phase of actual gameplay)
+  const newState = deepClone(state);
+  const playerNames = Object.values(newState.players).map(p => p.name);
+  newState.actionLog.push({
+    id: randomId(),
+    type: 'GameStart' as const,
+    playerId: newState.activePlayerId,
+    message: `Game started — ${playerNames[0]} vs ${playerNames[1]}`,
+    turn: 0,
+    phase: 'Mulligan' as Phase,
+    timestamp: Date.now(),
+  });
+
+  return newState;
 }
 
 function executeAwakenPhase(state: GameState): GameState {
