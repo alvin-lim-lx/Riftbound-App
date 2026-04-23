@@ -914,6 +914,7 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
                   showStats={false}
                   showKeywords={false}
                   size="sm"
+                  landscape={true}
                 />
                 <span style={{ ...bfRowStyles.bfName, color: bfColor }}>{bf.name}</span>
               </div>
@@ -932,123 +933,108 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
               </div>
             </div>
 
-            {/* Unit rows */}
+            {/* 3-column layout: player units | bf info | opponent units */}
             <div style={bfRowStyles.unitArea}>
-              {bf.units.length === 0 ? (
-                <div style={bfRowStyles.emptyState}>
-                  {bf.controllerId
-                    ? `${bf.controllerId === playerId ? 'Your' : 'Enemy'} territory`
-                    : 'Unconquered'}
+              {/* Left: player units (column) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
+                <div style={bfRowStyles.rowLabel}>Your</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                  {myUnits.length === 0 ? (
+                    <div style={{ ...bfRowStyles.emptyState, fontSize: '11px' }}>—</div>
+                  ) : (
+                    myUnits.map(unit => {
+                      const def = cardDefinitions[unit.cardId];
+                      const might = unit.currentStats.might ?? unit.stats.might ?? 0;
+                      const health = unit.currentStats.health ?? unit.stats.health ?? 1;
+                      const isReady = unit.ready && !unit.exhausted;
+                      return (
+                        <div
+                          key={unit.instanceId}
+                          style={{
+                            ...bfRowStyles.unitChip,
+                            borderColor: '#22c55e',
+                            opacity: isReady ? 1 : 0.6,
+                          }}
+                          title={def?.name}
+                        >
+                          <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
+                          <div style={bfRowStyles.unitStats}>
+                            <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
+                            <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
+                          </div>
+                          <div style={{ ...bfRowStyles.readyDot, background: isReady ? '#22c55e' : '#555' }} />
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
-              ) : (
-                <>
-                  {enemyUnits.length > 0 && (
-                    <div style={bfRowStyles.unitRow}>
-                      <div style={bfRowStyles.rowLabel}>Enemy</div>
-                      <div style={bfRowStyles.unitRowInner}>
-                        {enemyUnits.map(unit => {
-                          const def = cardDefinitions[unit.cardId];
-                          const might = unit.currentStats.might ?? unit.stats.might ?? 0;
-                          const health = unit.currentStats.health ?? unit.stats.health ?? 1;
-                          const isReady = unit.ready && !unit.exhausted;
-                          const isTarget = selectedTargetId === unit.instanceId;
+              </div>
 
-                          return (
-                            <div
-                              key={unit.instanceId}
-                              style={{
-                                ...bfRowStyles.unitChip,
-                                borderColor: isTarget ? '#fbbf24' : '#ef4444',
-                                opacity: isReady ? 1 : 0.6,
-                                transform: isReady ? 'scale(1)' : 'scale(0.95)',
-                                boxShadow: isTarget ? `0 0 10px #fbbf2460` : '0 1px 3px rgba(0,0,0,0.2)',
-                                cursor: 'pointer',
-                              }}
-                              onClick={() => selectTarget(unit.instanceId)}
-                              title={def?.name}
-                            >
-                              <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
-                              {def?.keywords && def.keywords.length > 0 && (
-                                <div style={bfRowStyles.keywords}>
-                                  {def.keywords.slice(0, 2).map(kw => (
-                                    <span key={kw} style={bfRowStyles.keyword}>{kw}</span>
-                                  ))}
-                                </div>
-                              )}
-                              <div style={bfRowStyles.unitStats}>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
-                              </div>
-                              <div style={{
-                                ...bfRowStyles.readyDot,
-                                background: isReady ? '#22c55e' : '#555',
-                              }} />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-                  {myUnits.length > 0 && (
-                    <div style={bfRowStyles.unitRow}>
-                      <div style={bfRowStyles.rowLabel}>Your</div>
-                      <div style={bfRowStyles.unitRowInner}>
-                        {myUnits.map(unit => {
-                          const def = cardDefinitions[unit.cardId];
-                          const might = unit.currentStats.might ?? unit.stats.might ?? 0;
-                          const health = unit.currentStats.health ?? unit.stats.health ?? 1;
-                          const isReady = unit.ready && !unit.exhausted;
+              {/* Center: bf card art + name + controller + attack */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '80px', padding: '4px 8px', gap: '2px' }}>
+                <CardArtView
+                  card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
+                  cardDef={CARDS[bf.cardId] ?? cardDefinitions[bf.cardId]}
+                  isOpponent={false}
+                  showStats={false}
+                  showKeywords={false}
+                  size="sm"
+                  landscape={true}
+                />
+                <span style={{ fontSize: '10px', fontWeight: 700, color: bfColor }}>{bf.name}</span>
+                {bf.controllerId && (
+                  <span style={{ fontSize: '9px', color: bf.controllerId === playerId ? '#22c55e' : '#ef4444' }}>
+                    {bf.controllerId === playerId ? 'You' : 'Enemy'}
+                  </span>
+                )}
+                {bf.scoringPlayerId && (
+                  <span style={{ fontSize: '9px', color: '#d4a843' }}>● Scoring</span>
+                )}
+                {canAttack && (
+                  <button style={{ ...bfRowStyles.attackBtn, fontSize: '11px', padding: '4px 12px' }}>
+                    Attack
+                  </button>
+                )}
+              </div>
 
-                          return (
-                            <div
-                              key={unit.instanceId}
-                              style={{
-                                ...bfRowStyles.unitChip,
-                                borderColor: '#22c55e',
-                                opacity: isReady ? 1 : 0.6,
-                                transform: isReady ? 'scale(1)' : 'scale(0.95)',
-                              }}
-                              title={def?.name}
-                            >
-                              <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
-                              {def?.keywords && def.keywords.length > 0 && (
-                                <div style={bfRowStyles.keywords}>
-                                  {def.keywords.slice(0, 2).map(kw => (
-                                    <span key={kw} style={bfRowStyles.keyword}>{kw}</span>
-                                  ))}
-                                </div>
-                              )}
-                              <div style={bfRowStyles.unitStats}>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
-                                <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
-                              </div>
-                              <div style={{
-                                ...bfRowStyles.readyDot,
-                                background: isReady ? '#22c55e' : '#555',
-                              }} />
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
+              {/* Right: opponent units (column) */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
+                <div style={bfRowStyles.rowLabel}>Enemy</div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                  {enemyUnits.length === 0 ? (
+                    <div style={{ ...bfRowStyles.emptyState, fontSize: '11px' }}>—</div>
+                  ) : (
+                    enemyUnits.map(unit => {
+                      const def = cardDefinitions[unit.cardId];
+                      const might = unit.currentStats.might ?? unit.stats.might ?? 0;
+                      const health = unit.currentStats.health ?? unit.stats.health ?? 1;
+                      const isReady = unit.ready && !unit.exhausted;
+                      const isTarget = selectedTargetId === unit.instanceId;
+                      return (
+                        <div
+                          key={unit.instanceId}
+                          style={{
+                            ...bfRowStyles.unitChip,
+                            borderColor: isTarget ? '#fbbf24' : '#ef4444',
+                            opacity: isReady ? 1 : 0.6,
+                            cursor: 'pointer',
+                          }}
+                          onClick={() => selectTarget(unit.instanceId)}
+                          title={def?.name}
+                        >
+                          <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
+                          <div style={bfRowStyles.unitStats}>
+                            <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
+                            <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
+                          </div>
+                          <div style={{ ...bfRowStyles.readyDot, background: isReady ? '#22c55e' : '#555' }} />
+                        </div>
+                      );
+                    })
                   )}
-                </>
-              )}
+                </div>
+              </div>
             </div>
-
-            {canAttack && (
-              <button
-                style={bfRowStyles.attackBtn}
-                onClick={() => {
-                  const readyUnit = myUnits.find(u => u.ready && !u.exhausted);
-                  if (readyUnit) {
-                    handleAction('Attack', { attackerId: readyUnit.instanceId, targetBattlefieldId: bf.id });
-                  }
-                }}
-              >
-                Attack
-              </button>
-            )}
           </div>
         );
       })}
