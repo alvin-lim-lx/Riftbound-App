@@ -14,7 +14,7 @@ import {
   canAutoAdvancePhase,
   deepClone,
 } from '../src/engine/GameEngine';
-import type { GameState, GameAction } from '../../shared/src/types';
+import type { GameState, GameAction } from 'shared/src/types';
 
 const P1 = 'player_1';
 const P2 = 'player_2';
