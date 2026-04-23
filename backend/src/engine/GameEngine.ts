@@ -462,16 +462,13 @@ export function advancePhase(state: GameState): GameState {
   const currentIdx = PHASE_ORDER.indexOf(state.phase);
   if (currentIdx === -1) return state;
 
-  // Auto-advance through A-B-C-D phases when effect stack is empty
+  // Auto-advance to next phase when effect stack is empty (A-B-C-D phases only)
+  // NOTE: Each call to advancePhase advances ONE phase. The caller (GameServer)
+  // is responsible for calling this repeatedly to chain through multiple A-B-C-D phases.
   if (canAutoAdvancePhase(state)) {
     if (currentIdx < PHASE_ORDER.length - 1) {
       const nextPhase = PHASE_ORDER[currentIdx + 1];
       const nextState = enterPhase(state, nextPhase);
-      // After entering next phase, check if THAT phase also auto-advances.
-      // Only recurse if the phase we entered is still an A-B-C-D phase.
-      if (AUTO_ADVANCE_PHASES.includes(nextPhase) && canAutoAdvancePhase(nextState)) {
-        return advancePhase(nextState);
-      }
       return nextState;
     } else {
       // End of turn — start new turn
@@ -508,7 +505,10 @@ export function startNewTurn(state: GameState): GameState {
 }
 
 export function enterPhase(state: GameState, phase: Phase): GameState {
-  const newState: GameState = { ...state, phase };
+  // Use deepClone to properly copy nested objects (players, allCards, etc.)
+  // so that phase execution functions can mutate safely without affecting the caller's state.
+  const newState = deepClone(state);
+  newState.phase = phase;
 
   switch (phase) {
     case 'Setup':
