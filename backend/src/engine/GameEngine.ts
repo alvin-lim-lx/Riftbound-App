@@ -463,7 +463,7 @@ export function advancePhase(state: GameState): GameState {
   if (currentIdx === -1) return state;
 
   // Auto-advance through A-B-C-D phases when effect stack is empty
-  if (canAutoAdvancePhase(state)) {
+  if (AUTO_ADVANCE_PHASES.includes(state.phase) && canAutoAdvancePhase(state)) {
     if (currentIdx < PHASE_ORDER.length - 1) {
       const nextPhase = PHASE_ORDER[currentIdx + 1];
       const nextState = enterPhase(state, nextPhase);
@@ -480,6 +480,10 @@ export function advancePhase(state: GameState): GameState {
   }
 
   // Stack non-empty or non-auto-advance phase: enter next phase (await player input)
+  // But if we're in an A-B-C-D phase with blocking effects, stay put
+  if (AUTO_ADVANCE_PHASES.includes(state.phase) && !canAutoAdvancePhase(state)) {
+    return state; // blocked — await resolution of effects
+  }
   if (currentIdx < PHASE_ORDER.length - 1) {
     const nextPhase = PHASE_ORDER[currentIdx + 1];
     const next = enterPhase(state, nextPhase);

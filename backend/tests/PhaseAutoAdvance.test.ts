@@ -128,7 +128,7 @@ describe('Phase Auto-Advance (Issue #12)', () => {
   });
 
   describe('auto-advance sequence (Awaken → Beginning → Channel → Draw)', () => {
-    it('advances Awaken → Beginning → Channel → Draw with empty stack without player input', () => {
+    it('advances Awaken → Beginning → Channel → Draw → Action → FirstMain automatically', () => {
       // Set up game state after Mulligan, at the start of a turn
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       state.phase = 'Awaken';
@@ -136,58 +136,48 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       state.turn = 1;
       state.effectStack = [];
 
-      // Simulate the auto-advance sequence
-      let current = state;
-      const phasesVisited: GameState['phase'][] = [];
+      // advancePhase drives the full A→B→C→D→Action→FirstMain chain in one call
+      // because all A-B-C-D phases auto-advance when the effect stack is empty.
+      expect(canAutoAdvancePhase(state)).toBe(true);
+      const afterAutoAdvance = advancePhase(state);
 
-      // Awaken should auto-advance
-      expect(canAutoAdvancePhase(current)).toBe(true);
-      phasesVisited.push(current.phase);
-      current = advancePhase(current);
-      phasesVisited.push(current.phase);
+      // Should land on FirstMain (end of the auto-advance chain)
+      expect(afterAutoAdvance.phase).toBe('FirstMain');
 
-      // Beginning should auto-advance
-      expect(canAutoAdvancePhase(current)).toBe(true);
-      current = advancePhase(current);
-      phasesVisited.push(current.phase);
-
-      // Channel should auto-advance
-      expect(canAutoAdvancePhase(current)).toBe(true);
-      current = advancePhase(current);
-      phasesVisited.push(current.phase);
-
-      // Draw should auto-advance
-      expect(canAutoAdvancePhase(current)).toBe(true);
-      current = advancePhase(current);
-      phasesVisited.push(current.phase);
-
-      // Should now be in Action phase
-      expect(current.phase).toBe('Action');
-      expect(phasesVisited).toEqual(['Awaken', 'Beginning', 'Channel', 'Draw', 'Action']);
+      // FirstMain is not in AUTO_ADVANCE_PHASES — game awaits player input
+      expect(canAutoAdvancePhase(afterAutoAdvance)).toBe(false);
     });
 
     it('blocks on Beginning phase when start-of-turn effect is on the stack', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
-      state.phase = 'Awaken';
+      state.phase = 'Beginning';
       state.activePlayerId = P1;
       state.turn = 1;
       state.effectStack = [];
 
-      // Awaken advances
-      let current = advancePhase(state);
-      expect(current.phase).toBe('Beginning');
+      // With empty stack, Beginning auto-advances through Channel→Draw→Action→FirstMain
+      // (single advancePhase call traverses the entire chain)
+      expect(canAutoAdvancePhase(state)).toBe(true);
+      const afterEmpty = advancePhase(state);
+      expect(afterEmpty.phase).toBe('FirstMain');
 
-      // Add a start-of-turn effect to the stack
-      current.effectStack.push({
+      // Now set up Beginning with a pending effect
+      const blockingState = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      blockingState.phase = 'Beginning';
+      blockingState.activePlayerId = P1;
+      blockingState.turn = 1;
+      blockingState.effectStack = [{
         id: 'effect_1',
         sourceId: 'some_card',
         trigger: 'Start of Turn',
         effect: 'You may draw a card',
         resolves: false,
-      });
+      }];
 
       // Beginning should NOT auto-advance when stack has pending effects
-      expect(canAutoAdvancePhase(current)).toBe(false);
+      expect(canAutoAdvancePhase(blockingState)).toBe(false);
+      const afterBlocking = advancePhase(blockingState);
+      expect(afterBlocking.phase).toBe('Beginning'); // stays in Beginning
     });
   });
 

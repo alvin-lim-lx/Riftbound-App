@@ -363,7 +363,14 @@ export class GameServer {
           if (game.state.phase === 'GameOver' && game.state.winner) {
             this.endGame(game);
           } else if (result.success) {
-            // If action succeeded and not game over, auto-advance if AI's turn
+            // After any action (including mulligan), kick off auto-advance
+            // for A-B-C-D phases so the game flows without player input.
+            // scheduleAIMove will return early if canAutoAdvancePhase is true,
+            // so we must trigger advancePhase here to actually drive the chain.
+            if (canAutoAdvancePhase(game.state)) {
+              game.state = advancePhase(game.state);
+              this.broadcastGameState(game);
+            }
             this.scheduleAIMove(game);
           }
         }
