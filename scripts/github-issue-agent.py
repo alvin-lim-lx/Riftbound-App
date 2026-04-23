@@ -879,7 +879,7 @@ def main():
                 log(f"\n[PHASE 1/{len(PHASES)}] INVESTIGATE — #{num}")
                 investigate_log = WORKDIR / f".agent_logs/issue-{num}/phase1.log"
                 investigate_log.parent.mkdir(parents=True, exist_ok=True)
-                ok, _ = spawn_hermes(
+                ok, timed_out = spawn_hermes(
                     build_investigate_prompt(num, title, body),
                     str(investigate_log),
                     timeout_minutes=15
@@ -946,7 +946,7 @@ def main():
 
                 last_subphase = extract_result(str(implement_log), "SUBPHASE:", from_end=True).replace("SUBPHASE:", "").strip()
 
-                phases["2_IMPLEMENT"] = f"done:{commit_hash}" if commit_hash else "incomplete"
+                phases["2_IMPLEMENT"] = f"done:{commit_hash}" if (commit_hash and ok) else "incomplete"
                 save_checkpoint_on_branch(num, {
                     "issue": num, "title": title, "branch": branch,
                     "findings": findings, "phases": phases,
@@ -1114,10 +1114,22 @@ def main():
                 # - agent ran (ok=True) without QA_PASS: fail, will retry
                 if not ok and not timed_out:
                     phases["4_QA"] = "incomplete"
+                    save_checkpoint_on_branch(num, {
+                        "issue": num, "title": title, "branch": branch,
+                        "findings": findings, "phases": phases
+                    })
                     log("  [QA] Agent crashed — will retry next cycle")
+                    release_lock()
+                    continue
                 elif timed_out:
                     phases["4_QA"] = "incomplete"
+                    save_checkpoint_on_branch(num, {
+                        "issue": num, "title": title, "branch": branch,
+                        "findings": findings, "phases": phases
+                    })
                     log("  [QA] Agent timed out — will retry next cycle")
+                    release_lock()
+                    continue
                 else:
                     phases["4_QA"] = "done" if qa_pass else "fail"
                 save_checkpoint_on_branch(num, {
