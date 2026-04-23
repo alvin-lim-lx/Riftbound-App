@@ -16,10 +16,14 @@ interface Props {
   size?: 'sm' | 'md' | 'lg';
   onClick?: () => void;
   onHover?: (instanceId: string | null) => void;
+  maxHeight?: number;    // measured available height (pixels) — scales card to fit
+  landscape?: boolean;   // render in landscape orientation (for battlefield cards)
 }
 
-// Card art aspect ratio (width / height)
+// Card art aspect ratio (width / height) — portrait
 const CARD_ASPECT = 744 / 1039;
+// Battlefield card aspect ratio — landscape
+const BF_ASPECT = 1039 / 744;
 
 const sizeMap = {
   sm: { w: 64, h: 86 },
@@ -29,19 +33,20 @@ const sizeMap = {
 
 const ENLARGE_W = 300;
 
-function getEnlargeDims(smW: number, smH: number): { w: number; h: number; left: number; top: number } {
+function getEnlargeDims(smW: number, smH: number, landscape?: boolean): { w: number; h: number; left: number; top: number } {
+  const aspect = landscape ? BF_ASPECT : CARD_ASPECT;
   const scale = ENLARGE_W / smW;
   const h = Math.round(smH * scale);
   const maxH = window.innerHeight - 32;
   const actualH = Math.min(h, maxH);
-  const actualW = Math.round(actualH * CARD_ASPECT);
+  const actualW = Math.round(actualH * aspect);
   return { w: actualW, h: actualH, left: 0, top: 0 };
 }
 
 export function CardArtView({
   card, cardDef, isOpponent = false,
   showStats = false, showKeywords = false,
-  size = 'md', onClick, onHover
+  size = 'md', onClick, onHover, maxHeight, landscape = false
 }: Props) {
   const [hovering, setHovering] = useState(false);
   const [enlargePos, setEnlargePos] = useState<{ w: number; h: number; left: number; top: number } | null>(null);
@@ -55,7 +60,12 @@ export function CardArtView({
   const hidden = isOpponent && card.owner_hidden;
   const def = cardDef;
 
-  const dims = sizeMap[size];
+  const baseDims = sizeMap[size];
+  const dims = maxHeight
+    ? { w: Math.round(baseDims.w * (maxHeight / baseDims.h)), h: maxHeight }
+    : baseDims;
+
+  const aspect = landscape ? BF_ASPECT : CARD_ASPECT;
 
   const imgStyle: React.CSSProperties = {
     width: dims.w,
@@ -65,7 +75,7 @@ export function CardArtView({
     background: hidden
       ? 'linear-gradient(135deg, #2a2a4a 0%, #1a1a3a 100%)'
       : def?.imageUrl
-        ? `url(${def.imageUrl}) center / cover no-repeat`
+        ? `url(${def.imageUrl}) center / ${landscape ? 'contain' : 'cover'} no-repeat`
         : 'linear-gradient(135deg, #1e2a3a, #0a1a2a)',
     display: 'flex',
     flexDirection: 'column',
@@ -84,7 +94,7 @@ export function CardArtView({
     setHovering(true);
     if (ref.current && def?.imageUrl) {
       const rect = ref.current.getBoundingClientRect();
-      const { w, h } = getEnlargeDims(dims.w, dims.h);
+      const { w, h } = getEnlargeDims(dims.w, dims.h, landscape);
       // Flip to left if not enough space on right
       const leftSpace = rect.left;
       const rightSpace = window.innerWidth - rect.right;
@@ -147,7 +157,7 @@ export function CardArtView({
             height: enlargePos.h,
             borderRadius: '10px',
             border: '2px solid rgba(255,255,255,0.3)',
-            background: `url(${def.imageUrl}) center / cover no-repeat`,
+            background: `url(${def.imageUrl}) center / ${landscape ? 'contain' : 'cover'} no-repeat`,
             boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
             zIndex: 9999,
             pointerEvents: 'none',
