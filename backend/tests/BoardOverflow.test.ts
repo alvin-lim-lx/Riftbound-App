@@ -1,8 +1,8 @@
 /**
  * BoardOverflow Tests — Issue #11: Game Board is overflowing
  *
- * Tests CSS overflow prevention by inspecting BoardLayout.tsx source.
- * We verify the correct CSS values are present in the file.
+ * Tests CSS overflow prevention by inspecting BoardLayout.tsx and main.tsx sources.
+ * We verify the correct CSS values are present in both files.
  */
 
 import { readFileSync } from 'fs';
@@ -11,14 +11,29 @@ import { resolve } from 'path';
 const boardLayoutPath = resolve(__dirname, '../../frontend/src/components/Game/BoardLayout.tsx');
 const boardLayoutSource = readFileSync(boardLayoutPath, 'utf-8');
 
+const mainTsxPath = resolve(__dirname, '../../frontend/src/main.tsx');
+const mainTsxSource = readFileSync(mainTsxPath, 'utf-8');
+
 describe('BoardOverflow — Issue #11: Game Board is overflowing', () => {
+  describe('main.tsx App container width', () => {
+    it('App container should use width:100% not width:100vw to avoid horizontal overflow', () => {
+      // 100vw includes the scrollbar width, causing horizontal overflow.
+      // The fix: change width: '100vw' → width: '100%' in main.tsx App container
+      const widthVwCount = (mainTsxSource.match(/width:\s*['"]100vw['"]/g) || []).length;
+      const widthPercentCount = (mainTsxSource.match(/width:\s*['"]100%['"]/g) || []).length;
+
+      expect(widthVwCount).toBe(0);
+      expect(widthPercentCount).toBeGreaterThan(0);
+    });
+  });
+
   describe('board container width', () => {
     it('board style should use width:100% not width:100vw to avoid horizontal overflow', () => {
       // 100vw includes the scrollbar width, causing horizontal overflow.
       // The fix: change width: '100vw' → width: '100%' in styles.board
       const widthVwCount = (boardLayoutSource.match(/width:\s*['"]100vw['"]/g) || []).length;
       const widthPercentCount = (boardLayoutSource.match(/width:\s*['"]100%['"]/g) || []).length;
-      
+
       expect(widthVwCount).toBe(0);
       expect(widthPercentCount).toBeGreaterThan(0);
     });

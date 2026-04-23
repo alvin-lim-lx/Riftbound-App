@@ -80,7 +80,7 @@ function AppInner() {
 
   // Authenticated — main app
   return (
-    <div style={{ width: '100vw', height: '100vh' }}>
+    <div style={{ width: '100%', height: '100vh' }}>
       {!connected && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', color: '#9ca3af' }}>
           Connecting to game server…
