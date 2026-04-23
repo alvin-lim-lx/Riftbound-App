@@ -391,7 +391,7 @@ def get_affected_tests(changed_files):
 
 # ─── Hermès spawn ─────────────────────────────────────────────────────────────
 
-def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None, max_tokens=None):
+def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=None):
     """Spawn hermes with optional WIP commit timer. Returns (ok, timed_out)."""
     log_file = Path(log_path)
     log_file.parent.mkdir(parents=True, exist_ok=True)
@@ -411,8 +411,6 @@ def spawn_hermes(prompt, log_path, timeout_minutes=20, issue_num=None, subphase=
 
     # Build hermes command args
     cmd = ["hermes", "chat", "-q", prompt, "--source", "github-issue-agent", "--pass-session-id"]
-    if max_tokens:
-        cmd.extend(["--max-tokens", str(max_tokens)])
 
     # Pass the raw fd to subprocess — it writes directly to the temp file.
     # communicate() with stdout=PIPE returns empty since output goes to the fd.
@@ -937,7 +935,6 @@ def main():
                     timeout_minutes=IMPL_TIMEOUT_MIN,
                     issue_num=num,
                     subphase=saved_subphase or "implement",
-                    max_tokens=16000,
                 )
 
                 commit_line = extract_result(str(implement_log), "COMMIT:", from_end=True)
@@ -1095,7 +1092,6 @@ def main():
                                    ts_errors),
                     str(qa_log),
                     timeout_minutes=20,
-                    max_tokens=16000,
                 )
                 qa_result = extract_result(str(qa_log), "QA_COMPLETE:")
                 log(f"  Phase 4 complete — {qa_result}")
