@@ -105,10 +105,12 @@ interface CardStackProps {
   onClick?: () => void;
   size?: 'sm' | 'md';
   hidden?: boolean; // true = show card back (for hidden decks)
+  maxHeightPx?: number;
 }
 
-function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onClick, size = 'md', hidden }: CardStackProps) {
-  const dims = size === 'sm' ? { w: 64, h: 86 } : { w: 80, h: 108 };
+function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onClick, size = 'md', hidden, maxHeightPx }: CardStackProps) {
+  const baseDims = size === 'sm' ? { w: 64, h: 86 } : { w: 80, h: 108 };
+  const dims = maxHeightPx ? { w: Math.round(baseDims.w * (maxHeightPx / baseDims.h)), h: maxHeightPx } : baseDims;
   const stackColors = ['rgba(255,255,255,0.05)', 'rgba(255,255,255,0.08)', 'rgba(255,255,255,0.12)'];
 
   return (
@@ -153,6 +155,7 @@ function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onCl
             showStats={true}
             showKeywords={false}
             size={size === 'sm' ? 'sm' : 'md'}
+            maxHeight={maxHeightPx}
           />
         ) : (
           <div style={{
@@ -181,6 +184,8 @@ const stackStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '4px',
     cursor: 'pointer',
+    flexShrink: 1,
+    minHeight: 0,
   },
   label: {
     fontSize: '9px',
@@ -603,29 +608,33 @@ const handStyles: Record<string, React.CSSProperties> = {
 
 // ─────────────────────────────────────────
 // ZoneCard — renders a single card in a zone (base/champ/legend)
-// ─────────────────────────────────────────
+// maxHeightPx: measured available height for the card
 interface ZoneCardProps {
   cardId: string;
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
   isOpponent: boolean;
   size?: 'sm' | 'md' | 'lg';
+  maxHeightPx?: number;
 }
 
-function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md' }: ZoneCardProps) {
+function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md', maxHeightPx }: ZoneCardProps) {
   const card = allCards[cardId];
   if (!card) return null;
   const def = cardDefs[card.cardId];
 
   return (
-    <CardArtView
-      card={card}
-      cardDef={def}
-      isOpponent={isOpponent}
-      showStats={false}
-      showKeywords={false}
-      size={size}
-    />
+    <div style={{ flexShrink: 1, minWidth: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <CardArtView
+        card={card}
+        cardDef={def}
+        isOpponent={isOpponent}
+        showStats={false}
+        showKeywords={false}
+        size={size}
+        maxHeight={maxHeightPx}
+      />
+    </div>
   );
 }
 
@@ -642,6 +651,35 @@ interface ZoneRowProps {
 
 function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowProps) {
   if (!player) return null;
+
+  const baseRef = React.useRef<HTMLDivElement>(null);
+  const legendRef = React.useRef<HTMLDivElement>(null);
+  const champRef = React.useRef<HTMLDivElement>(null);
+  const [baseH, setBaseH] = React.useState(60);
+  const [legendH, setLegendH] = React.useState(60);
+  const [champH, setChampH] = React.useState(60);
+
+  React.useLayoutEffect(() => {
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        const id = entry.target === baseRef.current ? 'base'
+          : entry.target === legendRef.current ? 'legend'
+          : 'champ';
+        const h = entry.contentRect.height;
+        if (id === 'base') setBaseH(h);
+        else if (id === 'legend') setLegendH(h);
+        else setChampH(h);
+      }
+    });
+    if (baseRef.current) observer.observe(baseRef.current);
+    if (legendRef.current) observer.observe(legendRef.current);
+    if (champRef.current) observer.observe(champRef.current);
+    // Fire immediately with current sizes
+    if (baseRef.current) setBaseH(baseRef.current.clientHeight);
+    if (legendRef.current) setLegendH(legendRef.current.clientHeight);
+    if (champRef.current) setChampH(champRef.current.clientHeight);
+    return () => observer.disconnect();
+  }, []);
 
   const { baseIds, championIds, legendIds } = partitionPlayerZones(
     playerId, allCards, cardDefs
@@ -661,10 +699,10 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       {/* Base */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#7c3aed88' }}>BASE</div>
-        <div style={zoneRowStyles.cardArea}>
+        <div style={zoneRowStyles.cardArea} ref={baseRef}>
           {baseIds.length > 0 ? (
             baseIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" />
+              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={baseH} />
             ))
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#7c3aed33' }}>
@@ -677,10 +715,10 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       {/* Legend */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#d4a84388' }}>LEGEND</div>
-        <div style={zoneRowStyles.cardArea}>
+        <div style={zoneRowStyles.cardArea} ref={legendRef}>
           {legendIds.length > 0 ? (
             legendIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" />
+              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={legendH} />
             ))
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#d4a84333' }}>
@@ -693,10 +731,10 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       {/* Champion */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#3b82f688' }}>CHAMPION</div>
-        <div style={zoneRowStyles.cardArea}>
+        <div style={zoneRowStyles.cardArea} ref={champRef}>
           {championIds.length > 0 ? (
             championIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" />
+              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={champH} />
             ))
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#3b82f633' }}>
