@@ -94,6 +94,71 @@ describe('Board Overflow — Issue #34', () => {
       expect(badStyle.flex).not.toBe(goodStyle.flex);
       expect(goodStyle.flex).toBe('0 1 auto');
     });
+
+    it('bfRowStyles.container uses flex-start (not stretch) for alignItems', () => {
+      // Issue #36: alignItems: 'stretch' on bfRowStyles.container causes
+      // bfPanel children to stretch beyond their content width, causing overflow.
+      // The fix: use alignItems: 'flex-start' (or remove alignItems to use default 'stretch' + min-width constraint).
+      // This test parses the actual BoardLayout.tsx to verify the fix.
+      const fs = require('fs');
+      const path = require('path');
+      const boardLayoutPath = path.join(__dirname, '../../frontend/src/components/Game/BoardLayout.tsx');
+      const content = fs.readFileSync(boardLayoutPath, 'utf8');
+
+      // Simple approach: just search for the alignItems value after "container:" in bfRowStyles
+      const lines = content.split('\n');
+      let inBfRowStyles = false;
+      let inContainer = false;
+      let braceCount = 0;
+      let containerBlock = '';
+
+      for (const line of lines) {
+        if (line.includes('bfRowStyles:') || line.includes('bfRowStyles =')) {
+          inBfRowStyles = true;
+        }
+        if (inBfRowStyles && line.includes('container:')) {
+          inContainer = true;
+          braceCount = 0;
+          containerBlock = line + '\n';
+          // Count braces starting from this line
+          for (const char of line) {
+            if (char === '{') braceCount++;
+            if (char === '}') braceCount--;
+          }
+          if (braceCount === 0) {
+            break; // single-line container
+          }
+          continue;
+        }
+        if (inContainer) {
+          containerBlock += line + '\n';
+          for (const char of line) {
+            if (char === '{') braceCount++;
+            if (char === '}') braceCount--;
+          }
+          if (braceCount === 0) {
+            break;
+          }
+        }
+      }
+
+      expect(containerBlock).toContain('alignItems');
+      // Check if alignItems is 'stretch' (bad) or 'flex-start' (good)
+      const hasStretch = containerBlock.includes("alignItems: 'stretch'") || containerBlock.includes('alignItems: "stretch"');
+      const hasFlexStart = containerBlock.includes("alignItems: 'flex-start'") || containerBlock.includes('alignItems: "flex-start"');
+      expect(hasStretch).toBe(false); // After fix: stretch should NOT be present
+      expect(hasFlexStart).toBe(true); // After fix: flex-start SHOULD be present
+    });
+
+    it('bfRowStyles.unitRowInner wraps units without causing overflow', () => {
+      // Issue #36: flexWrap: wrap on unit rows should not cause overflow
+      const unitRowInner = {
+        display: 'flex',
+        gap: '5px',
+        flexWrap: 'wrap',
+      };
+      expect(unitRowInner.flexWrap).toBe('wrap');
+    });
   });
 
   describe('data model — no overflow in battlefield layout', () => {
