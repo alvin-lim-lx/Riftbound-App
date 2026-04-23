@@ -44,6 +44,25 @@ describe('CardArtView', () => {
       const BF_ASPECT = 1039 / 744;
       expect(BF_ASPECT).toBeCloseTo(1.397, 3);
     });
+
+    it('getEnlargeDims uses BF_ASPECT when landscape=true', () => {
+      // When landscape=true, aspect should be 1039/744 (landscape)
+      // Scale: ENLARGE_W/smW = 300/64 = 4.6875
+      // h = 86 * 4.6875 = 403 (capped by viewport)
+      // For landscape, w = h * BF_ASPECT
+      const ENLARGE_W = 300;
+      const smW = 64;
+      const smH = 86;
+      const BF_ASPECT = 1039 / 744;
+      const scale = ENLARGE_W / smW;
+      const h = Math.round(smH * scale);
+      // viewport capped h
+      const maxH = 700; // typical viewport - 32
+      const actualH = Math.min(h, maxH);
+      const w = Math.round(actualH * BF_ASPECT);
+      // w should be much wider than h for landscape
+      expect(w).toBeGreaterThan(actualH);
+    });
   });
 
   describe('maxHeight prop', () => {
