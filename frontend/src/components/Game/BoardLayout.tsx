@@ -1458,6 +1458,8 @@ const styles: Record<string, React.CSSProperties> = {
   // Generic row
   row: {
     flexShrink: 0,
+    maxWidth: '100%',
+    overflowX: 'hidden',
   },
 
   // Battlefield row — takes all remaining space
