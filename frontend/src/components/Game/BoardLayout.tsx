@@ -1038,7 +1038,7 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
   },
   bfPanel: {
     minWidth: '200px',
-    flex: 1,
+    flex: '0 1 auto',  // shrink-only: don't grow beyond content, only shrink if needed
     display: 'flex',
     flexDirection: 'column',
     background: 'rgba(255,255,255,0.04)',
