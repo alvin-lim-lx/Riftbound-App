@@ -357,6 +357,33 @@ class GameServer {
                 }
                 break;
             }
+            case 'chat_message': {
+                if (!client)
+                    return;
+                const { text } = msg;
+                if (!text || typeof text !== 'string')
+                    return;
+                // Echo the message back to the sender (and to opponent in PvP games)
+                const echo = {
+                    type: 'chat_message',
+                    playerId: client.playerId,
+                    text: text.slice(0, 200),
+                    timestamp: Date.now(),
+                };
+                this.send(ws, echo);
+                // If in a game, also send to the opponent
+                if (client.gameId) {
+                    const game = this.liveGames.get(client.gameId);
+                    if (game) {
+                        for (const [pid, opponentWs] of game.clients) {
+                            if (pid !== client.playerId && opponentWs.readyState === ws_1.WebSocket.OPEN) {
+                                this.send(opponentWs, echo);
+                            }
+                        }
+                    }
+                }
+                break;
+            }
         }
     }
     // ============================================================

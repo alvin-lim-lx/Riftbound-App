@@ -15,5 +15,5 @@
     "downlevelIteration": true
   },
   "include": ["src/**/*", "../shared/**/*"],
-  "exclude": ["node_modules", "dist", "tests", "../frontend/**/*"]
+  "exclude": ["node_modules", "dist", "tests", "../frontend/**/*", "../shared/src/cards - bkup.ts"]
 }

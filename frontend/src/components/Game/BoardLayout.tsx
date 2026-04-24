@@ -29,6 +29,7 @@ import { ActionBar } from './ActionBar';
 import { CardModal } from './CardModal';
 import { PhaseIndicator } from './PhaseIndicator';
 import { GameLog } from './GameLog';
+import { ChatBox } from './ChatBox';
 import { MulliganOverlay } from './MulliganOverlay';
 import { CardArtView } from './CardArtView';
 import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase } from '../../shared/types';
@@ -1362,88 +1363,94 @@ export function BoardLayout() {
 
   return (
     <div style={styles.board}>
-      {/* ========== TOP BAR ========== */}
-      <TopBar
-        player={me}
-        opponent={opponent}
-        allCards={myCards}
-        cardDefs={cardDefs}
-        turn={gameState.turn}
-        phase={phase}
-        myTurn={myTurn}
-      />
-
-      {/* ========== MAIN FLEX COLUMN ========== */}
-      <div style={styles.boardGrid}>
-
-        {/* Row 1: Opponent Graveyard | Hand | Deck */}
-        <div style={styles.row}>
-          <DeckArea
-            player={opponent}
-            playerId={opponent?.id ?? ''}
-            isOpponent={true}
+      {/* Board column (left) + right panel */}
+      <div style={styles.boardWithRightPanel}>
+        {/* Board column: top bar + main rows + action bar */}
+        <div style={styles.boardColumn}>
+          <TopBar
+            player={me}
+            opponent={opponent}
             allCards={myCards}
             cardDefs={cardDefs}
-            handCards={[]}
-            opponentHandCount={opponentHandCount}
-          />
-        </div>
-
-        {/* Row 2: Opponent Base | Legend | Champion */}
-        <div style={styles.row}>
-          <ZoneRow
-            player={opponent}
-            playerId={opponent?.id ?? ''}
-            isOpponent={true}
-            allCards={myCards}
-            cardDefs={cardDefs}
-          />
-        </div>
-
-        {/* Row 3: Battlefields (flex-grow) */}
-        <div style={styles.battlefieldRow}>
-          <BattlefieldRow
-            gameState={gameState}
-            playerId={playerId}
+            turn={gameState.turn}
+            phase={phase}
             myTurn={myTurn}
-            selectedTargetId={store.selectedTargetId}
-            selectTarget={store.selectTarget}
-            handleAction={handleAction}
           />
+
+          {/* ========== MAIN FLEX COLUMN ========== */}
+          <div style={styles.boardGrid}>
+
+            {/* Row 1: Opponent Graveyard | Hand | Deck */}
+            <div style={styles.row}>
+              <DeckArea
+                player={opponent}
+                playerId={opponent?.id ?? ''}
+                isOpponent={true}
+                allCards={myCards}
+                cardDefs={cardDefs}
+                handCards={[]}
+                opponentHandCount={opponentHandCount}
+              />
+            </div>
+
+            {/* Row 2: Opponent Base | Legend | Champion */}
+            <div style={styles.row}>
+              <ZoneRow
+                player={opponent}
+                playerId={opponent?.id ?? ''}
+                isOpponent={true}
+                allCards={myCards}
+                cardDefs={cardDefs}
+              />
+            </div>
+
+            {/* Row 3: Battlefields (flex-grow) */}
+            <div style={styles.battlefieldRow}>
+              <BattlefieldRow
+                gameState={gameState}
+                playerId={playerId}
+                myTurn={myTurn}
+                selectedTargetId={store.selectedTargetId}
+                selectTarget={store.selectTarget}
+                handleAction={handleAction}
+              />
+            </div>
+
+            {/* Row 4: Player Base | Legend | Champion */}
+            <div style={styles.row}>
+              <ZoneRow
+                player={me}
+                playerId={playerId}
+                isOpponent={false}
+                allCards={myCards}
+                cardDefs={cardDefs}
+              />
+            </div>
+
+            {/* Row 5: Player Deck | Hand | Graveyard */}
+            <div style={styles.row}>
+              <DeckArea
+                player={me}
+                playerId={playerId}
+                isOpponent={false}
+                allCards={myCards}
+                cardDefs={cardDefs}
+                handCards={playerHandCards}
+                opponentHandCount={0}
+              />
+            </div>
+
+          </div>
+
+          {/* ========== BOTTOM ACTION BAR ========== */}
+          <ActionBar myTurn={myTurn} phase={phase} onPass={handlePass} />
         </div>
 
-        {/* Row 4: Player Base | Legend | Champion */}
-        <div style={styles.row}>
-          <ZoneRow
-            player={me}
-            playerId={playerId}
-            isOpponent={false}
-            allCards={myCards}
-            cardDefs={cardDefs}
-          />
+        {/* Right panel: game log (top) + chat (bottom) */}
+        <div style={styles.rightPanel}>
+          <GameLog messages={store.gameLog} />
+          <ChatBox playerId={playerId} opponentName={opponent?.name ?? 'Opponent'} />
         </div>
-
-        {/* Row 5: Player Deck | Hand | Graveyard */}
-        <div style={styles.row}>
-          <DeckArea
-            player={me}
-            playerId={playerId}
-            isOpponent={false}
-            allCards={myCards}
-            cardDefs={cardDefs}
-            handCards={playerHandCards}
-            opponentHandCount={0}
-          />
-        </div>
-
-      </div>
-
-      {/* ========== BOTTOM ACTION BAR ========== */}
-      <ActionBar myTurn={myTurn} phase={phase} onPass={handlePass} />
-
-      {/* Game Log */}
-      <div style={styles.logPanel}>
-        <GameLog messages={store.gameLog} />
       </div>
 
       {/* Card modal */}
@@ -1522,18 +1529,32 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '4px 0',
   },
 
-  // Log panel
-  logPanel: {
-    position: 'absolute',
-    right: '8px',
-    top: '70px',
+  // Board with right panel side-by-side
+  boardWithRightPanel: {
+    display: 'flex',
+    flex: 1,
+    gap: '8px',
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+  // Board column: top bar + main rows + action bar (fills width minus right panel)
+  boardColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    flex: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+  // Right panel: game log (top) + chat (bottom)
+  rightPanel: {
+    display: 'flex',
+    flexDirection: 'column',
     width: '260px',
-    maxHeight: 'calc(100vh - 140px)',
-    background: 'rgba(0,0,0,0.6)',
-    borderRadius: '8px',
-    border: '1px solid rgba(255,255,255,0.08)',
-    overflowY: 'auto',
-    fontSize: '12px',
-    pointerEvents: 'none',
+    flexShrink: 0,
+    gap: '6px',
+    padding: '6px 0',
+    minHeight: 0,
+    overflow: 'hidden',
   },
 };

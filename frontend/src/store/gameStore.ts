@@ -10,6 +10,13 @@ import type {
 } from '../shared/types';
 import { CARDS } from '../shared/cards';
 
+interface ChatMessage {
+  id: string;
+  sender: 'player' | 'opponent' | 'system';
+  text: string;
+  timestamp: Date;
+}
+
 interface GameStore {
   // Connection
   playerId: string;
@@ -29,6 +36,7 @@ interface GameStore {
   targetBattlefieldId: string | null;
   availableActions: string[];
   gameLog: string[];
+  chatMessages: ChatMessage[];
   showCardModal: boolean;
   modalCardId: string | null;
 
@@ -47,6 +55,7 @@ interface GameStore {
   selectBattlefield: (bfId: string | null) => void;
   setModalCard: (cardId: string | null) => void;
   addLog: (message: string) => void;
+  addChatMessage: (msg: Omit<ChatMessage, 'id' | 'timestamp'>) => void;
   reset: () => void;
 
   // Derived
@@ -72,6 +81,7 @@ const initialState = {
   targetBattlefieldId: null,
   availableActions: [],
   gameLog: [],
+  chatMessages: [],
   showCardModal: false,
   modalCardId: null,
   lobbyId: null,
@@ -102,6 +112,9 @@ export const useGameStore = create<GameStore>((set, get) => ({
   selectBattlefield: (bfId) => set({ targetBattlefieldId: bfId }),
   setModalCard: (cardId) => set({ showCardModal: !!cardId, modalCardId: cardId }),
   addLog: (message) => set((s) => ({ gameLog: [...s.gameLog, `${new Date().toLocaleTimeString()}: ${message}`] })),
+  addChatMessage: (msg) => set((s) => ({
+    chatMessages: [...s.chatMessages, { ...msg, id: `${Date.now()}-${Math.random()}`, timestamp: new Date() }],
+  })),
 
   reset: () => set(initialState),
 
