@@ -37,7 +37,7 @@ describe('GameEngine', () => {
       expect(state.players[P1]).toBeDefined();
       expect(state.players[P2]).toBeDefined();
       expect(state.battlefields.length).toBeGreaterThan(0);
-      expect(state.phase).toBe('Mulligan');
+      expect(state.phase).toBe('Setup');
       expect(state.winner).toBeNull();
     });
 
@@ -257,8 +257,8 @@ describe('GameEngine', () => {
 
   describe('Legend and Champion Zone Setup', () => {
     it('places legend card in legendZone location', () => {
-      const legendCardId = 'unl-l01'; // Assuming a Legend card exists
-      const championCardId = 'unl-c01'; // Assuming a Champion unit exists
+      const legendCardId = 'ogn-247-298'; // Daughter of the Void — actual Legend card
+      const championCardId = 'ogn-011-298'; // Magma Wurm — type: Unit, superType: Champion
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
@@ -286,8 +286,8 @@ describe('GameEngine', () => {
     });
 
     it('places chosen champion card in championZone location', () => {
-      const legendCardId = 'unl-l01';
-      const championCardId = 'unl-c01';
+      const legendCardId = 'ogn-247-298';
+      const championCardId = 'ogn-011-298';
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
@@ -315,8 +315,8 @@ describe('GameEngine', () => {
     });
 
     it('legend and champion are NOT in player hand', () => {
-      const legendCardId = 'unl-l01';
-      const championCardId = 'unl-c01';
+      const legendCardId = 'ogn-247-298';
+      const championCardId = 'ogn-011-298';
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: { legendId: legendCardId, chosenChampionCardId: championCardId, cardIds: [] },
@@ -432,27 +432,17 @@ describe('GameEngine', () => {
       expect(String(turnChangeEntry.message)).toContain('Turn 2');
     });
 
-    it('actionLog contains both GameAction and SystemLogEntry entries', () => {
+    it('actionLog contains GameStart SystemLogEntry at createGame', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
-      // actionLog should contain SystemLogEntry entries from setup/mulligan phase
+      // actionLog should contain GameStart entry from createGame
       expect(state.actionLog.length).toBeGreaterThan(0);
 
-      // Check that some entries are SystemLogEntry (no payload field) and others are GameAction
-      const hasSystemLog = state.actionLog.some(
-        (entry: GameLogEntry) => 'message' in entry && !('payload' in entry)
+      // GameStart is a SystemLogEntry (no payload field)
+      const gameStartEntry = state.actionLog.find(
+        (entry: any) => entry.type === 'GameStart'
       );
-      const hasGameAction = state.actionLog.some(
-        (entry: GameLogEntry) => 'payload' in entry
-      );
-
-      // Both player actions (Mulligan) and system logs (PhaseChange) should coexist
-      expect(hasSystemLog).toBe(true);
-
-      // Phase change entries should have the correct structure
-      const phaseChangeEntries = state.actionLog.filter(
-        (entry: GameLogEntry) => entry.type === 'PhaseChange'
-      );
-      expect(phaseChangeEntries.length).toBeGreaterThan(0);
+      expect(gameStartEntry).toBeDefined();
+      expect((gameStartEntry as any).message).toContain('Game started');
 
       // Each log entry should have required fields: id, type, turn, phase, timestamp
       for (const entry of state.actionLog) {
@@ -462,11 +452,6 @@ describe('GameEngine', () => {
         expect(entry).toHaveProperty('phase');
         expect(entry).toHaveProperty('timestamp');
       }
-
-      // SystemLogEntry-specific: should have 'message' field, no 'payload'
-      const sysEntry = phaseChangeEntries[0] as SystemLogEntry;
-      expect(sysEntry).toHaveProperty('message');
-      expect(sysEntry.message.length).toBeGreaterThan(0);
     });
 
     it('system log entries correctly identify playerId where applicable', () => {

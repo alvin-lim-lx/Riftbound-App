@@ -195,6 +195,10 @@ class GameService {
     this.send({ type: 'pass' });
   }
 
+  sendChat(text: string) {
+    this.send({ type: 'chat_message', playerId: this.playerId, text });
+  }
+
   // ─────────────────────────────────────────────────────────
   // Getters
   // ─────────────────────────────────────────────────────────
