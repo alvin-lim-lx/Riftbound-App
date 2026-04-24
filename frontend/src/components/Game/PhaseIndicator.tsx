@@ -1,5 +1,5 @@
 /**
- * PhaseIndicator — shows current phase in the game turn order
+ * PhaseIndicator - compact, legible turn flow for the top bar.
  */
 import React from 'react';
 import type { Phase } from '../../shared/types';
@@ -10,54 +10,123 @@ interface Props {
   myTurn: boolean;
 }
 
-const PHASE_STEPS: Phase[] = ['Beginning', 'FirstMain', 'Combat', 'SecondMain', 'End'];
+const PHASE_STEPS: Array<{ id: Phase; label: string }> = [
+  { id: 'Beginning', label: 'Begin' },
+  { id: 'FirstMain', label: 'Main 1' },
+  { id: 'Combat', label: 'Combat' },
+  { id: 'SecondMain', label: 'Main 2' },
+  { id: 'End', label: 'End' },
+];
 
-const PHASE_ICONS: Record<string, string> = {
-  Beginning: '🌅',
-  FirstMain: '⚔️',
-  Combat: '⚔️',
-  SecondMain: '🪄',
-  End: '🌙',
-  Showdown: '💥',
-  GameOver: '🏆',
-};
+function phaseIndex(phase: Phase): number {
+  if (phase === 'Showdown') return PHASE_STEPS.findIndex(step => step.id === 'Combat');
+  return PHASE_STEPS.findIndex(step => step.id === phase);
+}
+
+export function getPhaseLabel(phase: Phase): string {
+  if (phase === 'FirstMain') return 'First Main';
+  if (phase === 'SecondMain') return 'Second Main';
+  return phase.replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+
+export function getTurnPrompt(phase: Phase, myTurn: boolean): string {
+  if (phase === 'Mulligan') return myTurn ? 'Choose which opening cards to keep.' : 'Waiting for opponent to mulligan.';
+  if (phase === 'FirstMain') return myTurn ? 'Play a unit, use a rune, or pass.' : 'AI is choosing its main action.';
+  if (phase === 'SecondMain') return myTurn ? 'Use your second main action or pass.' : 'AI is resolving its second main action.';
+  if (phase === 'Combat' || phase === 'Showdown') return myTurn ? 'Choose attackers and targets.' : 'AI is resolving combat.';
+  if (phase === 'GameOver') return 'Game complete.';
+  return myTurn ? 'Review the board as the phase advances.' : 'AI is resolving this phase.';
+}
 
 export function PhaseIndicator({ phase, turn, myTurn }: Props) {
+  const currentIndex = phaseIndex(phase);
+
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-      <span style={{ fontWeight: 700, fontSize: '14px', color: myTurn ? '#e63946' : '#6b7280' }}>
-        {myTurn ? '● YOUR TURN' : '○ OPPONENT'}
-      </span>
-      <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-        {PHASE_STEPS.map((p, i) => {
-          const isActive = p === phase || (phase === 'Showdown' && p === 'Combat');
-          const isPast = PHASE_STEPS.indexOf(phase) > i;
+    <div style={styles.container}>
+      <div style={styles.headerRow}>
+        <span style={{ ...styles.turnPill, borderColor: myTurn ? '#f97316' : '#64748b', color: myTurn ? '#fed7aa' : '#cbd5e1' }}>
+          Turn {turn}
+        </span>
+        <span style={{ ...styles.statusPill, background: myTurn ? 'rgba(249,115,22,0.18)' : 'rgba(100,116,139,0.18)', color: myTurn ? '#fb923c' : '#cbd5e1' }}>
+          {myTurn ? 'Your turn' : 'AI turn'}
+        </span>
+      </div>
+      <div style={styles.steps}>
+        {PHASE_STEPS.map((step, i) => {
+          const isActive = i === currentIndex;
+          const isPast = currentIndex > i;
           return (
-            <React.Fragment key={p}>
-              <div style={{
-                width: '28px', height: '28px',
-                borderRadius: '50%',
-                background: isActive ? '#e63946' : isPast ? '#22c55e' : '#e5e5e5',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '12px',
-                border: isActive ? '2px solid #e63946' : '1px solid #e5e5e5',
-                boxShadow: isActive ? '0 0 8px rgba(230,57,70,0.3)' : 'none',
-              }}>
-                {PHASE_ICONS[p]?.[0] ?? '•'}
+            <React.Fragment key={step.id}>
+              <div
+                style={{
+                  ...styles.step,
+                  background: isActive ? '#f97316' : isPast ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.06)',
+                  borderColor: isActive ? '#fdba74' : isPast ? '#22c55e' : 'rgba(255,255,255,0.12)',
+                  color: isActive ? '#111827' : isPast ? '#bbf7d0' : '#94a3b8',
+                }}
+                title={step.label}
+              >
+                {step.label}
               </div>
               {i < PHASE_STEPS.length - 1 && (
-                <div style={{
-                  width: '16px', height: '2px',
-                  background: isPast ? '#22c55e' : '#e5e5e5',
-                }} />
+                <div style={{ ...styles.connector, background: isPast ? '#22c55e' : 'rgba(255,255,255,0.12)' }} />
               )}
             </React.Fragment>
           );
         })}
       </div>
-      <span style={{ fontSize: '12px', color: '#6b7280' }}>
-        Turn {turn}
-      </span>
     </div>
   );
 }
+
+const styles: Record<string, React.CSSProperties> = {
+  container: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '6px',
+    minWidth: '430px',
+  },
+  headerRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+  turnPill: {
+    border: '1px solid',
+    borderRadius: '999px',
+    padding: '2px 9px',
+    fontSize: '11px',
+    fontWeight: 800,
+    background: 'rgba(15,23,42,0.8)',
+  },
+  statusPill: {
+    borderRadius: '999px',
+    padding: '3px 10px',
+    fontSize: '11px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+  },
+  steps: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+  },
+  step: {
+    minWidth: '52px',
+    height: '24px',
+    borderRadius: '999px',
+    border: '1px solid',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '10px',
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+  },
+  connector: {
+    width: '14px',
+    height: '2px',
+    borderRadius: '2px',
+  },
+};
