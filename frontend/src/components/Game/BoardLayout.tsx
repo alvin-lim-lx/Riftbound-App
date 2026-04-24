@@ -27,7 +27,7 @@ import { useGameStore } from '../../store/gameStore';
 import { gameService } from '../../services/gameService';
 import { ActionBar } from './ActionBar';
 import { CardModal } from './CardModal';
-import { PhaseIndicator } from './PhaseIndicator';
+import { PhaseIndicator, getPhaseLabel, getTurnPrompt } from './PhaseIndicator';
 import { GameLog } from './GameLog';
 import { ChatBox } from './ChatBox';
 import { MulliganOverlay } from './MulliganOverlay';
@@ -83,7 +83,8 @@ function partitionPlayerZones(
     const def = cardDefs[c.cardId];
     if (!def) continue;
 
-    if (c.location === 'battlefield' || c.location === 'legend' || c.location === 'championZone') {
+    const location = c.location as string;
+    if (location === 'battlefield' || location === 'legend' || location === 'championZone') {
       if (def.type === 'Battlefield') baseIds.push(c.instanceId);
       else if (def.type === 'Unit' && def.superType === 'Champion') championIds.push(c.instanceId);
       else if (def.type === 'Legend') legendIds.push(c.instanceId);
@@ -477,9 +478,10 @@ interface PlayerHandRowProps {
   cards: CardInstance[];
   cardDefs: Record<string, CardDefinition>;
   onCardClick?: (instanceId: string) => void;
+  canInteract?: boolean;
 }
 
-function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
+function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false }: PlayerHandRowProps) {
   if (cards.length === 0) {
     return (
       <div style={handStyles.playerContainer}>
@@ -510,8 +512,16 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
                 zIndex,
                 transition: 'transform 0.2s ease',
                 flexShrink: 1,
+                position: 'relative',
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.transform = `translateY(${yShift - 12}px) rotate(${rotate}deg) scale(1.04)`;
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.transform = `translateY(${yShift}px) rotate(${rotate}deg)`;
               }}
             >
+              {canInteract && <div style={handStyles.playableBadge}>Playable</div>}
               <CardArtView
                 card={card}
                 cardDef={def}
@@ -519,7 +529,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick }: PlayerHandRowProps) {
                 showStats={true}
                 showKeywords={true}
                 size="md"
-                maxHeight={80}
+                maxHeight={96}
                 onClick={() => onCardClick?.(card.instanceId)}
               />
             </div>
@@ -588,10 +598,26 @@ const handStyles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     alignItems: 'flex-end',
     gap: '0px',
-    padding: '0 8px',
+    padding: '10px 8px 0',
     flexShrink: 1,
     minHeight: 0,
     overflow: 'hidden',
+  },
+  playableBadge: {
+    position: 'absolute',
+    top: '-16px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: 20,
+    padding: '2px 7px',
+    borderRadius: '999px',
+    background: 'rgba(34,197,94,0.9)',
+    color: '#052e16',
+    fontSize: '9px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    whiteSpace: 'nowrap',
+    pointerEvents: 'none',
   },
   countBadge: {
     fontSize: '12px',
@@ -823,9 +849,12 @@ interface DeckAreaProps {
   cardDefs: Record<string, CardDefinition>;
   handCards: CardInstance[];    // already-filtered hand cards
   opponentHandCount: number;    // just the count (hidden)
+  myTurn?: boolean;
+  phase?: Phase;
+  onCardClick?: (instanceId: string) => void;
 }
 
-function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount }: DeckAreaProps) {
+function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick }: DeckAreaProps) {
   if (!player) return null;
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
@@ -877,7 +906,12 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
       {isOpponent ? (
         <OpponentHandRow count={opponentHandCount} />
       ) : (
-        <PlayerHandRow cards={handCards} cardDefs={cardDefs} onCardClick={undefined} />
+        <PlayerHandRow
+          cards={handCards}
+          cardDefs={cardDefs}
+          onCardClick={onCardClick}
+          canInteract={myTurn && (phase === 'FirstMain' || phase === 'SecondMain')}
+        />
       )}
 
       {/* Main Deck (right) — always hidden, count only */}
@@ -981,6 +1015,7 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
 
             {/* Center: battlefield card art */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '80px', padding: '4px 8px', gap: '2px' }}>
+              {canAttack && <div style={bfRowStyles.actionHint}>Can attack</div>}
               <CardArtView
                 card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
                 cardDef={CARDS[bf.cardId] ?? cardDefinitions[bf.cardId]}
@@ -1032,6 +1067,7 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
                         title={def?.name}
                       >
                         <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
+                        <div style={bfRowStyles.targetHint}>{isTarget ? 'Target' : 'Select target'}</div>
                         <div style={bfRowStyles.unitStats}>
                           <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
                           <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
@@ -1209,6 +1245,25 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     marginTop: '3px',
   },
+  actionHint: {
+    padding: '2px 7px',
+    borderRadius: '999px',
+    background: 'rgba(249,115,22,0.18)',
+    border: '1px solid rgba(249,115,22,0.36)',
+    color: '#fdba74',
+    fontSize: '9px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
+  },
+  targetHint: {
+    marginTop: '2px',
+    color: '#fbbf24',
+    fontSize: '8px',
+    fontWeight: 800,
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+  },
   attackBtn: {
     margin: '6px 8px',
     padding: '6px 12px',
@@ -1237,6 +1292,8 @@ interface TopBarProps {
 }
 
 function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: TopBarProps) {
+  const prompt = getTurnPrompt(phase, myTurn);
+
   return (
     <div style={topBarStyles.bar}>
       {/* Left: player info */}
@@ -1249,8 +1306,14 @@ function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: T
 
       {/* Center: turn tracker */}
       <div style={topBarStyles.center}>
+        <div style={topBarStyles.commandStrip}>
+          <span style={{ ...topBarStyles.commandPhase, color: myTurn ? '#fdba74' : '#cbd5e1' }}>
+            {myTurn ? 'You' : 'AI'} - {getPhaseLabel(phase)}
+          </span>
+          <span style={topBarStyles.commandPrompt}>{prompt}</span>
+        </div>
         <PhaseIndicator phase={phase} turn={turn} myTurn={myTurn} />
-        <div style={topBarStyles.turnRow}>
+        <div style={{ display: 'none' }}>
           <span style={topBarStyles.turnLabel}>Turn {turn}</span>
           <span style={{
             ...topBarStyles.turnBadge,
@@ -1288,8 +1351,34 @@ const topBarStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
-    gap: '3px',
+    gap: '6px',
     flexShrink: 0,
+  },
+  commandStrip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    maxWidth: '520px',
+    padding: '6px 12px',
+    background: 'rgba(15,23,42,0.88)',
+    border: '1px solid rgba(148,163,184,0.18)',
+    borderRadius: '10px',
+    boxShadow: '0 8px 22px rgba(0,0,0,0.24)',
+  },
+  commandPhase: {
+    fontSize: '11px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    letterSpacing: '0.6px',
+    whiteSpace: 'nowrap',
+  },
+  commandPrompt: {
+    fontSize: '12px',
+    fontWeight: 700,
+    color: '#e2e8f0',
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
   },
   turnRow: {
     display: 'flex',
@@ -1395,6 +1484,8 @@ export function BoardLayout() {
 
   const playerHandCards = me ? getPlayerCards(me, myCards, 'hand') : [];
   const opponentHandCount = opponent ? getPlayerCards(opponent, myCards, 'hand').length : 0;
+  const isAIGame = Boolean(opponent?.id.startsWith('ai_') || opponent?.name.toLowerCase().includes('player 2'));
+  const rightPanelLogPct = isAIGame ? 68 : splitPct;
 
   return (
     <div style={styles.board}>
@@ -1472,6 +1563,9 @@ export function BoardLayout() {
                 cardDefs={cardDefs}
                 handCards={playerHandCards}
                 opponentHandCount={0}
+                myTurn={myTurn}
+                phase={phase}
+                onCardClick={handleCardClick}
               />
             </div>
 
@@ -1483,7 +1577,7 @@ export function BoardLayout() {
 
         {/* Right panel: game log (top) + draggable split + chat (bottom) */}
         <div ref={panelRef} style={styles.rightPanel}>
-          <div style={{ flex: `0 0 ${splitPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+          <div style={{ flex: `0 0 ${rightPanelLogPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
             <GameLog messages={store.gameLog} />
           </div>
 
@@ -1510,8 +1604,8 @@ export function BoardLayout() {
             }} />
           </div>
 
-          <div style={{ flex: `0 0 ${100 - splitPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-            <ChatBox playerId={playerId} opponentName={opponent?.name ?? 'Opponent'} />
+          <div style={{ flex: `0 0 ${100 - rightPanelLogPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <ChatBox playerId={playerId} opponentName={opponent?.name ?? 'Opponent'} compact={isAIGame} />
           </div>
         </div>
       </div>
