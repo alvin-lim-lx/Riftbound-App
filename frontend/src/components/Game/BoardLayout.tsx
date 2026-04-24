@@ -36,6 +36,47 @@ import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase } fro
 import { CARDS } from '../../shared/cards';
 import { randomId } from '../../utils/helpers';
 
+const CARD_HEIGHTS = {
+  stackMin: 64,
+  stackMax: 122,
+  opponentStackMax: 108,
+  narrowStackMax: 62,
+  narrowHandMin: 84,
+  narrowHandMax: 90,
+  handMin: 112,
+  handMax: 148,
+  handShortMax: 124,
+  zoneMin: 86,
+  zoneMax: 160,
+  opponentZoneMax: 154,
+  battlefieldMin: 96,
+  battlefieldMax: 132,
+};
+
+function fitCardHeight(available: number, min: number, max: number): number {
+  if (!Number.isFinite(available) || available <= 0) return min;
+  return Math.round(Math.min(max, Math.max(min, available)));
+}
+
+function useBoardViewport() {
+  const getViewport = () => ({
+    width: typeof window === 'undefined' ? 1200 : window.innerWidth,
+    height: typeof window === 'undefined' ? 800 : window.innerHeight,
+  });
+  const [viewport, setViewport] = React.useState(getViewport);
+
+  React.useEffect(() => {
+    const handleResize = () => setViewport(getViewport());
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  return {
+    isNarrow: viewport.width < 900,
+    isShort: viewport.height < 780,
+  };
+}
+
 // ─────────────────────────────────────────
 // Domain → color mapping for rune icons
 // ─────────────────────────────────────────
@@ -479,9 +520,10 @@ interface PlayerHandRowProps {
   cardDefs: Record<string, CardDefinition>;
   onCardClick?: (instanceId: string) => void;
   canInteract?: boolean;
+  maxCardHeight?: number;
 }
 
-function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false }: PlayerHandRowProps) {
+function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false, maxCardHeight = CARD_HEIGHTS.handMax }: PlayerHandRowProps) {
   if (cards.length === 0) {
     return (
       <div style={handStyles.playerContainer}>
@@ -529,7 +571,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false }: Pl
                 showStats={true}
                 showKeywords={true}
                 size="md"
-                maxHeight={96}
+                maxHeight={maxCardHeight}
                 onClick={() => onCardClick?.(card.instanceId)}
               />
             </div>
@@ -573,15 +615,15 @@ const handStyles: Record<string, React.CSSProperties> = {
   opponentCards: {
     display: 'flex',
     gap: '4px',
-    flexWrap: 'wrap',
+    flexWrap: 'nowrap',
     justifyContent: 'center',
     flexShrink: 1,
     minHeight: 0,
     overflow: 'hidden',
   },
   cardBack: {
-    width: '44px',
-    height: '60px',
+    width: '40px',
+    height: '54px',
     background: 'linear-gradient(135deg, #2a2a4a 0%, #1a1a3a 100%)',
     border: '1px solid rgba(255,255,255,0.12)',
     borderRadius: '5px',
@@ -597,8 +639,8 @@ const handStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'flex-end',
-    gap: '0px',
-    padding: '10px 8px 0',
+    gap: '2px',
+    padding: '8px 8px 0',
     flexShrink: 1,
     minHeight: 0,
     overflow: 'hidden',
@@ -662,7 +704,7 @@ function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md', maxHeig
   const def = cardDefs[card.cardId];
 
   return (
-    <div style={{ flexShrink: 1, minWidth: 0, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div style={{ flexShrink: 0, minWidth: 0, overflow: 'visible', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
       <CardArtView
         card={card}
         cardDef={def}
@@ -690,12 +732,14 @@ interface ZoneRowProps {
 function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowProps) {
   if (!player) return null;
 
+  const rowRef = React.useRef<HTMLDivElement>(null);
   const baseRef = React.useRef<HTMLDivElement>(null);
   const legendRef = React.useRef<HTMLDivElement>(null);
   const champRef = React.useRef<HTMLDivElement>(null);
-  const [baseH, setBaseH] = React.useState(60);
-  const [legendH, setLegendH] = React.useState(60);
-  const [champH, setChampH] = React.useState(60);
+  const [rowH, setRowH] = React.useState(CARD_HEIGHTS.zoneMin);
+  const [baseH, setBaseH] = React.useState(CARD_HEIGHTS.zoneMin);
+  const [legendH, setLegendH] = React.useState(CARD_HEIGHTS.zoneMin);
+  const [champH, setChampH] = React.useState(CARD_HEIGHTS.zoneMin);
 
   React.useLayoutEffect(() => {
     const observer = new ResizeObserver(entries => {
@@ -704,15 +748,18 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
           : entry.target === legendRef.current ? 'legend'
           : 'champ';
         const h = entry.contentRect.height;
-        if (id === 'base') setBaseH(h);
+        if (entry.target === rowRef.current) setRowH(h);
+        else if (id === 'base') setBaseH(h);
         else if (id === 'legend') setLegendH(h);
         else setChampH(h);
       }
     });
+    if (rowRef.current) observer.observe(rowRef.current);
     if (baseRef.current) observer.observe(baseRef.current);
     if (legendRef.current) observer.observe(legendRef.current);
     if (champRef.current) observer.observe(champRef.current);
     // Fire immediately with current sizes
+    if (rowRef.current) setRowH(rowRef.current.clientHeight);
     if (baseRef.current) setBaseH(baseRef.current.clientHeight);
     if (legendRef.current) setLegendH(legendRef.current.clientHeight);
     if (champRef.current) setChampH(champRef.current.clientHeight);
@@ -727,9 +774,20 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
   const labelColor = isOpponent ? '#ef444488' : '#22c55e88';
   const borderColor = isOpponent ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)';
   const bg = isOpponent ? 'rgba(239,68,68,0.03)' : 'rgba(34,197,94,0.03)';
+  const maxZoneCardH = isOpponent ? CARD_HEIGHTS.opponentZoneMax : CARD_HEIGHTS.zoneMax;
+  const rowCardH = fitCardHeight(rowH - 24, CARD_HEIGHTS.zoneMin, maxZoneCardH);
+  const baseCardH = fitCardHeight(Math.max(baseH, rowCardH) - 2, CARD_HEIGHTS.zoneMin, maxZoneCardH);
+  const legendCardH = fitCardHeight(Math.max(legendH, rowCardH) - 2, CARD_HEIGHTS.zoneMin, maxZoneCardH);
+  const champCardH = fitCardHeight(Math.max(champH, rowCardH) - 2, CARD_HEIGHTS.zoneMin, maxZoneCardH);
+  const portraitAspect = 744 / 1039;
+  const sideZoneCardW = Math.ceil(Math.max(legendCardH, champCardH) * portraitAspect);
+  const sideZonesStyle = {
+    ...zoneRowStyles.sideZones,
+    minWidth: `${(sideZoneCardW * 2) + 16}px`,
+  };
 
   return (
-    <div style={{
+    <div ref={rowRef} style={{
       ...zoneRowStyles.row,
       background: bg,
       borderColor: borderColor,
@@ -740,7 +798,7 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
         <div ref={baseRef} style={zoneRowStyles.cardArea}>
           {baseIds.length > 0 ? (
             baseIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={baseH} />
+              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={baseCardH} />
             ))
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#7c3aed33' }}>
@@ -751,14 +809,14 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       </div>
 
       {/* Legend + Champion — grouped and flushed right */}
-      <div style={{ display: 'flex', alignItems: 'stretch', gap: '12px', marginLeft: 'auto' }}>
+      <div style={sideZonesStyle}>
         {/* Legend */}
         <div style={zoneRowStyles.zone}>
           <div style={{ ...zoneRowStyles.zoneLabel, color: '#d4a84388' }}>LEGEND</div>
           <div ref={legendRef} style={zoneRowStyles.cardArea}>
             {legendIds.length > 0 ? (
               legendIds.map(id => (
-                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={legendH} />
+                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={legendCardH} />
               ))
             ) : (
               <div style={{ ...zoneRowStyles.empty, borderColor: '#d4a84333' }}>
@@ -774,7 +832,7 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
           <div ref={champRef} style={zoneRowStyles.cardArea}>
             {championIds.length > 0 ? (
               championIds.map(id => (
-                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={champH} />
+                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={champCardH} />
               ))
             ) : (
               <div style={{ ...zoneRowStyles.empty, borderColor: '#3b82f633' }}>
@@ -793,13 +851,24 @@ const zoneRowStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'stretch',
     justifyContent: 'center',
+    flex: 1,
+    height: '100%',
     gap: '12px',
-    padding: '2px 16px',
+    padding: '2px 12px',
     borderRadius: '6px',
     border: '1px solid',
     flexShrink: 1,
     minHeight: 0,
     overflow: 'hidden',
+  },
+  sideZones: {
+    display: 'flex',
+    alignItems: 'stretch',
+    alignSelf: 'stretch',
+    gap: '12px',
+    marginLeft: 'auto',
+    minHeight: 0,
+    flexShrink: 0,
   },
   zone: {
     display: 'flex',
@@ -822,18 +891,19 @@ const zoneRowStyles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     alignItems: 'center',
     flex: 1,
+    width: '100%',
     minHeight: 0,
     overflow: 'hidden',
   },
   empty: {
-    flex: 1,
-    minHeight: 0,
+    width: '64px',
+    height: '30px',
     border: '1px dashed',
     borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: '64px',
+    flexShrink: 0,
     maxWidth: '100%',
   },
 };
@@ -852,15 +922,17 @@ interface DeckAreaProps {
   myTurn?: boolean;
   phase?: Phase;
   onCardClick?: (instanceId: string) => void;
+  compactCards?: boolean;
 }
 
-function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick }: DeckAreaProps) {
+function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick, compactCards = false }: DeckAreaProps) {
   if (!player) return null;
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
 
   const rowRef = React.useRef<HTMLDivElement>(null);
   const [rowH, setRowH] = React.useState(0);
+  const [rowW, setRowW] = React.useState(0);
 
   React.useEffect(() => {
     const el = rowRef.current;
@@ -868,14 +940,23 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
     const observer = new ResizeObserver(entries => {
       for (const entry of entries) {
         setRowH(entry.contentRect.height);
+        setRowW(entry.contentRect.width);
       }
     });
     observer.observe(el);
+    setRowW(el.clientWidth);
     return () => observer.disconnect();
   }, []);
 
-  // Reserve ~44px for labels + count text; rest for card art
-  const cardMaxH = Math.max(20, rowH - 44);
+  // Reserve label/count space, then clamp each zone to the shared board scale.
+  const narrowDeckRow = rowW > 0 && rowW < 520;
+  const stackMax = narrowDeckRow ? CARD_HEIGHTS.narrowStackMax : isOpponent ? CARD_HEIGHTS.opponentStackMax : CARD_HEIGHTS.stackMax;
+  const cardMaxH = fitCardHeight(rowH - 34, CARD_HEIGHTS.stackMin, stackMax);
+  const handMaxH = fitCardHeight(
+    rowH - (compactCards ? 56 : 36),
+    narrowDeckRow ? CARD_HEIGHTS.narrowHandMin : CARD_HEIGHTS.handMin,
+    narrowDeckRow ? CARD_HEIGHTS.narrowHandMax : compactCards ? CARD_HEIGHTS.handShortMax : CARD_HEIGHTS.handMax
+  );
 
   // Top card of main deck — always hidden (never revealed to players)
   // The deck count is shown but the top card is never exposed
@@ -911,6 +992,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
           cardDefs={cardDefs}
           onCardClick={onCardClick}
           canInteract={myTurn && (phase === 'FirstMain' || phase === 'SecondMain')}
+          maxCardHeight={handMaxH}
         />
       )}
 
@@ -935,8 +1017,10 @@ const deckAreaStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '16px',
-    padding: '6px 16px',
+    flex: 1,
+    height: '100%',
+    gap: '12px',
+    padding: '4px 12px',
     flexShrink: 1,
     minHeight: 0,
     overflow: 'hidden',
@@ -958,6 +1042,23 @@ interface BattlefieldRowProps {
 
 function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectTarget, handleAction }: BattlefieldRowProps) {
   const { battlefields, allCards, cardDefinitions } = gameState;
+  const rowRef = React.useRef<HTMLDivElement>(null);
+  const [rowH, setRowH] = React.useState(0);
+
+  React.useEffect(() => {
+    const el = rowRef.current;
+    if (!el) return;
+    const observer = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setRowH(entry.contentRect.height);
+      }
+    });
+    observer.observe(el);
+    setRowH(el.clientHeight);
+    return () => observer.disconnect();
+  }, []);
+
+  const battlefieldCardH = fitCardHeight(rowH - 44, CARD_HEIGHTS.battlefieldMin, CARD_HEIGHTS.battlefieldMax);
 
   if (!battlefields.length) {
     return (
@@ -968,7 +1069,7 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
   }
 
   return (
-    <div style={bfRowStyles.container}>
+    <div ref={rowRef} style={bfRowStyles.container}>
       {battlefields.map(bf => {
         const myUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId === playerId);
         const enemyUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId !== playerId);
@@ -1014,7 +1115,7 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
             </div>
 
             {/* Center: battlefield card art */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '80px', padding: '4px 8px', gap: '2px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '132px', padding: '4px 8px', gap: '2px' }}>
               {canAttack && <div style={bfRowStyles.actionHint}>Can attack</div>}
               <CardArtView
                 card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
@@ -1022,7 +1123,8 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
                 isOpponent={false}
                 showStats={false}
                 showKeywords={false}
-                size="sm"
+                size="lg"
+                maxHeight={battlefieldCardH}
                 landscape={true}
               />
               <span style={{ fontSize: '10px', fontWeight: 700, color: bfColor }}>{bf.name}</span>
@@ -1095,7 +1197,7 @@ const BF_COLORS: Record<string, string> = {
 const bfRowStyles: Record<string, React.CSSProperties> = {
   container: {
     display: 'flex',
-    gap: '12px',
+    gap: '10px',
     width: '100%',
     alignItems: 'stretch',
     overflowX: 'auto',
@@ -1115,7 +1217,7 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
   },
   bfPanel: {
     flex: 1,
-    minWidth: '200px',
+    minWidth: '270px',
     display: 'flex',
     flexDirection: 'column',
     background: 'rgba(255,255,255,0.04)',
@@ -1199,18 +1301,18 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     display: 'inline-flex',
     flexDirection: 'column',
     alignItems: 'center',
-    padding: '5px 8px',
+    padding: '4px 6px',
     background: 'rgba(20,20,35,0.8)',
     border: '1px solid',
     borderRadius: '6px',
-    minWidth: '60px',
+    minWidth: '56px',
     transition: 'all 0.15s ease',
   },
   unitName: {
-    fontSize: '10px',
+    fontSize: '9px',
     fontWeight: 700,
     color: '#e8e8e8',
-    maxWidth: '68px',
+    maxWidth: '62px',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
@@ -1403,6 +1505,7 @@ const topBarStyles: Record<string, React.CSSProperties> = {
 export function BoardLayout() {
   const store = useGameStore();
   const { gameState, myTurn, phase, playerId } = store;
+  const { isNarrow, isShort } = useBoardViewport();
 
   // Right panel split: 0-100 (gameLog height as %)
   const [splitPct, setSplitPct] = React.useState(50);
@@ -1486,11 +1589,24 @@ export function BoardLayout() {
   const opponentHandCount = opponent ? getPlayerCards(opponent, myCards, 'hand').length : 0;
   const isAIGame = Boolean(opponent?.id.startsWith('ai_') || opponent?.name.toLowerCase().includes('player 2'));
   const rightPanelLogPct = isAIGame ? 68 : splitPct;
+  const boardWithRightPanelStyle = {
+    ...styles.boardWithRightPanel,
+    ...(isNarrow ? styles.boardWithRightPanelNarrow : {}),
+  };
+  const boardGridStyle = {
+    ...styles.boardGrid,
+    ...(isNarrow ? styles.boardGridNarrow : {}),
+    ...(isShort ? styles.boardGridShort : {}),
+  };
+  const rightPanelStyle = {
+    ...styles.rightPanel,
+    ...(isNarrow ? styles.rightPanelNarrow : {}),
+  };
 
   return (
     <div style={styles.board}>
       {/* Board column (left) + right panel */}
-      <div style={styles.boardWithRightPanel}>
+      <div style={boardWithRightPanelStyle}>
         {/* Board column: top bar + main rows + action bar */}
         <div style={styles.boardColumn}>
           <TopBar
@@ -1504,10 +1620,10 @@ export function BoardLayout() {
           />
 
           {/* ========== MAIN FLEX COLUMN ========== */}
-          <div style={styles.boardGrid}>
+          <div style={boardGridStyle}>
 
             {/* Row 1: Opponent Graveyard | Hand | Deck */}
-            <div style={styles.row}>
+            <div style={styles.opponentUtilityRow}>
               <DeckArea
                 player={opponent}
                 playerId={opponent?.id ?? ''}
@@ -1516,11 +1632,12 @@ export function BoardLayout() {
                 cardDefs={cardDefs}
                 handCards={[]}
                 opponentHandCount={opponentHandCount}
+                compactCards={isShort || isNarrow}
               />
             </div>
 
             {/* Row 2: Opponent Base | Legend | Champion */}
-            <div style={styles.row}>
+            <div style={styles.opponentZoneRow}>
               <ZoneRow
                 player={opponent}
                 playerId={opponent?.id ?? ''}
@@ -1543,7 +1660,7 @@ export function BoardLayout() {
             </div>
 
             {/* Row 4: Player Base | Legend | Champion */}
-            <div style={styles.row}>
+            <div style={styles.playerZoneRow}>
               <ZoneRow
                 player={me}
                 playerId={playerId}
@@ -1554,7 +1671,7 @@ export function BoardLayout() {
             </div>
 
             {/* Row 5: Player Deck | Hand | Graveyard */}
-            <div style={styles.row}>
+            <div style={styles.playerHandRow}>
               <DeckArea
                 player={me}
                 playerId={playerId}
@@ -1566,6 +1683,7 @@ export function BoardLayout() {
                 myTurn={myTurn}
                 phase={phase}
                 onCardClick={handleCardClick}
+                compactCards={isShort || isNarrow}
               />
             </div>
 
@@ -1576,7 +1694,7 @@ export function BoardLayout() {
         </div>
 
         {/* Right panel: game log (top) + draggable split + chat (bottom) */}
-        <div ref={panelRef} style={styles.rightPanel}>
+        <div ref={panelRef} style={rightPanelStyle}>
           <div style={{ flex: `0 0 ${rightPanelLogPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
             <GameLog messages={store.gameLog} />
           </div>
@@ -1664,21 +1782,57 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
-    padding: '3px 16px',
-    gap: '3px',
+    padding: '3px 12px',
+    gap: '6px',
     minHeight: 0,
   },
+  boardGridNarrow: {
+    padding: '3px 8px',
+    gap: '5px',
+    overflowY: 'auto',
+  },
+  boardGridShort: {
+    gap: '3px',
+  },
 
-  // All 5 rows use equal height — 20% each
+  // Fallback row style; named rows below carry the weighted layout.
   row: {
-    flex: 1,
+    flex: '1 1 0',
     minHeight: 0,
     overflow: 'hidden',
   },
+  opponentUtilityRow: {
+    flex: '0.86 1 104px',
+    display: 'flex',
+    alignItems: 'stretch',
+    minHeight: '72px',
+    overflow: 'hidden',
+  },
+  opponentZoneRow: {
+    flex: '1.22 1 148px',
+    display: 'flex',
+    alignItems: 'stretch',
+    minHeight: '104px',
+    overflow: 'hidden',
+  },
+  playerZoneRow: {
+    flex: '1.32 1 158px',
+    display: 'flex',
+    alignItems: 'stretch',
+    minHeight: '112px',
+    overflow: 'hidden',
+  },
+  playerHandRow: {
+    flex: '1.12 1 124px',
+    display: 'flex',
+    alignItems: 'stretch',
+    minHeight: '96px',
+    overflow: 'hidden',
+  },
 
-  // Battlefield row — same equal height
+  // Battlefield row is weighted as the main stage.
   battlefieldRow: {
-    flex: 1,
+    flex: '1.28 1 142px',
     display: 'flex',
     alignItems: 'stretch',
     minHeight: 0,
@@ -1694,6 +1848,10 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     minHeight: 0,
   },
+  boardWithRightPanelNarrow: {
+    flexDirection: 'column',
+    gap: '4px',
+  },
   // Board column: top bar + main rows + action bar (fills width minus right panel)
   boardColumn: {
     display: 'flex',
@@ -1707,11 +1865,17 @@ const styles: Record<string, React.CSSProperties> = {
   rightPanel: {
     display: 'flex',
     flexDirection: 'column',
-    width: '260px',
+    width: '220px',
     flexShrink: 0,
     gap: '6px',
     padding: '6px 0',
     minHeight: 0,
     overflow: 'hidden',
+  },
+  rightPanelNarrow: {
+    width: '100%',
+    height: '160px',
+    flexShrink: 0,
+    padding: '0 8px 6px',
   },
 };
