@@ -25,10 +25,16 @@ const CARD_ASPECT = 744 / 1039;
 // Battlefield card art aspect ratio (landscape)
 const BF_ASPECT = 1039 / 744;
 
-const sizeMap = {
+const portraitSizeMap = {
   sm: { w: 64, h: 86 },
   md: { w: 100, h: 134 },
   lg: { w: 140, h: 188 },
+};
+
+const landscapeSizeMap = {
+  sm: { w: 104, h: 74 },
+  md: { w: 132, h: 94 },
+  lg: { w: 168, h: 120 },
 };
 
 const ENLARGE_W = 300;
@@ -67,8 +73,9 @@ export function CardArtView({
   const hidden = isOpponent && card.owner_hidden;
   const def = cardDef;
 
-  const base = sizeMap[size];
-  const dims = maxHeight ? { w: Math.round(base.w * (maxHeight / base.h)), h: maxHeight } : base;
+  const base = landscape ? landscapeSizeMap[size] : portraitSizeMap[size];
+  const aspect = landscape ? BF_ASPECT : CARD_ASPECT;
+  const dims = maxHeight ? { w: Math.round(maxHeight * aspect), h: maxHeight } : base;
 
   const imgStyle: React.CSSProperties = {
     width: dims.w,
