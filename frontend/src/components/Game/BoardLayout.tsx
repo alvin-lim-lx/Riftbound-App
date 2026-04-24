@@ -1315,6 +1315,41 @@ export function BoardLayout() {
   const store = useGameStore();
   const { gameState, myTurn, phase, playerId } = store;
 
+  // Right panel split: 0-100 (gameLog height as %)
+  const [splitPct, setSplitPct] = React.useState(50);
+  const [isDragging, setIsDragging] = React.useState(false);
+  const panelRef = React.useRef<HTMLDivElement>(null);
+
+  const handleDragStart = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+    document.body.style.cursor = 'row-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  React.useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!isDragging || !panelRef.current) return;
+      const rect = panelRef.current.getBoundingClientRect();
+      const pct = ((e.clientY - rect.top) / rect.height) * 100;
+      setSplitPct(Math.min(80, Math.max(20, pct)));
+    };
+    const handleMouseUp = () => {
+      if (!isDragging) return;
+      setIsDragging(false);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
+
   const handleAction = useCallback((actionType: string, payload: Record<string, unknown> = {}) => {
     const action: GameAction = {
       id: randomId(),
@@ -1446,10 +1481,38 @@ export function BoardLayout() {
           <ActionBar myTurn={myTurn} phase={phase} onPass={handlePass} />
         </div>
 
-        {/* Right panel: game log (top) + chat (bottom) */}
-        <div style={styles.rightPanel}>
-          <GameLog messages={store.gameLog} />
-          <ChatBox playerId={playerId} opponentName={opponent?.name ?? 'Opponent'} />
+        {/* Right panel: game log (top) + draggable split + chat (bottom) */}
+        <div ref={panelRef} style={styles.rightPanel}>
+          <div style={{ flex: `0 0 ${splitPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <GameLog messages={store.gameLog} />
+          </div>
+
+          {/* Drag handle */}
+          <div
+            style={{
+              height: '8px',
+              flexShrink: 0,
+              cursor: 'row-resize',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'transparent',
+              transition: isDragging ? 'none' : 'background 0.15s',
+            }}
+            onMouseDown={handleDragStart}
+          >
+            <div style={{
+              width: '40px',
+              height: '3px',
+              borderRadius: '2px',
+              background: isDragging ? '#d4a843' : 'rgba(255,255,255,0.2)',
+              transition: 'background 0.15s',
+            }} />
+          </div>
+
+          <div style={{ flex: `0 0 ${100 - splitPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+            <ChatBox playerId={playerId} opponentName={opponent?.name ?? 'Opponent'} />
+          </div>
         </div>
       </div>
 
