@@ -29,7 +29,7 @@ export interface CardDefinition {
     imageUrl?: string;
     flavorText?: string;
 }
-export type Phase = 'Setup' | 'Mulligan' | 'Awaken' | 'Beginning' | 'Channel' | 'Draw' | 'Action' | 'FirstMain' | 'Combat' | 'SecondMain' | 'End' | 'Showdown' | 'Scoring' | 'GameOver';
+export type Phase = 'Setup' | 'Mulligan' | 'Awaken' | 'Beginning' | 'Channel' | 'Draw' | 'Action' | 'End' | 'Showdown' | 'Scoring' | 'GameOver';
 export interface CardInstance {
     instanceId: string;
     cardId: string;

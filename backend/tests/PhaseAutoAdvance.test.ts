@@ -30,7 +30,7 @@ function makeAction(
     playerId,
     payload,
     turn: 1,
-    phase: 'FirstMain',
+    phase: 'Action',
     timestamp: Date.now(),
   };
 }
@@ -114,7 +114,7 @@ describe('Phase Auto-Advance (Issue #12)', () => {
     });
 
     it('returns false for non-A-B-C-D phases regardless of stack', () => {
-      const phases: GameState['phase'][] = ['FirstMain', 'Combat', 'SecondMain', 'End', 'Action'];
+      const phases: GameState['phase'][] = ['Action', 'End', 'Showdown', 'Scoring'];
       for (const phase of phases) {
         const state: GameState = {
           ...createGame([P1, P2], ['Alice', 'Bob']),
@@ -161,9 +161,9 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       current = advancePhase(current);
       phasesVisited.push(current.phase);
 
-      // Should now be in Action phase (represented as FirstMain sub-phase)
-      expect(current.phase).toBe('FirstMain');
-      expect(phasesVisited).toEqual(['Awaken', 'Beginning', 'Channel', 'Draw', 'FirstMain']);
+      // Should now be in the real Action phase.
+      expect(current.phase).toBe('Action');
+      expect(phasesVisited).toEqual(['Awaken', 'Beginning', 'Channel', 'Draw', 'Action']);
     });
 
     it('blocks on Beginning phase when start-of-turn effect is on the stack', () => {

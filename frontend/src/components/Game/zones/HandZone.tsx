@@ -21,7 +21,7 @@ export function HandZone({ playerId, playerName, allCards, cardDefs, isOpponent,
     c => c.ownerId === playerId && c.location === 'hand'
   );
 
-  const playablePhases: Phase[] = ['FirstMain', 'SecondMain', 'Combat', 'Showdown'];
+  const playablePhases: Phase[] = ['Action', 'Showdown'];
 
   return (
     <div style={styles.cards}>
