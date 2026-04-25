@@ -72,10 +72,23 @@ export function CardArtView({
 
   const hidden = isOpponent && card.owner_hidden;
   const def = cardDef;
+  const isExhaustedUnitOrGear = card.exhausted && (def?.type === 'Unit' || def?.type === 'Gear');
 
   const base = landscape ? landscapeSizeMap[size] : portraitSizeMap[size];
   const aspect = landscape ? BF_ASPECT : CARD_ASPECT;
   const dims = maxHeight ? { w: Math.round(maxHeight * aspect), h: maxHeight } : base;
+  const reservedDims = isExhaustedUnitOrGear ? { w: dims.h, h: dims.w } : dims;
+
+  const wrapperStyle: React.CSSProperties = {
+    width: reservedDims.w,
+    height: reservedDims.h,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    overflow: 'visible',
+    position: 'relative',
+  };
 
   const imgStyle: React.CSSProperties = {
     width: dims.w,
@@ -97,7 +110,8 @@ export function CardArtView({
     boxShadow: hovering
       ? '0 8px 24px rgba(0,0,0,0.5)'
       : '0 1px 4px rgba(0,0,0,0.3)',
-    transform: hovering ? 'scale(1.06)' : 'scale(1)',
+    transform: `${isExhaustedUnitOrGear ? 'rotate(90deg)' : 'rotate(0deg)'} ${hovering ? 'scale(1.06)' : 'scale(1)'}`,
+    transformOrigin: 'center',
   };
 
   const handleMouseEnter = () => {
@@ -131,6 +145,7 @@ export function CardArtView({
 
   if (hidden) {
     return (
+      <div style={wrapperStyle}>
       <div
         ref={ref}
         style={imgStyle}
@@ -145,11 +160,13 @@ export function CardArtView({
           <span style={mightText}>?</span>
         </div>
       </div>
+      </div>
     );
   }
 
   return (
     <>
+      <div style={wrapperStyle}>
       <div
         ref={ref}
         style={imgStyle}
@@ -158,6 +175,7 @@ export function CardArtView({
         onMouseLeave={handleMouseLeave}
         title={def?.name ?? card.cardId}
       />
+      </div>
       {hovering && enlargePos && def?.imageUrl && ReactDOM.createPortal(
         <div
           style={{
