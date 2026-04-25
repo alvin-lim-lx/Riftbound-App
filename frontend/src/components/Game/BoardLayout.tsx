@@ -1051,7 +1051,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
           cards={handCards}
           cardDefs={cardDefs}
           onCardClick={onCardClick}
-          canInteract={myTurn && (phase === 'FirstMain' || phase === 'SecondMain')}
+          canInteract={myTurn && phase === 'Action'}
           maxCardHeight={handMaxH}
         />
       )}
@@ -1634,7 +1634,7 @@ export function BoardLayout() {
       playerId,
       payload: actionPayload,
       turn: gameState?.turn ?? 0,
-      phase: gameState?.phase ?? 'FirstMain',
+      phase: gameState?.phase ?? 'Action',
       timestamp: Date.now(),
     };
     gameService.submitAction(action);

@@ -20,7 +20,7 @@ interface Props {
 export function HandPanel({ playerId, allCards, cardDefs, myTurn, phase, mana, onPlayCard, onPlaySpell, onSelectCard }: Props) {
   const handCards = Object.values(allCards).filter(c => c.location === 'hand' && c.ownerId === playerId);
 
-  const playablePhases: Phase[] = ['FirstMain', 'SecondMain', 'Combat', 'Showdown'];
+  const playablePhases: Phase[] = ['Action', 'Showdown'];
 
   return (
     <div style={styles.container}>

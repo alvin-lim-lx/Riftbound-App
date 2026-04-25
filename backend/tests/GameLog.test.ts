@@ -22,7 +22,7 @@ function makeAction(
     playerId,
     payload,
     turn: 1,
-    phase: 'FirstMain',
+    phase: 'Action',
     timestamp: Date.now(),
   };
 }
@@ -91,7 +91,7 @@ describe('GameLog', () => {
       const unitDef = state.cardDefinitions[state.allCards[nextUnitId!].cardId];
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
       };
       addReadyRunes(playState, P1, (unitDef.cost?.rune ?? 0) + 5);
@@ -121,7 +121,7 @@ describe('GameLog', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
         players: {
           ...state.players,
@@ -161,7 +161,7 @@ describe('GameLog', () => {
 
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
         players: {
           ...state.players,
@@ -191,7 +191,7 @@ describe('GameLog', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
       };
 
@@ -213,7 +213,7 @@ describe('GameLog', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
         players: {
           ...state.players,
@@ -245,7 +245,7 @@ describe('GameLog', () => {
 
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
         players: {
           ...state.players,
@@ -271,7 +271,7 @@ describe('GameLog', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
       };
 

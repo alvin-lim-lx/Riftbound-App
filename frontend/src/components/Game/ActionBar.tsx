@@ -12,7 +12,7 @@ interface Props {
 }
 
 export function ActionBar({ myTurn, phase, onPass }: Props) {
-  const showPass = myTurn && ['FirstMain', 'SecondMain'].includes(phase);
+  const showPass = myTurn && phase === 'Action';
   const prompt = getTurnPrompt(phase, myTurn);
 
   return (

@@ -429,21 +429,6 @@ export function canAutoAdvancePhase(state: GameState): boolean {
 }
 
 export function advancePhase(state: GameState): GameState {
-  // Handle Action sub-phases
-  if (state.phase === 'FirstMain') {
-    const next = enterPhase(state, 'Combat');
-    return withPhaseLog(next, 'FirstMain', 'Combat');
-  }
-  if (state.phase === 'Combat') {
-    const next = enterPhase(state, 'SecondMain');
-    return withPhaseLog(next, 'Combat', 'SecondMain');
-  }
-  if (state.phase === 'SecondMain') {
-    // End of action phase — advance to End
-    const next = enterPhase(state, 'End');
-    return withPhaseLog(next, 'SecondMain', 'End');
-  }
-
   const currentIdx = PHASE_ORDER.indexOf(state.phase);
   if (currentIdx === -1) return state;
 
@@ -509,12 +494,6 @@ export function enterPhase(state: GameState, phase: Phase): GameState {
     case 'Draw':
       return executeDrawPhase(newState);
     case 'Action':
-      // Action is a parent phase — enter FirstMain sub-phase
-      return enterPhase(newState, 'FirstMain' as Phase);
-    case 'FirstMain':
-    case 'Combat':
-    case 'SecondMain':
-      // Sub-phases of Action — no special entry behavior
       return newState;
     case 'End':
       return executeEndPhase(newState);
@@ -907,8 +886,8 @@ function handlePlayUnit(
   newCard.owner_hidden = hidden;
   newBf.units.push(cardInstanceId);
 
-  // Ambush check — if card has Ambush, it can be played during showdown
-  // For now, units played in FirstMain enter ready if no Accelerate
+  // Ambush check — if card has Ambush, it can be played during showdown.
+  // For now, units played during Action enter ready if no Accelerate.
   const hasAccelerate = def.keywords.includes('Accelerate');
   if (accelerate && hasAccelerate) {
     newCard.ready = true;
@@ -1563,8 +1542,8 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
     actions.push(makeAction('Mulligan', playerId, { keepIds: [...player.hand] }));
   }
 
-  // Pass is legal in Action sub-phases (FirstMain, Combat, SecondMain) and when in Action parent
-  if (['FirstMain', 'Combat', 'SecondMain'].includes(state.phase) || state.phase === 'Action') {
+  // Pass is legal during the Action phase.
+  if (state.phase === 'Action') {
     actions.push(makeAction('Pass', playerId, {}));
   }
 
@@ -1647,7 +1626,7 @@ function makeAction(type: ActionType, playerId: string, payload: Record<string, 
     playerId,
     payload,
     turn: 0,
-    phase: 'FirstMain',
+    phase: 'Action',
     timestamp: Date.now(),
   };
 }
