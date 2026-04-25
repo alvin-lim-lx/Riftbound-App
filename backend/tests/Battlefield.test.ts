@@ -1,6 +1,5 @@
 /**
- * Battlefield Unit Tests — Issue #1 fix verification
- * Tests that all 3 battlefields are created and visible on the game board.
+ * Battlefield setup tests.
  */
 
 import { createGame } from '../src/engine/GameEngine';
@@ -8,37 +7,34 @@ import { createGame } from '../src/engine/GameEngine';
 const P1 = 'player_1';
 const P2 = 'player_2';
 
-describe('Battlefield — Issue #1: Missing battlefield on game board', () => {
+describe('Battlefield setup', () => {
   describe('createGame with deck config (AI/human games)', () => {
-    it('creates all 3 battlefields when deck config provides battlefieldIds', () => {
+    it('creates one Bo1 battlefield from each player deck', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: {
             legendId: 'unl-l01',
             chosenChampionCardId: 'unl-c01',
             cardIds: [],
-            battlefieldIds: ['Baron_Pit', 'Brush', 'The_Grid'],
+            battlefieldIds: ['Baron_Pit'],
           },
           [P2]: {
             legendId: 'unl-l01',
             chosenChampionCardId: 'unl-c01',
             cardIds: [],
-            battlefieldIds: ['Baron_Pit', 'Brush', 'The_Grid'],
+            battlefieldIds: ['Brush'],
           },
         },
       });
 
-      // All 3 battlefields must be present
-      expect(state.battlefields.length).toBe(3);
+      expect(state.battlefields.length).toBe(2);
 
-      // Each battlefield must have a unique id
       const bfIds = state.battlefields.map(bf => bf.id);
-      expect(new Set(bfIds).size).toBe(3);
+      expect(new Set(bfIds).size).toBe(2);
       expect(bfIds).toContain('bf_0');
       expect(bfIds).toContain('bf_1');
-      expect(bfIds).toContain('bf_2');
+      expect(state.battlefields.map(bf => bf.cardId)).toEqual(['unl-t01', 'unl-t03']);
 
-      // Each battlefield must have a name and cardId
       for (const bf of state.battlefields) {
         expect(bf.name).toBeTruthy();
         expect(bf.cardId).toBeTruthy();
@@ -47,30 +43,34 @@ describe('Battlefield — Issue #1: Missing battlefield on game board', () => {
       }
     });
 
-    it('creates all 3 battlefields when deck provides fewer than 3 (pads with defaults)', () => {
+    it('chooses Bo1 battlefields from each player candidate list', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
         playerDecks: {
           [P1]: {
             legendId: 'unl-l01',
             chosenChampionCardId: 'unl-c01',
             cardIds: [],
-            battlefieldIds: ['Baron_Pit'], // only 1 BF provided
+            battlefieldIds: ['Baron_Pit', 'Brush', 'The_Grid'],
           },
           [P2]: {
             legendId: 'unl-l01',
             chosenChampionCardId: 'unl-c01',
             cardIds: [],
-            battlefieldIds: [],
+            battlefieldIds: ['Baron_Pit', 'Brush', 'The_Grid'],
           },
         },
       });
 
-      // Must still produce 3 battlefields (padded with defaults)
-      expect(state.battlefields.length).toBe(3);
+      expect(state.battlefields.length).toBe(2);
+      const allowedCardIds = new Set(['unl-t01', 'unl-t03', 'sfd-214-221']);
+      for (const bf of state.battlefields) {
+        expect(allowedCardIds.has(bf.cardId)).toBe(true);
+      }
     });
 
-    it('battlefields are present in game state for UI rendering', () => {
+    it('can still create all 3 battlefields for Bo3-style setup', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob'], {
+        matchFormat: 'bo3',
         playerDecks: {
           [P1]: {
             legendId: 'unl-l01',
@@ -87,10 +87,7 @@ describe('Battlefield — Issue #1: Missing battlefield on game board', () => {
         },
       });
 
-      // QA test GE-1.4: Game has 3 battlefields
       expect(state.battlefields.length).toBe(3);
-
-      // Each battlefield card must have valid cardId pointing to a card definition
       const cardIds = state.battlefields.map(bf => bf.cardId);
       for (const cardId of cardIds) {
         expect(cardId).toBeTruthy();
@@ -99,16 +96,14 @@ describe('Battlefield — Issue #1: Missing battlefield on game board', () => {
   });
 
   describe('createGame without deck config (fallback defaults)', () => {
-    it('creates 3 battlefields using default battlefield names', () => {
+    it('creates two Bo1 battlefields using default candidates', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
 
-      // GE-1.4: Game has 3 battlefields
-      expect(state.battlefields.length).toBe(3);
+      expect(state.battlefields.length).toBe(2);
 
       const bfIds = state.battlefields.map(bf => bf.id);
       expect(bfIds).toContain('bf_0');
       expect(bfIds).toContain('bf_1');
-      expect(bfIds).toContain('bf_2');
     });
   });
 });

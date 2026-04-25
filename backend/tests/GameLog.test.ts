@@ -6,7 +6,7 @@
  */
 
 import { createGame, executeAction, deepClone } from '../src/engine/GameEngine';
-import type { GameAction } from '../../shared/src/types';
+import type { GameAction, GameState } from '../../shared/src/types';
 
 const P1 = 'player_1';
 const P2 = 'player_2';
@@ -27,6 +27,30 @@ function makeAction(
   };
 }
 
+function addReadyRunes(state: GameState, playerId: string, count: number): void {
+  for (let i = 0; i < count; i++) {
+    const runeId = state.players[playerId].runeDeck.shift();
+    if (!runeId) return;
+    state.allCards[runeId].location = 'rune';
+    state.allCards[runeId].exhausted = false;
+  }
+}
+
+function ensureHandCard(
+  state: GameState,
+  playerId: string,
+  predicate: (id: string) => boolean
+): string | undefined {
+  const existing = state.players[playerId].hand.find(predicate);
+  if (existing) return existing;
+  const deckCard = state.players[playerId].deck.find(predicate);
+  if (!deckCard) return undefined;
+  state.players[playerId].deck = state.players[playerId].deck.filter(id => id !== deckCard);
+  state.players[playerId].hand.push(deckCard);
+  state.allCards[deckCard].location = 'hand';
+  return deckCard;
+}
+
 describe('GameLog', () => {
   describe('actionLog exists and has GameStart entry', () => {
     it('createGame initializes actionLog with GameStart entry', () => {
@@ -45,7 +69,7 @@ describe('GameLog', () => {
       const bfId = state.battlefields[0].id;
 
       // Find a unit in hand
-      const unitId = state.players[P1].hand.find(id =>
+      const unitId = ensureHandCard(state, P1, id =>
         state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
       );
       expect(unitId).toBeDefined();
@@ -57,23 +81,20 @@ describe('GameLog', () => {
       state.players[P1].hand = state.players[P1].hand.filter(id => id !== unitId);
 
       // Find another unit to play
-      const nextUnitId = state.players[P1].hand.find(id =>
-        state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
-      );
+      const nextUnitId = ensureHandCard(state, P1, id => {
+        const def = state.cardDefinitions[state.allCards[id].cardId];
+        return def.type === 'Unit' && (def.cost?.power ?? 0) === 0;
+      });
       expect(nextUnitId).toBeDefined();
 
       // Set up state for action phase with enough mana
       const unitDef = state.cardDefinitions[state.allCards[nextUnitId!].cardId];
-      const manaNeeded = unitDef.cost?.rune ?? 0;
       const playState: typeof state = {
         ...state,
         phase: 'FirstMain' as const,
         activePlayerId: P1,
-        players: {
-          ...state.players,
-          [P1]: { ...state.players[P1], mana: manaNeeded + 5 },
-        },
       };
+      addReadyRunes(playState, P1, (unitDef.cost?.rune ?? 0) + 5);
 
       const action = makeAction('PlayUnit', P1, {
         cardInstanceId: nextUnitId!,

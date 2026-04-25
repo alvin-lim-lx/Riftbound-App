@@ -9,7 +9,7 @@ import {
   getLegalActions,
   deepClone,
 } from '../src/engine/GameEngine';
-import type { GameAction, SystemLogEntry, GameLogEntry } from '../shared/src/types';
+import type { GameAction, GameState, SystemLogEntry, GameLogEntry } from '../shared/src/types';
 
 const P1 = 'player_1';
 const P2 = 'player_2';
@@ -28,6 +28,30 @@ function makeAction(
     phase: 'FirstMain',
     timestamp: Date.now(),
   };
+}
+
+function addReadyRunes(state: GameState, playerId: string, count: number): void {
+  for (let i = 0; i < count; i++) {
+    const runeId = state.players[playerId].runeDeck.shift();
+    if (!runeId) return;
+    state.allCards[runeId].location = 'rune';
+    state.allCards[runeId].exhausted = false;
+  }
+}
+
+function ensureHandCard(
+  state: GameState,
+  playerId: string,
+  predicate: (id: string) => boolean
+): string | undefined {
+  const existing = state.players[playerId].hand.find(predicate);
+  if (existing) return existing;
+  const deckCard = state.players[playerId].deck.find(predicate);
+  if (!deckCard) return undefined;
+  state.players[playerId].deck = state.players[playerId].deck.filter(id => id !== deckCard);
+  state.players[playerId].hand.push(deckCard);
+  state.allCards[deckCard].location = 'hand';
+  return deckCard;
 }
 
 describe('GameEngine', () => {
@@ -52,6 +76,48 @@ describe('GameEngine', () => {
       expect(state.players[P1].runeDeck.length).toBe(12);
       expect(state.players[P2].runeDeck.length).toBe(12);
     });
+
+    it('shuffles rune decks during setup', () => {
+      let randomCalls = 0;
+      const randomSpy = jest.spyOn(Math, 'random').mockImplementation(() => {
+        randomCalls++;
+        if (randomCalls >= 9 && randomCalls <= 13) return 0;
+        return ((randomCalls % 90) + 1) / 100;
+      });
+      try {
+        const runeIds = [
+          'rune_fury_1',
+          'rune_calm_1',
+          'rune_mind_1',
+          'rune_body_1',
+          'rune_chaos_1',
+          'rune_order_1',
+        ];
+        const state = createGame([P1, P2], ['Alice', 'Bob'], {
+          playerDecks: {
+            [P1]: {
+              legendId: 'ogn-247-298',
+              chosenChampionCardId: 'ogn-011-298',
+              cardIds: [],
+              runeIds,
+            },
+            [P2]: {
+              legendId: 'ogn-247-298',
+              chosenChampionCardId: 'ogn-011-298',
+              cardIds: [],
+              runeIds,
+            },
+          },
+        });
+
+        const p1RuneCards = state.players[P1].runeDeck.map(id => state.allCards[id].cardId);
+        expect(p1RuneCards).toHaveLength(runeIds.length);
+        expect([...p1RuneCards].sort()).toEqual([...runeIds].sort());
+        expect(p1RuneCards).not.toEqual(runeIds);
+      } finally {
+        randomSpy.mockRestore();
+      }
+    });
   });
 
   describe('Phase Transitions', () => {
@@ -60,6 +126,62 @@ describe('GameEngine', () => {
       const result = executeAction(state, makeAction('Pass', P2));
       expect(result.success).toBe(false);
       expect(result.error).toBe('Not your turn.');
+    });
+  });
+
+  describe('Mulligan', () => {
+    it('rejects setting aside more than 2 cards', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      const activePlayer = state.activePlayerId;
+      const keepIds = state.players[activePlayer].hand.slice(0, 1);
+
+      const result = executeAction(state, makeAction('Mulligan', activePlayer, { keepIds }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Mulligan: may set aside at most 2 cards.');
+    });
+
+    it('draws replacements before putting set-aside cards on the bottom of the deck', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      const activePlayer = state.activePlayerId;
+      const originalHand = [...state.players[activePlayer].hand];
+      const originalDeck = [...state.players[activePlayer].deck];
+      const keepIds = originalHand.slice(0, 2);
+      const setAsideIds = originalHand.slice(2);
+      const replacementIds = originalDeck.slice(0, setAsideIds.length);
+
+      const result = executeAction(state, makeAction('Mulligan', activePlayer, { keepIds }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState).toBeDefined();
+      const player = result.newState!.players[activePlayer];
+      expect(player.hand).toEqual([...keepIds, ...replacementIds]);
+      expect(player.deck.slice(-setAsideIds.length)).toEqual(setAsideIds);
+      for (const id of setAsideIds) {
+        expect(result.newState!.allCards[id].location).toBe('deck');
+      }
+    });
+
+    it('keeps the original first player as the first Awaken player after both mulligans', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      state.activePlayerId = P1;
+      state.players[P1].hasGoneFirst = true;
+      state.players[P2].hasGoneFirst = false;
+
+      const p1Result = executeAction(state, makeAction('Mulligan', P1, {
+        keepIds: [...state.players[P1].hand],
+      }));
+      expect(p1Result.success).toBe(true);
+      expect(p1Result.newState!.activePlayerId).toBe(P2);
+
+      const p2Result = executeAction(p1Result.newState!, makeAction('Mulligan', P2, {
+        keepIds: [...p1Result.newState!.players[P2].hand],
+      }));
+
+      expect(p2Result.success).toBe(true);
+      expect(p2Result.newState!.turn).toBe(1);
+      expect(p2Result.newState!.phase).toBe('Awaken');
+      expect(p2Result.newState!.activePlayerId).toBe(P1);
     });
   });
 
@@ -81,7 +203,7 @@ describe('GameEngine', () => {
 
     it('rejects playing without a valid battlefield', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
-      const unitId = state.players[P1].hand.find(id =>
+      const unitId = ensureHandCard(state, P1, id =>
         state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
       );
       expect(unitId).toBeDefined();
@@ -104,10 +226,12 @@ describe('GameEngine', () => {
     it('successfully plays a unit when player has enough mana and units on BF', () => {
       // Use deepClone so we can mutate freely without affecting createGame
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'FirstMain';
       const bfId = state.battlefields[0].id;
 
       // Move a unit from hand to battlefield first (simulates previously played unit)
-      const unitId = state.players[P1].hand.find(id =>
+      const unitId = ensureHandCard(state, P1, id =>
         state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
       );
       expect(unitId).toBeDefined();
@@ -119,9 +243,10 @@ describe('GameEngine', () => {
       state.players[P1].hand = state.players[P1].hand.filter(id => id !== unitId);
 
       // Find another unit in hand to play
-      const nextUnitId = state.players[P1].hand.find(id =>
-        state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
-      );
+      const nextUnitId = ensureHandCard(state, P1, id => {
+        const def = state.cardDefinitions[state.allCards[id].cardId];
+        return def.type === 'Unit' && (def.cost?.power ?? 0) === 0;
+      });
       expect(nextUnitId).toBeDefined();
 
       const nextDef = state.cardDefinitions[state.allCards[nextUnitId!].cardId];
@@ -129,11 +254,8 @@ describe('GameEngine', () => {
         ...state,
         phase: 'FirstMain' as const,
         activePlayerId: P1,
-        players: {
-          ...state.players,
-          [P1]: { ...state.players[P1], mana: (nextDef.cost?.rune ?? 0) + 5 },
-        },
       };
+      addReadyRunes(playState, P1, (nextDef.cost?.rune ?? 0) + 5);
 
       const result = executeAction(playState, makeAction('PlayUnit', P1, {
         cardInstanceId: nextUnitId!,
@@ -152,6 +274,8 @@ describe('GameEngine', () => {
   describe('MoveUnit (Ganking)', () => {
     it('rejects moving a unit without Ganking keyword', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'FirstMain';
       const bfId = state.battlefields[0].id;
 
       const unitId = state.players[P1].hand.find(id => {
@@ -244,11 +368,8 @@ describe('GameEngine', () => {
         ...state,
         phase: 'FirstMain' as const,
         activePlayerId: P1,
-        players: {
-          ...state.players,
-          [P1]: { ...state.players[P1], mana: 10 },
-        },
       };
+      addReadyRunes(highManaState, P1, 10);
 
       const actions = getLegalActions(highManaState, P1);
       expect(actions.some(a => a.type === 'PlayUnit')).toBe(true);
@@ -335,10 +456,11 @@ describe('GameEngine', () => {
     });
   });
 
-  describe('Concede', () => {
-    it('declares opponent as winner on concede', () => {
-      const state = createGame([P1, P2], ['Alice', 'Bob']);
-      const result = executeAction(state, makeAction('Concede', P1));
+    describe('Concede', () => {
+      it('declares opponent as winner on concede', () => {
+        const state = createGame([P1, P2], ['Alice', 'Bob']);
+        state.activePlayerId = P1;
+        const result = executeAction(state, makeAction('Concede', P1));
       expect(result.success).toBe(true);
       if (result.newState) {
         expect(result.newState.phase).toBe('GameOver');

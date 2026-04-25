@@ -24,6 +24,8 @@ export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(instanceId)) {
+        const replaceCount = hand.length - next.size;
+        if (replaceCount >= 2) return next;
         next.delete(instanceId);
       } else {
         next.add(instanceId);
@@ -70,6 +72,7 @@ export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
 
   const keepCount = selected.size;
   const replaceCount = hand.length - keepCount;
+  const canSubmit = isMyTurn && !isSubmitting && replaceCount <= 2;
 
   return (
     <div style={styles.overlay}>
@@ -77,7 +80,7 @@ export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
         <div style={styles.header}>
           <div>
             <h2 style={styles.title}>Mulligan</h2>
-            <p style={styles.subtitle}>Choose the cards to keep. Unselected cards are replaced, then you draw back up to 4.</p>
+            <p style={styles.subtitle}>Choose the cards to keep. You may replace up to 2 cards, then draw replacements.</p>
           </div>
           <div style={styles.summary}>
             <span style={styles.keepCount}>{keepCount} keep</span>
@@ -101,7 +104,7 @@ export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
                 }}
                 onClick={() => isMyTurn && !isSubmitting && toggleCard(card.instanceId)}
                 disabled={!isMyTurn || isSubmitting}
-                title={isSelected ? 'Click to replace this card' : 'Click to keep this card'}
+                title={isSelected && replaceCount >= 2 ? 'You can replace up to 2 cards' : isSelected ? 'Click to replace this card' : 'Click to keep this card'}
               >
                 <CardArtView
                   card={card}
@@ -129,11 +132,11 @@ export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
           <button
             style={{
               ...styles.confirmBtn,
-              opacity: (!isMyTurn || isSubmitting) ? 0.55 : 1,
-              cursor: (!isMyTurn || isSubmitting) ? 'not-allowed' : 'pointer',
+              opacity: canSubmit ? 1 : 0.55,
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
             }}
             onClick={handleConfirm}
-            disabled={!isMyTurn || isSubmitting}
+            disabled={!canSubmit}
           >
             {isSubmitting ? 'Submitting...' : replaceCount > 0 ? `Replace ${replaceCount} and Start` : 'Keep All and Start'}
           </button>
