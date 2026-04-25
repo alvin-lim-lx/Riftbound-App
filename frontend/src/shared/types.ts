@@ -5,9 +5,11 @@
 
 // --- Card Types ---
 
-export type CardType = 'Unit' | 'Spell' | 'Gear' | 'Battlefield' | 'Legend' | 'Rune' | 'Champion';
+export type CardType = 'Unit' | 'Spell' | 'Gear' | 'Battlefield' | 'Legend' | 'Rune' | 'Champion' | 'Signature';
 
-export type Domain = 'Demacia' | 'Noxus' | 'Ionia' | 'Shurima' | 'Freljord' | 'Bilgewater' | 'Piltover' | 'Zaun' | 'Shadow Isles' | 'Void' | 'Ixtal' | 'Bandle';
+export type Domain =
+  | 'Chaos' | 'Calm' | 'Fury' | 'Mind' | 'Body' | 'Order' | 'Colorless'
+  | 'Demacia' | 'Noxus' | 'Ionia' | 'Shurima' | 'Freljord' | 'Bilgewater' | 'Piltover' | 'Zaun' | 'Shadow Isles' | 'Void' | 'Ixtal' | 'Bandle';
 
 export type Keyword =
   | 'Ambush'
@@ -27,7 +29,17 @@ export type Keyword =
   | 'Repeat'
   | 'Action'
   | 'Reaction'
-  | 'Equip';
+  | 'Equip'
+  | 'Recall'
+  | 'Shield'
+  | 'Buff'
+  | 'Stun'
+  | 'Banish'
+  | 'Recycle'
+  | 'Tank'
+  | 'Mighty'
+  | 'Weaponmaster'
+  | 'Predict';
 
 export interface CardCost {
   rune: number;
@@ -84,7 +96,7 @@ export interface CardInstance {
   instanceId: string;
   cardId: string;
   ownerId: string;
-  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'hidden' | 'equipment';
+  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'rune' | 'hidden' | 'equipment' | 'legend' | 'championZone';
   battlefieldId?: string;
   ready: boolean;
   exhausted: boolean;
@@ -122,6 +134,7 @@ export interface PlayerState {
   mana: number;
   maxMana: number;
   charges: number;
+  floatingEnergy: number;
 }
 
 export interface GameState {
@@ -174,17 +187,20 @@ export interface PlayUnitPayload {
   battlefieldId: string;
   hidden: boolean;
   accelerate: boolean;
+  powerRuneDomains?: Domain[];
 }
 
 export interface PlaySpellPayload {
   cardInstanceId: string;
   targetId?: string;
   targetBattlefieldId?: string;
+  powerRuneDomains?: Domain[];
 }
 
 export interface PlayGearPayload {
   cardInstanceId: string;
   targetUnitId: string;
+  powerRuneDomains?: Domain[];
 }
 
 export interface MoveUnitPayload {

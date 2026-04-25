@@ -32,9 +32,15 @@ import { GameLog } from './GameLog';
 import { ChatBox } from './ChatBox';
 import { MulliganOverlay } from './MulliganOverlay';
 import { CardArtView } from './CardArtView';
-import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase } from '../../shared/types';
+import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase, Domain } from '../../shared/types';
 import { CARDS } from '../../shared/cards';
 import { randomId } from '../../utils/helpers';
+import bodyRuneIcon from '../../assets/runes/Body Rune.png';
+import calmRuneIcon from '../../assets/runes/Calm Rune.png';
+import chaosRuneIcon from '../../assets/runes/Chaos Rune.png';
+import furyRuneIcon from '../../assets/runes/Fury Rune.png';
+import mindRuneIcon from '../../assets/runes/Mind Rune.png';
+import orderRuneIcon from '../../assets/runes/Order Rune.png';
 
 const CARD_HEIGHTS = {
   stackMin: 64,
@@ -93,6 +99,19 @@ const DOMAIN_COLORS: Record<string, string> = {
 function runeColor(def: CardDefinition | undefined): string {
   if (!def?.domains?.length) return '#9ca3af';
   return DOMAIN_COLORS[def.domains[0]] ?? '#9ca3af';
+}
+
+const RUNE_ICONS: Partial<Record<Domain, string>> = {
+  Body: bodyRuneIcon,
+  Calm: calmRuneIcon,
+  Chaos: chaosRuneIcon,
+  Fury: furyRuneIcon,
+  Mind: mindRuneIcon,
+  Order: orderRuneIcon,
+};
+
+function runeDomain(def: CardDefinition | undefined): Domain | undefined {
+  return def?.domains?.find(domain => RUNE_ICONS[domain]);
 }
 
 // ─────────────────────────────────────────
@@ -269,6 +288,8 @@ function ActiveRunesDisplay({ runeIds, allCards, cardDefs, isPlayer }: ActiveRun
     <div style={runeStyles.container}>
       {runes.map(rune => {
         const def = cardDefs[rune.cardId];
+        const domain = runeDomain(def);
+        const icon = domain ? RUNE_ICONS[domain] : undefined;
         const color = runeColor(def);
         const exhausted = rune.exhausted;
         return (
@@ -283,7 +304,18 @@ function ActiveRunesDisplay({ runeIds, allCards, cardDefs, isPlayer }: ActiveRun
             }}
             title={`${def?.name ?? 'Rune'} ${exhausted ? '(exhausted)' : '(active)'}`}
           >
-            ◆
+            {icon ? (
+              <img
+                src={icon}
+                alt={def?.name ?? 'Rune'}
+                style={{
+                  ...runeStyles.icon,
+                  filter: exhausted ? 'grayscale(1) brightness(0.55)' : 'none',
+                }}
+              />
+            ) : (
+              <span>◆</span>
+            )}
           </div>
         );
       })}
@@ -299,8 +331,8 @@ const runeStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
   },
   rune: {
-    width: '20px',
-    height: '20px',
+    width: '24px',
+    height: '24px',
     borderRadius: '50%',
     display: 'flex',
     alignItems: 'center',
@@ -309,6 +341,15 @@ const runeStyles: Record<string, React.CSSProperties> = {
     fontWeight: 900,
     flexShrink: 0,
     transition: 'all 0.2s ease',
+    overflow: 'hidden',
+    backgroundClip: 'padding-box',
+  },
+  icon: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    borderRadius: '50%',
+    display: 'block',
   },
 };
 
@@ -384,6 +425,11 @@ function PlayerInfoBar({ player, isPlayer, allCards, cardDefs }: PlayerInfoBarPr
           cardDefs={cardDefs}
           isPlayer={isYou}
         />
+        {(player.floatingEnergy ?? 0) > 0 && (
+          <span style={infoBarStyles.floatingEnergy} title="Floating energy clears at end of turn">
+            +{player.floatingEnergy}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -484,6 +530,20 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     color: '#666',
     fontWeight: 700,
     flexShrink: 0,
+  },
+  floatingEnergy: {
+    minWidth: '20px',
+    height: '20px',
+    padding: '0 5px',
+    borderRadius: '10px',
+    border: '1px solid rgba(96,165,250,0.55)',
+    background: 'rgba(96,165,250,0.14)',
+    color: '#bfdbfe',
+    fontSize: '11px',
+    fontWeight: 800,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 };
 
@@ -1542,18 +1602,43 @@ export function BoardLayout() {
     };
   }, [isDragging]);
 
+  const withPowerRuneDomains = useCallback((actionType: string, payload: Record<string, unknown>) => {
+    if (!['PlayUnit', 'PlaySpell', 'PlayGear'].includes(actionType)) return payload;
+    const cardInstanceId = payload.cardInstanceId as string | undefined;
+    const card = cardInstanceId ? gameState?.allCards[cardInstanceId] : undefined;
+    const def = card ? gameState?.cardDefinitions[card.cardId] : undefined;
+    const domains = (def?.domains ?? []).filter(domain => RUNE_ICONS[domain]);
+    const powerCost = def?.cost?.power ?? 0;
+    if (!def || powerCost <= 0 || domains.length !== 2 || payload.powerRuneDomains) return payload;
+
+    const selected: Domain[] = [];
+    for (let i = 0; i < powerCost; i++) {
+      const response = window.prompt(
+        `Choose power rune ${i + 1}/${powerCost} for ${def.name}: ${domains[0]} or ${domains[1]}`,
+        domains[i % 2]
+      );
+      if (!response) return null;
+      const match = domains.find(domain => domain.toLowerCase() === response.trim().toLowerCase());
+      if (!match) return null;
+      selected.push(match);
+    }
+    return { ...payload, powerRuneDomains: selected };
+  }, [gameState]);
+
   const handleAction = useCallback((actionType: string, payload: Record<string, unknown> = {}) => {
+    const actionPayload = withPowerRuneDomains(actionType, payload);
+    if (!actionPayload) return;
     const action: GameAction = {
       id: randomId(),
       type: actionType as GameAction['type'],
       playerId,
-      payload,
+      payload: actionPayload,
       turn: gameState?.turn ?? 0,
       phase: gameState?.phase ?? 'FirstMain',
       timestamp: Date.now(),
     };
     gameService.submitAction(action);
-  }, [playerId, gameState]);
+  }, [playerId, gameState, withPowerRuneDomains]);
 
   const handlePass = useCallback(() => {
     gameService.pass();

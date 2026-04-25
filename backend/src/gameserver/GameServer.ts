@@ -609,6 +609,10 @@ export class GameServer {
           if (sr.newState) game.state = sr.newState;
         }
 
+        if (game.state.phase !== 'GameOver') {
+          autoAdvanceABCDPhases(game);
+        }
+
         this.broadcastGameState(game);
 
         if (game.state.phase === 'GameOver' && game.state.winner) {

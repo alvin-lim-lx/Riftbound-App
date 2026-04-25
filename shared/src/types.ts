@@ -151,6 +151,7 @@ export interface PlayerState {
   mana: number;    // Current rune resource available
   maxMana: number; // Max rune resource this turn
   charges: number;  // Current charge resource
+  floatingEnergy: number; // Temporary generic energy from recycling ready runes
   legend: string | null;        // CardInstance.instanceId of Champion Legend (Legend Zone)
   chosenChampion: string | null; // CardInstance.instanceId of Chosen Champion (Champion Zone)
   hasGoneFirst: boolean;         // Tracks who went first (for first-turn asymmetry)
@@ -227,17 +228,20 @@ export interface PlayUnitPayload {
   battlefieldId: string;
   hidden: boolean;
   accelerate: boolean;
+  powerRuneDomains?: Domain[];
 }
 
 export interface PlaySpellPayload {
   cardInstanceId: string;
   targetId?: string;
   targetBattlefieldId?: string;
+  powerRuneDomains?: Domain[];
 }
 
 export interface PlayGearPayload {
   cardInstanceId: string;
   targetUnitId: string;
+  powerRuneDomains?: Domain[];
 }
 
 export interface MoveUnitPayload {
