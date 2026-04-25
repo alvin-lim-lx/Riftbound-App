@@ -25,7 +25,7 @@ function makeAction(
     playerId,
     payload,
     turn: 1,
-    phase: 'FirstMain',
+    phase: 'Action',
     timestamp: Date.now(),
   };
 }
@@ -122,7 +122,7 @@ describe('GameEngine', () => {
 
   describe('Phase Transitions', () => {
     it('only active player can pass', () => {
-      const state = { ...createGame([P1, P2], ['Alice', 'Bob']), phase: 'FirstMain' as const, activePlayerId: P1 };
+      const state = { ...createGame([P1, P2], ['Alice', 'Bob']), phase: 'Action' as const, activePlayerId: P1 };
       const result = executeAction(state, makeAction('Pass', P2));
       expect(result.success).toBe(false);
       expect(result.error).toBe('Not your turn.');
@@ -189,7 +189,7 @@ describe('GameEngine', () => {
     it('rejects playing a card not in hand', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       // Set up a valid phase and active player for the action
-      state.phase = 'FirstMain';
+      state.phase = 'Action';
       state.activePlayerId = P1;
       const result = executeAction(state, makeAction('PlayUnit', P1, {
         cardInstanceId: 'nonexistent_card',
@@ -227,7 +227,7 @@ describe('GameEngine', () => {
       // Use deepClone so we can mutate freely without affecting createGame
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       state.activePlayerId = P1;
-      state.phase = 'FirstMain';
+      state.phase = 'Action';
       const bfId = state.battlefields[0].id;
 
       // Move a unit from hand to battlefield first (simulates previously played unit)
@@ -252,7 +252,7 @@ describe('GameEngine', () => {
       const nextDef = state.cardDefinitions[state.allCards[nextUnitId!].cardId];
       const playState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
       };
       addReadyRunes(playState, P1, (nextDef.cost?.rune ?? 0) + 5);
@@ -275,7 +275,7 @@ describe('GameEngine', () => {
     it('rejects moving a unit without Ganking keyword', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       state.activePlayerId = P1;
-      state.phase = 'FirstMain';
+      state.phase = 'Action';
       const bfId = state.battlefields[0].id;
 
       const unitId = state.players[P1].hand.find(id => {
@@ -297,7 +297,7 @@ describe('GameEngine', () => {
         toBattlefieldId: state.battlefields[1].id,
       });
       moveAction.turn = 1;
-      moveAction.phase = 'FirstMain';
+      moveAction.phase = 'Action';
 
       const moveResult = executeAction(state, moveAction);
       expect(moveResult.success).toBe(false);
@@ -307,7 +307,7 @@ describe('GameEngine', () => {
 
   describe('Combat / Showdown', () => {
     it('rejects attacking from wrong player', () => {
-      const state = { ...createGame([P1, P2], ['Alice', 'Bob']), phase: 'FirstMain' as const, activePlayerId: P1 };
+      const state = { ...createGame([P1, P2], ['Alice', 'Bob']), phase: 'Action' as const, activePlayerId: P1 };
       const result = executeAction(state, makeAction('Attack', P2, {
         attackerId: 'fake_attacker',
         targetBattlefieldId: state.battlefields[0].id,
@@ -331,8 +331,8 @@ describe('GameEngine', () => {
   });
 
   describe('getLegalActions', () => {
-    it('returns Pass as a legal action in FirstMain', () => {
-      const state = { ...createGame([P1, P2], ['Alice', 'Bob']), phase: 'FirstMain' as const, activePlayerId: P1 };
+    it('returns Pass as a legal action in Action', () => {
+      const state = { ...createGame([P1, P2], ['Alice', 'Bob']), phase: 'Action' as const, activePlayerId: P1 };
       const actions = getLegalActions(state, P1);
       expect(actions.some(a => a.type === 'Pass')).toBe(true);
     });
@@ -366,7 +366,7 @@ describe('GameEngine', () => {
 
       const highManaState: typeof state = {
         ...state,
-        phase: 'FirstMain' as const,
+        phase: 'Action' as const,
         activePlayerId: P1,
       };
       addReadyRunes(highManaState, P1, 10);
@@ -474,8 +474,8 @@ describe('GameEngine', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
       const initialLogSize = state.actionLog.length;
 
-      // Advance to FirstMain phase so we can play a unit
-      const phaseState = { ...state, phase: 'FirstMain' as const, activePlayerId: P1 };
+      // Advance to Action phase so we can play a unit
+      const phaseState = { ...state, phase: 'Action' as const, activePlayerId: P1 };
 
       // Execute a Pass action
       const passAction = makeAction('Pass', P1);
@@ -590,3 +590,4 @@ describe('GameEngine', () => {
     });
   });
 });
+

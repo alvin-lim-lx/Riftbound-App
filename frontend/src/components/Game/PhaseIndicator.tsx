@@ -11,29 +11,27 @@ interface Props {
 }
 
 const PHASE_STEPS: Array<{ id: Phase; label: string }> = [
+  { id: 'Awaken', label: 'Awaken' },
   { id: 'Beginning', label: 'Begin' },
-  { id: 'FirstMain', label: 'Main 1' },
-  { id: 'Combat', label: 'Combat' },
-  { id: 'SecondMain', label: 'Main 2' },
+  { id: 'Channel', label: 'Channel' },
+  { id: 'Draw', label: 'Draw' },
+  { id: 'Action', label: 'Action' },
   { id: 'End', label: 'End' },
 ];
 
 function phaseIndex(phase: Phase): number {
-  if (phase === 'Showdown') return PHASE_STEPS.findIndex(step => step.id === 'Combat');
+  if (phase === 'Showdown') return PHASE_STEPS.findIndex(step => step.id === 'Action');
   return PHASE_STEPS.findIndex(step => step.id === phase);
 }
 
 export function getPhaseLabel(phase: Phase): string {
-  if (phase === 'FirstMain') return 'First Main';
-  if (phase === 'SecondMain') return 'Second Main';
   return phase.replace(/([a-z])([A-Z])/g, '$1 $2');
 }
 
 export function getTurnPrompt(phase: Phase, myTurn: boolean): string {
   if (phase === 'Mulligan') return myTurn ? 'Choose which opening cards to keep.' : 'Waiting for opponent to mulligan.';
-  if (phase === 'FirstMain') return myTurn ? 'Play a unit, use a rune, or pass.' : 'AI is choosing its main action.';
-  if (phase === 'SecondMain') return myTurn ? 'Use your second main action or pass.' : 'AI is resolving its second main action.';
-  if (phase === 'Combat' || phase === 'Showdown') return myTurn ? 'Choose attackers and targets.' : 'AI is resolving combat.';
+  if (phase === 'Action') return myTurn ? 'Play cards, move or attack, use abilities, or pass.' : 'AI is choosing its action.';
+  if (phase === 'Showdown') return myTurn ? 'Resolve the showdown.' : 'AI is resolving the showdown.';
   if (phase === 'GameOver') return 'Game complete.';
   return myTurn ? 'Review the board as the phase advances.' : 'AI is resolving this phase.';
 }
@@ -85,7 +83,7 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     alignItems: 'center',
     gap: '6px',
-    minWidth: '430px',
+    minWidth: '460px',
   },
   headerRow: {
     display: 'flex',
