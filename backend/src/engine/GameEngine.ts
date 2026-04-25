@@ -332,6 +332,7 @@ export function createGame(
     createdAt: Date.now(),
     isPvP,
     effectStack: [],  // empty effect stack at game start
+    showdown: null,   // no active showdown at game start
   };
 }
 
@@ -343,8 +344,12 @@ export function executeAction(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  // Validate it's this player's turn
-  if (action.playerId !== state.activePlayerId) {
+  // In Showdown phase, any player involved (attacker or defender) may act
+  const isShowdownParticipant = state.phase === 'Showdown' && state.showdown &&
+    (action.playerId === state.showdown.attackerOwnerId ||
+     state.showdown.defenderIds.some(id => state.allCards[id]?.ownerId === action.playerId));
+
+  if (!isShowdownParticipant && action.playerId !== state.activePlayerId) {
     return { success: false, error: 'Not your turn.', action };
   }
 
@@ -419,6 +424,23 @@ export function executeAction(
       const result = handleMulligan(state, action);
       if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
+    }
+    case 'Focus': {
+      const result = handleFocus(state, action);
+      if (result.success && result.newState) result.newState.actionLog.push(action);
+      return result;
+    }
+    case 'Reaction': {
+      const result = handleReaction(state, action);
+      if (result.success && result.newState) result.newState.actionLog.push(action);
+      return result;
+    }
+    case 'CloseReactionWindow': {
+      const newState = closeReactionWindow(state);
+      // Automatically resolve combat after window closes
+      const combatResult = resolveCombat(newState);
+      if (combatResult.success && combatResult.newState) combatResult.newState.actionLog.push(action);
+      return combatResult;
     }
     default:
       return { success: false, error: `Unknown action type: ${action.type}`, action };
@@ -696,6 +718,243 @@ export function checkWinCondition(state: GameState): string | null {
 }
 
 // ============================================================
+// Showdown & Combat
+// ============================================================
+
+export function enterShowdown(
+  state: GameState,
+  attackerId: string,
+  targetBattlefieldId: string
+): GameState {
+  const newState = deepClone(state);
+  const bf = newState.battlefields.find(b => b.id === targetBattlefieldId)!;
+  const attacker = state.allCards[attackerId];
+  const attackerOwner = attacker.ownerId;
+
+  // Gather defender unitIds at this BF (opponents only)
+  const defenderIds = bf.units.filter(id =>
+    newState.allCards[id].ownerId !== attackerOwner
+  );
+
+  // Determine who gets Focus:
+  // - If the BF is empty → attacker gets Focus immediately (Rule 508.1)
+  // - If the BF is contested → Focus is unclaimed; players must play Reaction cards
+  const bfIsEmpty = defenderIds.length === 0;
+  const focusPlayerId = bfIsEmpty ? attackerOwner : null;
+
+  newState.phase = 'Showdown';
+  newState.showdown = {
+    battlefieldId: targetBattlefieldId,
+    attackerId,
+    attackerOwnerId: attackerOwner,
+    focusPlayerId,
+    defenderIds,
+    reactionWindowOpen: true,
+    combatResolved: false,
+    winner: null,
+    excessDamage: 0,
+  };
+
+  newState.actionLog.push(makeLog(newState, attackerOwner, 'Showdown',
+    `${state.cardDefinitions[attacker.cardId].name} entered ${bf.name}${bfIsEmpty ? ' (Focus claimed)' : ' — Showdown!'}`));
+
+  return newState;
+}
+
+export function canClaimFocus(state: GameState, playerId: string): boolean {
+  if (state.phase !== 'Showdown' || !state.showdown) return false;
+  if (state.showdown.focusPlayerId !== null) return false;
+  const { attackerOwnerId, defenderIds } = state.showdown;
+  const isAttacker = playerId === attackerOwnerId;
+  const isDefender = defenderIds.some(id => state.allCards[id]?.ownerId === playerId);
+  return isAttacker || isDefender;
+}
+
+export function handleFocus(state: GameState, action: GameAction): ActionResult {
+  if (!canClaimFocus(state, action.playerId)) {
+    return { success: false, error: 'Cannot claim Focus.', action };
+  }
+
+  const newState = deepClone(state);
+  newState.showdown = { ...newState.showdown!, focusPlayerId: action.playerId };
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Focus', `Player claimed Focus.`));
+  return { success: true, action, newState };
+}
+
+export function canPlayReaction(state: GameState, playerId: string, cardInstanceId: string): boolean {
+  if (state.phase !== 'Showdown' || !state.showdown) return false;
+  if (!state.showdown.reactionWindowOpen) return false;
+  const card = state.allCards[cardInstanceId];
+  if (!card || card.location !== 'hand') return false;
+  if (card.ownerId !== playerId) return false;
+  const def = state.cardDefinitions[card.cardId];
+  if (!def.keywords.includes('Reaction')) return false;
+  const player = state.players[playerId];
+  const cost = def.cost?.charges ?? 0;
+  if (player.charges < cost) return false;
+  return true;
+}
+
+export function handleReaction(state: GameState, action: GameAction): ActionResult {
+  const { cardInstanceId } = action.payload as { cardInstanceId: string };
+  if (!canPlayReaction(state, action.playerId, cardInstanceId)) {
+    return { success: false, error: 'Cannot play Reaction card.', action };
+  }
+
+  const newState = deepClone(state);
+  const card = newState.allCards[cardInstanceId];
+  const def = newState.cardDefinitions[card.cardId];
+  const player = newState.players[action.playerId];
+
+  // Pay charges
+  const cost = def.cost?.charges ?? 0;
+  player.charges -= cost;
+
+  // Move to battlefield face-up
+  card.location = 'battlefield';
+  card.facing = 'up';
+  card.owner_hidden = false;
+  const bfId = state.showdown!.battlefieldId;
+  card.battlefieldId = bfId;
+  const bf = newState.battlefields.find(b => b.id === bfId)!;
+  if (!bf.units.includes(cardInstanceId)) bf.units.push(cardInstanceId);
+
+  // Remove from hand
+  player.hand = player.hand.filter(id => id !== cardInstanceId);
+
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Showdown',
+    `${player.name} played Reaction: ${def.name}`));
+
+  return { success: true, action, newState };
+}
+
+export function closeReactionWindow(state: GameState): GameState {
+  if (!state.showdown) return state;
+  const newState = deepClone(state);
+  newState.showdown = { ...newState.showdown, reactionWindowOpen: false };
+  return newState;
+}
+
+export function resolveCombat(state: GameState): ActionResult {
+  if (state.phase !== 'Showdown' || !state.showdown) {
+    return { success: false, error: 'Not in Showdown.', newState: state };
+  }
+  if (state.showdown.combatResolved) {
+    return { success: false, error: 'Combat already resolved.', newState: state };
+  }
+
+  const newState = deepClone(state);
+  const { battlefieldId, attackerId, attackerOwnerId, defenderIds } = newState.showdown;
+  const bf = newState.battlefields.find(b => b.id === battlefieldId)!;
+  const attacker = newState.allCards[attackerId];
+
+  // Close reaction window
+  newState.showdown = { ...newState.showdown, reactionWindowOpen: false };
+
+  // Calculate total Might for each side
+  let totalAttackerMight = calculateMight(newState, attackerId);
+  let totalDefenderMight = defenderIds.reduce((sum, id) => sum + calculateMight(newState, id), 0);
+
+  // Apply Assault keyword to attacker
+  const attackerDef = newState.cardDefinitions[attacker.cardId];
+  const assaultAbility = attackerDef.abilities?.find(a => a.effectCode?.startsWith('GIVE_ASSAULT'));
+  if (assaultAbility) {
+    const match = assaultAbility.effect.match(/\+(\d+)/);
+    if (match) totalAttackerMight += parseInt(match[1]);
+  }
+
+  const effects: GameSideEffect[] = [];
+  let survivingAttackers: string[] = [];
+  let survivingDefenders: string[] = [];
+
+  if (defenderIds.length === 0) {
+    // Empty BF — no combat, just Focus claimed
+    survivingAttackers = [attackerId];
+  } else {
+    // Both sides present — resolve combat
+    // Attacker takes defender Might damage
+    const attackerHp = attacker.currentStats.health ?? attacker.stats.health ?? 1;
+    const newAttackerHp = attackerHp - totalDefenderMight;
+    if (newAttackerHp <= 0) {
+      effects.push({ type: 'KillUnit', unitInstanceId: attackerId });
+      bf.units = bf.units.filter(id => id !== attackerId);
+      attacker.location = 'discard';
+      newState.players[attackerOwnerId].discardPile.push(attackerId);
+    } else {
+      attacker.currentStats.health = newAttackerHp;
+      survivingAttackers = [attackerId];
+    }
+
+    // Defenders each take attacker Might damage
+    survivingDefenders = [];
+    for (const duId of defenderIds) {
+      const defender = newState.allCards[duId];
+      const defHp = defender.currentStats.health ?? defender.stats.health ?? 1;
+      const newDefHp = defHp - totalAttackerMight;
+      if (newDefHp <= 0) {
+        effects.push({ type: 'KillUnit', unitInstanceId: duId });
+        bf.units = bf.units.filter(id => id !== duId);
+        defender.location = 'discard';
+        newState.players[defender.ownerId].discardPile.push(duId);
+      } else {
+        defender.currentStats.health = newDefHp;
+        survivingDefenders.push(duId);
+      }
+    }
+
+    // Determine winner
+    let winner: 'attacker' | 'defender' | 'draw' | null = null;
+    if (survivingAttackers.length > 0 && survivingDefenders.length === 0) {
+      winner = 'attacker';
+    } else if (survivingDefenders.length > 0 && survivingAttackers.length === 0) {
+      winner = 'defender';
+    } else {
+      winner = 'draw';
+    }
+
+    // Excess damage = Might difference for conquest
+    const excess = Math.abs(totalAttackerMight - totalDefenderMight);
+
+    // Conquest: if attacker wins and defenders are wiped
+    if (winner === 'attacker') {
+      bf.controllerId = attackerOwnerId;
+      bf.scoringSince = newState.turn;
+      bf.scoringPlayerId = attackerOwnerId;
+      effects.push({ type: 'ConquerBattlefield', battlefieldId: bf.id, playerId: attackerOwnerId });
+    }
+
+    newState.showdown = {
+      ...newState.showdown!,
+      combatResolved: true,
+      winner,
+      excessDamage: excess,
+    };
+
+    newState.actionLog.push(makeLog(newState, attackerOwnerId, 'Combat',
+      `Combat at ${bf.name}: Attacker Might ${totalAttackerMight} vs Defender Might ${totalDefenderMight} — ${winner?.toUpperCase()}`));
+  }
+
+  // Check win condition
+  const winner = checkWinCondition(newState);
+  if (winner) {
+    newState.phase = 'GameOver';
+    newState.winner = winner;
+    newState.showdown = null;
+    return {
+      success: true,
+      newState,
+      sideEffects: [...effects, { type: 'GameWin', playerId: winner, reason: 'score' }]
+    };
+  }
+
+  // Return to Action phase
+  newState.phase = 'Action';
+  newState.showdown = null;
+  const finalState = newState;
+  return { success: true, newState: finalState, sideEffects: effects };
+}
+
+// ============================================================
 // Rune Payment Helpers
 // ============================================================
 
@@ -865,6 +1124,13 @@ function canPayCardCosts(
 // ============================================================
 
 function handlePass(state: GameState, action: GameAction): ActionResult {
+  // In Showdown phase, Pass closes the reaction window and resolves combat
+  if (state.phase === 'Showdown') {
+    const newState = closeReactionWindow(deepClone(state));
+    const combatResult = resolveCombat(newState);
+    if (combatResult.success && combatResult.newState) combatResult.newState.actionLog.push(action);
+    return combatResult;
+  }
   const newState = advancePhase(deepClone(state));
   return { success: true, action, newState };
 }
@@ -1091,6 +1357,17 @@ function handleMoveUnit(
     effects.push(...resolveAbilities(newState, move.unitId, 'MOVE'));
   }
 
+  // Check if destination BF is contested — if so, trigger Showdown for each moved unit
+  const enemyUnitsAtTarget = newToBf.units.filter(id =>
+    newState.allCards[id].ownerId !== action.playerId
+  );
+  if (enemyUnitsAtTarget.length > 0) {
+    // Enter showdown with the first moved unit as attacker (convention)
+    const primaryUnitId = moves[0].unitId;
+    const showdownState = enterShowdown(newState, primaryUnitId, toBattlefieldId);
+    return { success: true, action, newState: showdownState, sideEffects: effects };
+  }
+
   return { success: true, action, newState, sideEffects: effects };
 }
 
@@ -1109,10 +1386,18 @@ function handleAttack(
   const bf = state.battlefields.find(b => b.id === targetBattlefieldId);
   if (!bf) return { success: false, error: 'Target battlefield not found.', action };
 
+  // Move attacker from its current BF to the target BF
   const newState = deepClone(state);
-  newState.phase = 'Showdown';
+  const fromBf = newState.battlefields.find(b => b.id === attacker.battlefieldId);
+  if (fromBf) fromBf.units = fromBf.units.filter(id => id !== attackerId);
+  if (!bf.units.includes(attackerId)) bf.units.push(attackerId);
+  attacker.battlefieldId = targetBattlefieldId;
+  attacker.ready = false;
+  attacker.exhausted = true;
 
-  return { success: true, action, newState };
+  // Enter showdown state (sets phase + ShowdownState)
+  const showdownState = enterShowdown(newState, attackerId, targetBattlefieldId);
+  return { success: true, action, newState: showdownState };
 }
 
 export function resolveShowdown(
