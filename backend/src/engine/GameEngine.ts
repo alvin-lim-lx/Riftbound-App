@@ -46,6 +46,16 @@ export type GameSideEffect =
   | { type: 'ReadyPlayer'; playerId: string }
   | { type: 'GameWin'; playerId: string; reason: string };
 
+const BASE_BATTLEFIELD_PREFIX = 'base_';
+
+function getBaseBattlefieldId(playerId: string): string {
+  return `${BASE_BATTLEFIELD_PREFIX}${playerId}`;
+}
+
+function isBaseBattlefieldId(id: string): boolean {
+  return id.startsWith(BASE_BATTLEFIELD_PREFIX);
+}
+
 // ============================================================
 // Game Factory
 // ============================================================
@@ -108,6 +118,16 @@ export function createGame(
     while (bfCardIds.length < 3) bfCardIds.push(defaultBattlefieldIds[bfCardIds.length]);
     battlefields = bfCardIds.map(makeBattlefield);
   }
+
+  battlefields.push(...playerIds.map((pid, idx) => ({
+    id: getBaseBattlefieldId(pid),
+    name: `${playerNames[idx] ?? `Player ${idx + 1}`} Base`,
+    cardId: getBaseBattlefieldId(pid),
+    controllerId: pid,
+    units: [],
+    scoringSince: null,
+    scoringPlayerId: null,
+  })));
 
   // Create rune decks and initial hands for each player
   const allCards: Record<string, CardInstance> = {};
@@ -533,11 +553,13 @@ function executeAwakenPhase(state: GameState): GameState {
     newState.allCards[runeId].exhausted = false;
   }
 
-  // Ready all units at battlefields (Awaken behavior)
+  // Ready only the active player's units during their Awaken phase.
   for (const bf of newState.battlefields) {
     for (const unitId of bf.units) {
-      newState.allCards[unitId].ready = true;
-      newState.allCards[unitId].exhausted = false;
+      const unit = newState.allCards[unitId];
+      if (unit?.ownerId !== playerId) continue;
+      unit.ready = true;
+      unit.exhausted = false;
     }
   }
 
@@ -557,6 +579,7 @@ function executeBeginningPhase(state: GameState): GameState {
   }
 
   for (const bf of newState.battlefields) {
+    if (isBaseBattlefieldId(bf.id)) continue;
     if (bf.controllerId === playerId && bf.units.length > 0 && bf.scoringSince !== null) {
       // Player has held battlefield with units all turn
       const holder = newState.players[playerId];
@@ -646,6 +669,7 @@ function executeEndPhase(state: GameState): GameState {
 
 export function checkScoring(state: GameState): GameState {
   for (const bf of state.battlefields) {
+    if (isBaseBattlefieldId(bf.id)) continue;
     if (!bf.controllerId) continue;
     if (bf.units.length === 0) {
       // Controller has no units — stop scoring
@@ -886,13 +910,14 @@ function handlePlayUnit(
   newCard.owner_hidden = hidden;
   newBf.units.push(cardInstanceId);
 
-  // Ambush check — if card has Ambush, it can be played during showdown.
-  // For now, units played during Action enter ready if no Accelerate.
+  // Units enter exhausted by default unless the play explicitly readies them.
   const hasAccelerate = def.keywords.includes('Accelerate');
   if (accelerate && hasAccelerate) {
     newCard.ready = true;
+    newCard.exhausted = false;
   } else {
     newCard.ready = false;
+    newCard.exhausted = true;
   }
 
   // Trigger play abilities
@@ -936,14 +961,29 @@ function handlePlayGear(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, targetUnitId, powerRuneDomains } = action.payload as {
-    cardInstanceId: string; targetUnitId: string; powerRuneDomains?: Domain[];
+  const { cardInstanceId, targetUnitId, targetBattlefieldId, powerRuneDomains } = action.payload as {
+    cardInstanceId: string; targetUnitId?: string; targetBattlefieldId?: string; powerRuneDomains?: Domain[];
   };
 
   const card = state.allCards[cardInstanceId];
   if (!card || card.location !== 'hand') return { success: false, error: 'Gear not in hand.', action };
+  if (card.ownerId !== action.playerId) return { success: false, error: 'Not your card.', action };
   const def = state.cardDefinitions[card.cardId];
   if (def.type !== 'Gear') return { success: false, error: 'Not gear.', action };
+
+  const targetUnit = targetUnitId ? state.allCards[targetUnitId] : undefined;
+  const targetBattlefield = targetBattlefieldId
+    ? state.battlefields.find(bf => bf.id === targetBattlefieldId)
+    : undefined;
+  if (!targetUnit && !targetBattlefield) {
+    return { success: false, error: 'Gear needs a unit or battlefield target.', action };
+  }
+  if (targetUnitId && (!targetUnit || targetUnit.ownerId !== action.playerId || targetUnit.location !== 'battlefield')) {
+    return { success: false, error: 'Gear target unit not found.', action };
+  }
+  if (targetBattlefieldId && (!targetBattlefield || targetBattlefield.controllerId !== action.playerId)) {
+    return { success: false, error: 'Gear target battlefield not found.', action };
+  }
 
   const newState = deepClone(state);
   const newCard = { ...newState.allCards[cardInstanceId] };
@@ -952,11 +992,17 @@ function handlePlayGear(
   if (!costResult.success) return { success: false, error: costResult.error, action };
   newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
 
-  // Attach to target unit
-  newCard.location = 'equipment';
-  newCard.battlefieldId = newState.allCards[targetUnitId].battlefieldId;
-  newState.allCards[targetUnitId].attachments.push(cardInstanceId);
-  newState.players[action.playerId].equipment[cardInstanceId] = targetUnitId;
+  if (targetUnitId) {
+    // Attach to target unit.
+    newCard.location = 'equipment';
+    newCard.battlefieldId = newState.allCards[targetUnitId].battlefieldId;
+    newState.allCards[targetUnitId].attachments.push(cardInstanceId);
+    newState.players[action.playerId].equipment[cardInstanceId] = targetUnitId;
+  } else if (targetBattlefieldId) {
+    // Base/zone gear is associated with the destination battlefield without being attached to a unit.
+    newCard.location = 'battlefield';
+    newCard.battlefieldId = targetBattlefieldId;
+  }
 
   return { success: true, action, newState };
 }
@@ -973,38 +1019,77 @@ function handleMoveUnit(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, fromBattlefieldId, toBattlefieldId } = action.payload as {
-    cardInstanceId: string; fromBattlefieldId: string; toBattlefieldId: string;
+  const { cardInstanceId, cardInstanceIds, fromBattlefieldId, toBattlefieldId } = action.payload as {
+    cardInstanceId?: string; cardInstanceIds?: string[]; fromBattlefieldId?: string; toBattlefieldId?: string;
   };
 
-  const unit = state.allCards[cardInstanceId];
-  if (!unit) return { success: false, error: 'Unit not found.', action };
-  if (!unit.ready) return { success: false, error: 'Unit is exhausted.', action };
-
-  const def = state.cardDefinitions[unit.cardId];
-  if (!def.keywords.includes('Ganking')) {
-    return { success: false, error: 'Unit does not have Ganking.', action };
+  if (state.phase !== 'Action') {
+    return { success: false, error: 'Move actions are only allowed during Action phase.', action };
   }
 
-  const fromBf = state.battlefields.find(b => b.id === fromBattlefieldId);
+  const moveUnitIds = cardInstanceIds ?? (cardInstanceId ? [cardInstanceId] : []);
+  if (moveUnitIds.length === 0) return { success: false, error: 'No units selected to move.', action };
+  if (new Set(moveUnitIds).size !== moveUnitIds.length) {
+    return { success: false, error: 'Cannot move the same unit more than once.', action };
+  }
+
+  if (!toBattlefieldId) return { success: false, error: 'Destination battlefield not found.', action };
   const toBf = state.battlefields.find(b => b.id === toBattlefieldId);
-  if (!fromBf || !toBf) return { success: false, error: 'Battlefield not found.', action };
-  if (!state.battlefields.find(b => b.id === toBattlefieldId)?.controllerId) {
-    // Can't move to unconquered BFs unless you have units there or it's neutral
+  if (!toBf) return { success: false, error: 'Destination battlefield not found.', action };
+  if (isBaseBattlefieldId(toBattlefieldId) && toBattlefieldId !== getBaseBattlefieldId(action.playerId)) {
+    return { success: false, error: 'Units can only move to their controller base.', action };
+  }
+
+  const moves: { unitId: string; fromBattlefieldId: string }[] = [];
+  for (const unitId of moveUnitIds) {
+    const unit = state.allCards[unitId];
+    if (!unit) return { success: false, error: 'Unit not found.', action };
+    const def = state.cardDefinitions[unit.cardId];
+    if (!def || def.type !== 'Unit') return { success: false, error: 'Only units can move.', action };
+    if (unit.ownerId !== action.playerId) return { success: false, error: 'Cannot move enemy units.', action };
+    if (unit.location !== 'battlefield' || !unit.battlefieldId) {
+      return { success: false, error: 'Unit is not at a battlefield or base.', action };
+    }
+    if (fromBattlefieldId && unit.battlefieldId !== fromBattlefieldId) {
+      return { success: false, error: 'Unit is not at the declared origin.', action };
+    }
+    if (!unit.ready || unit.exhausted) return { success: false, error: 'Unit is exhausted.', action };
+
+    const fromBf = state.battlefields.find(b => b.id === unit.battlefieldId);
+    if (!fromBf || !fromBf.units.includes(unitId)) {
+      return { success: false, error: 'Origin battlefield not found.', action };
+    }
+    if (unit.battlefieldId === toBattlefieldId) {
+      return { success: false, error: 'Unit is already at that location.', action };
+    }
+
+    const fromIsBase = isBaseBattlefieldId(unit.battlefieldId);
+    const toIsBase = isBaseBattlefieldId(toBattlefieldId);
+    if (fromIsBase && unit.battlefieldId !== getBaseBattlefieldId(action.playerId)) {
+      return { success: false, error: 'Units can only move from their controller base.', action };
+    }
+    if (!fromIsBase && !toIsBase && !(def.keywords ?? []).includes('Ganking')) {
+      return { success: false, error: 'Unit does not have Ganking.', action };
+    }
+
+    moves.push({ unitId, fromBattlefieldId: unit.battlefieldId });
   }
 
   const newState = deepClone(state);
-  const newUnit = newState.allCards[cardInstanceId];
-  newUnit.ready = false; // Moving exhausts
-  newUnit.battlefieldId = toBattlefieldId;
-
-  const newFromBf = newState.battlefields.find(b => b.id === fromBattlefieldId)!;
+  const effects: GameSideEffect[] = [];
   const newToBf = newState.battlefields.find(b => b.id === toBattlefieldId)!;
-  newFromBf.units = newFromBf.units.filter(id => id !== cardInstanceId);
-  newToBf.units.push(cardInstanceId);
+  for (const move of moves) {
+    const newUnit = newState.allCards[move.unitId];
+    newUnit.ready = false;
+    newUnit.exhausted = true;
+    newUnit.battlefieldId = toBattlefieldId;
 
-  // Trigger ability if any (e.g. Jhin: "When I move, Add 1 charge")
-  const effects = resolveAbilities(newState, cardInstanceId, 'MOVE');
+    const newFromBf = newState.battlefields.find(b => b.id === move.fromBattlefieldId)!;
+    newFromBf.units = newFromBf.units.filter(id => id !== move.unitId);
+    if (!newToBf.units.includes(move.unitId)) newToBf.units.push(move.unitId);
+
+    effects.push(...resolveAbilities(newState, move.unitId, 'MOVE'));
+  }
 
   return { success: true, action, newState, sideEffects: effects };
 }
@@ -1571,7 +1656,12 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
     }
 
     if (def.type === 'Gear' && canPayCardCosts(state, playerId, def)) {
+      const base = state.battlefields.find(bf => bf.id === getBaseBattlefieldId(playerId));
+      if (base) {
+        actions.push(makeAction('PlayGear', playerId, { cardInstanceId: cardId, targetBattlefieldId: base.id, powerRuneDomains: buildAutoPowerRuneDomains(def) }));
+      }
       for (const bf of state.battlefields) {
+        if (isBaseBattlefieldId(bf.id)) continue;
         const myUnits = bf.units.filter(id => state.allCards[id]?.ownerId === playerId);
         for (const unitId of myUnits) {
           actions.push(makeAction('PlayGear', playerId, { cardInstanceId: cardId, targetUnitId: unitId, powerRuneDomains: buildAutoPowerRuneDomains(def) }));
@@ -1580,16 +1670,18 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
     }
   }
 
-  // Move units (Ganking)
+  // Move units
   for (const bf of state.battlefields) {
     for (const unitId of bf.units) {
       const unit = state.allCards[unitId];
-      if (!unit || unit.ownerId !== playerId || !unit.ready) continue;
+      if (!unit || unit.ownerId !== playerId || !unit.ready || unit.exhausted) continue;
       const def = state.cardDefinitions[unit.cardId];
-      if (!def.keywords.includes('Ganking')) continue;
 
       for (const targetBf of state.battlefields) {
         if (targetBf.id === bf.id) continue;
+        if (isBaseBattlefieldId(targetBf.id) && targetBf.id !== getBaseBattlefieldId(playerId)) continue;
+        if (isBaseBattlefieldId(bf.id) && bf.id !== getBaseBattlefieldId(playerId)) continue;
+        if (!isBaseBattlefieldId(bf.id) && !isBaseBattlefieldId(targetBf.id) && !(def.keywords ?? []).includes('Ganking')) continue;
         actions.push(makeAction('MoveUnit', playerId, {
           cardInstanceId: unitId,
           fromBattlefieldId: bf.id,
@@ -1601,6 +1693,7 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
 
   // Attack
   for (const bf of state.battlefields) {
+    if (isBaseBattlefieldId(bf.id)) continue;
     for (const unitId of bf.units) {
       const unit = state.allCards[unitId];
       if (!unit || unit.ownerId !== playerId || !unit.ready) continue;

@@ -32,7 +32,7 @@ import { GameLog } from './GameLog';
 import { ChatBox } from './ChatBox';
 import { MulliganOverlay } from './MulliganOverlay';
 import { CardArtView } from './CardArtView';
-import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase, Domain } from '../../shared/types';
+import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase, Domain, BattlefieldState } from '../../shared/types';
 import { CARDS } from '../../shared/cards';
 import { randomId } from '../../utils/helpers';
 import bodyRuneIcon from '../../assets/runes/Body Rune.png';
@@ -118,6 +118,54 @@ function runeDomain(def: CardDefinition | undefined): Domain | undefined {
 // Helpers
 // ─────────────────────────────────────────
 
+const BASE_BATTLEFIELD_PREFIX = 'base_';
+
+function getBaseBattlefieldId(playerId: string): string {
+  return `${BASE_BATTLEFIELD_PREFIX}${playerId}`;
+}
+
+function isBaseBattlefieldId(id: string): boolean {
+  return id.startsWith(BASE_BATTLEFIELD_PREFIX);
+}
+
+function getBattlefieldLabel(battlefield: BattlefieldState | undefined, playerId: string): string {
+  if (!battlefield) return 'Unknown location';
+  if (battlefield.id === getBaseBattlefieldId(playerId)) return 'Your Base';
+  if (isBaseBattlefieldId(battlefield.id)) return 'Enemy Base';
+  return battlefield.name;
+}
+
+function getAvailableRunes(player: PlayerState | undefined, allCards: Record<string, CardInstance>): number {
+  if (!player) return 0;
+  const readyRunes = Object.values(allCards).filter(card =>
+    card.ownerId === player.id && card.location === 'rune' && !card.exhausted
+  ).length;
+  return readyRunes + (player.floatingEnergy ?? 0);
+}
+
+interface PendingPlayAction {
+  actionType: 'PlayUnit' | 'PlayGear';
+  payload: Record<string, unknown>;
+  cardName: string;
+  cardType: string;
+  destinationLabel: string;
+  runeCost: number;
+  availableRunes: number;
+}
+
+interface PendingMoveUnit {
+  unitId: string;
+  unitName: string;
+  originBattlefieldId: string;
+  originLabel: string;
+}
+
+interface PendingMoveAction {
+  destinationBattlefieldId: string;
+  destinationLabel: string;
+  units: PendingMoveUnit[];
+}
+
 function getPlayerCards(
   player: PlayerState | undefined,
   allCards: Record<string, CardInstance>,
@@ -144,11 +192,9 @@ function partitionPlayerZones(
     if (!def) continue;
 
     const location = c.location as string;
-    if (location === 'battlefield' || location === 'legend' || location === 'championZone') {
-      if (def.type === 'Battlefield') baseIds.push(c.instanceId);
-      else if (def.type === 'Unit' && def.superType === 'Champion') championIds.push(c.instanceId);
-      else if (def.type === 'Legend') legendIds.push(c.instanceId);
-    }
+    if (location === 'battlefield' && def.type === 'Battlefield') baseIds.push(c.instanceId);
+    else if (location === 'championZone' && def.type === 'Unit' && def.superType === 'Champion') championIds.push(c.instanceId);
+    else if (location === 'legend' && def.type === 'Legend') legendIds.push(c.instanceId);
   }
 
   return { baseIds, championIds, legendIds };
@@ -599,6 +645,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false, maxC
       <div style={handStyles.playerCards}>
         {cards.map((card, i) => {
           const def = cardDefs[card.cardId];
+          const canDrag = canInteract && (def?.type === 'Unit' || def?.type === 'Gear');
           const total = cards.length;
           const center = (total - 1) / 2;
           const offset = i - center;
@@ -609,12 +656,23 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false, maxC
           return (
             <div
               key={card.instanceId}
+              draggable={canDrag}
               style={{
                 transform: `translateY(${yShift}px) rotate(${rotate}deg)`,
                 zIndex,
                 transition: 'transform 0.2s ease',
                 flexShrink: 1,
                 position: 'relative',
+                cursor: canDrag ? 'grab' : 'default',
+              }}
+              onDragStart={e => {
+                if (!canDrag) {
+                  e.preventDefault();
+                  return;
+                }
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', card.instanceId);
+                e.dataTransfer.setData('application/riftbound-card', card.instanceId);
               }}
               onMouseEnter={e => {
                 e.currentTarget.style.transform = `translateY(${yShift - 12}px) rotate(${rotate}deg) scale(1.04)`;
@@ -623,7 +681,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false, maxC
                 e.currentTarget.style.transform = `translateY(${yShift}px) rotate(${rotate}deg)`;
               }}
             >
-              {canInteract && <div style={handStyles.playableBadge}>Playable</div>}
+              {canDrag && <div style={handStyles.playableBadge}>Drag to play</div>}
               <CardArtView
                 card={card}
                 cardDef={def}
@@ -756,15 +814,37 @@ interface ZoneCardProps {
   isOpponent: boolean;
   size?: 'sm' | 'md' | 'lg';
   maxHeightPx?: number;
+  canDragMove?: boolean;
+  isPendingMove?: boolean;
+  onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md', maxHeightPx }: ZoneCardProps) {
+function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md', maxHeightPx, canDragMove = false, isPendingMove = false, onMoveDragStart }: ZoneCardProps) {
   const card = allCards[cardId];
   if (!card) return null;
   const def = cardDefs[card.cardId];
 
   return (
-    <div style={{ flexShrink: 0, minWidth: 0, overflow: 'visible', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+    <div
+      draggable={canDragMove}
+      onDragStart={e => {
+        if (!canDragMove) return;
+        onMoveDragStart?.(card.instanceId, e);
+      }}
+      style={{
+        flexShrink: 0,
+        minWidth: 0,
+        overflow: 'visible',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: canDragMove ? 'grab' : 'default',
+        outline: isPendingMove ? '2px solid rgba(251,191,36,0.8)' : 'none',
+        outlineOffset: '3px',
+        borderRadius: '8px',
+        opacity: isPendingMove ? 0.72 : 1,
+      }}
+    >
       <CardArtView
         card={card}
         cardDef={def}
@@ -787,9 +867,16 @@ interface ZoneRowProps {
   isOpponent: boolean;
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
+  battlefields?: BattlefieldState[];
+  canMoveUnits?: boolean;
+  pendingMoveUnitIds?: Set<string>;
+  pendingMoveDestinationId?: string | null;
+  onBaseDrop?: (cardInstanceId: string, baseBattlefieldId: string) => void;
+  onMoveDrop?: (cardInstanceId: string, destinationBattlefieldId: string) => void;
+  onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowProps) {
+function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefields, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, onBaseDrop, onMoveDrop, onMoveDragStart }: ZoneRowProps) {
   if (!player) return null;
 
   const rowRef = React.useRef<HTMLDivElement>(null);
@@ -829,6 +916,19 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
   const { baseIds, championIds, legendIds } = partitionPlayerZones(
     playerId, allCards, cardDefs
   );
+  const baseBattlefield = battlefields?.find(bf => bf.id === getBaseBattlefieldId(playerId));
+  const baseUnitIds = baseBattlefield?.units ?? [];
+  const baseGearIds = baseBattlefield
+    ? Object.values(allCards)
+      .filter(card =>
+        card.ownerId === playerId &&
+        card.location === 'battlefield' &&
+        card.battlefieldId === baseBattlefield.id &&
+        cardDefs[card.cardId]?.type === 'Gear'
+      )
+      .map(card => card.instanceId)
+    : [];
+  const baseContentIds = [...baseIds, ...baseUnitIds, ...baseGearIds];
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
   const labelColor = isOpponent ? '#ef444488' : '#22c55e88';
@@ -855,11 +955,60 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs }: ZoneRowPr
       {/* Base — left-aligned */}
       <div style={zoneRowStyles.zone}>
         <div style={{ ...zoneRowStyles.zoneLabel, color: '#7c3aed88' }}>BASE</div>
-        <div ref={baseRef} style={zoneRowStyles.cardArea}>
-          {baseIds.length > 0 ? (
-            baseIds.map(id => (
-              <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={baseCardH} />
-            ))
+        <div
+          ref={baseRef}
+          style={{
+            ...zoneRowStyles.cardArea,
+            ...((onBaseDrop || onMoveDrop) && baseBattlefield ? zoneRowStyles.dropArea : {}),
+            ...(pendingMoveDestinationId === baseBattlefield?.id ? zoneRowStyles.pendingDestination : {}),
+          }}
+          onDragOver={e => {
+            if ((!onBaseDrop && !onMoveDrop) || !baseBattlefield) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+          }}
+          onDrop={e => {
+            if ((!onBaseDrop && !onMoveDrop) || !baseBattlefield) return;
+            e.preventDefault();
+            const unitInstanceId = e.dataTransfer.getData('application/riftbound-unit');
+            if (unitInstanceId && onMoveDrop) {
+              onMoveDrop(unitInstanceId, baseBattlefield.id);
+              return;
+            }
+            const cardInstanceId =
+              e.dataTransfer.getData('application/riftbound-card') ||
+              e.dataTransfer.getData('text/plain');
+            if (cardInstanceId) onBaseDrop?.(cardInstanceId, baseBattlefield.id);
+          }}
+        >
+          {baseContentIds.length > 0 ? (
+            baseContentIds.map(id => {
+              const card = allCards[id];
+              const def = card ? cardDefs[card.cardId] : undefined;
+              const canDragMove = Boolean(
+                !isOpponent &&
+                canMoveUnits &&
+                card &&
+                def?.type === 'Unit' &&
+                card.ownerId === playerId &&
+                card.ready &&
+                !card.exhausted
+              );
+              return (
+                <ZoneCard
+                  key={id}
+                  cardId={id}
+                  allCards={allCards}
+                  cardDefs={cardDefs}
+                  isOpponent={isOpponent}
+                  size="md"
+                  maxHeightPx={baseCardH}
+                  canDragMove={canDragMove}
+                  isPendingMove={pendingMoveUnitIds?.has(id) ?? false}
+                  onMoveDragStart={onMoveDragStart}
+                />
+              );
+            })
           ) : (
             <div style={{ ...zoneRowStyles.empty, borderColor: '#7c3aed33' }}>
               <span style={{ color: '#7c3aed33', fontSize: '20px' }}>◇</span>
@@ -950,10 +1099,20 @@ const zoneRowStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     justifyContent: 'center',
     alignItems: 'center',
+    gap: '10px',
     flex: 1,
     width: '100%',
     minHeight: 0,
     overflow: 'hidden',
+  },
+  dropArea: {
+    border: '1px dashed rgba(124,58,237,0.45)',
+    borderRadius: '8px',
+    background: 'rgba(124,58,237,0.08)',
+  },
+  pendingDestination: {
+    boxShadow: 'inset 0 0 0 2px rgba(251,191,36,0.52)',
+    background: 'rgba(251,191,36,0.10)',
   },
   empty: {
     width: '64px',
@@ -1095,12 +1254,18 @@ interface BattlefieldRowProps {
   gameState: import('../../shared/types').GameState;
   playerId: string;
   myTurn: boolean;
+  canMoveUnits?: boolean;
+  pendingMoveUnitIds?: Set<string>;
+  pendingMoveDestinationId?: string | null;
   selectedTargetId: string | null;
   selectTarget: (id: string | null) => void;
   handleAction: (type: string, payload?: Record<string, unknown>) => void;
+  onBattlefieldDrop?: (cardInstanceId: string, battlefieldId: string) => void;
+  onMoveDrop?: (cardInstanceId: string, destinationBattlefieldId: string) => void;
+  onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectTarget, handleAction }: BattlefieldRowProps) {
+function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, selectedTargetId, selectTarget, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart }: BattlefieldRowProps) {
   const { battlefields, allCards, cardDefinitions } = gameState;
   const rowRef = React.useRef<HTMLDivElement>(null);
   const [rowH, setRowH] = React.useState(0);
@@ -1120,7 +1285,9 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
 
   const battlefieldCardH = fitCardHeight(rowH - 44, CARD_HEIGHTS.battlefieldMin, CARD_HEIGHTS.battlefieldMax);
 
-  if (!battlefields.length) {
+  const centerBattlefields = battlefields.filter(bf => !isBaseBattlefieldId(bf.id));
+
+  if (!centerBattlefields.length) {
     return (
       <div style={bfRowStyles.empty}>
         No battlefields
@@ -1130,7 +1297,7 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
 
   return (
     <div ref={rowRef} style={bfRowStyles.container}>
-      {battlefields.map(bf => {
+      {centerBattlefields.map(bf => {
         const myUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId === playerId);
         const enemyUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId !== playerId);
         const isControlled = bf.controllerId === playerId;
@@ -1138,7 +1305,34 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
         const canAttack = myTurn && myUnits.some(u => u.ready && !u.exhausted);
 
         return (
-          <div key={bf.id} style={{ ...bfRowStyles.bfPanel, borderColor: bfColor + '55', flexDirection: 'row' }}>
+          <div
+            key={bf.id}
+            style={{
+              ...bfRowStyles.bfPanel,
+              ...((onBattlefieldDrop || onMoveDrop) ? bfRowStyles.dropPanel : {}),
+              ...(pendingMoveDestinationId === bf.id ? bfRowStyles.pendingDropPanel : {}),
+              borderColor: bfColor + '55',
+              flexDirection: 'row',
+            }}
+            onDragOver={e => {
+              if (!onBattlefieldDrop && !onMoveDrop) return;
+              e.preventDefault();
+              e.dataTransfer.dropEffect = 'move';
+            }}
+            onDrop={e => {
+              if (!onBattlefieldDrop && !onMoveDrop) return;
+              e.preventDefault();
+              const unitInstanceId = e.dataTransfer.getData('application/riftbound-unit');
+              if (unitInstanceId && onMoveDrop) {
+                onMoveDrop(unitInstanceId, bf.id);
+                return;
+              }
+              const cardInstanceId =
+                e.dataTransfer.getData('application/riftbound-card') ||
+                e.dataTransfer.getData('text/plain');
+              if (cardInstanceId) onBattlefieldDrop?.(cardInstanceId, bf.id);
+            }}
+          >
             {/* Left: player units */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
               <div style={bfRowStyles.rowLabel}>Your</div>
@@ -1151,13 +1345,26 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
                     const might = unit.currentStats.might ?? unit.stats.might ?? 0;
                     const health = unit.currentStats.health ?? unit.stats.health ?? 1;
                     const isReady = unit.ready && !unit.exhausted;
+                    const unitTransform = unit.exhausted ? 'rotate(90deg) scale(0.95)' : 'rotate(0deg) scale(1)';
+                    const canDragMove = canMoveUnits && isReady;
+                    const isPendingMove = pendingMoveUnitIds?.has(unit.instanceId) ?? false;
                     return (
                       <div
                         key={unit.instanceId}
+                        draggable={canDragMove}
+                        onDragStart={e => {
+                          if (!canDragMove) return;
+                          onMoveDragStart?.(unit.instanceId, e);
+                        }}
                         style={{
                           ...bfRowStyles.unitChip,
                           borderColor: '#22c55e',
-                          opacity: isReady ? 1 : 0.6,
+                          opacity: isPendingMove ? 0.72 : isReady ? 1 : 0.6,
+                          transform: unitTransform,
+                          transformOrigin: 'center',
+                          cursor: canDragMove ? 'grab' : 'default',
+                          outline: isPendingMove ? '2px solid rgba(251,191,36,0.9)' : 'none',
+                          outlineOffset: '2px',
                         }}
                         title={def?.name}
                       >
@@ -1216,6 +1423,7 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
                     const health = unit.currentStats.health ?? unit.stats.health ?? 1;
                     const isReady = unit.ready && !unit.exhausted;
                     const isTarget = selectedTargetId === unit.instanceId;
+                    const unitTransform = unit.exhausted ? 'rotate(90deg) scale(0.95)' : 'rotate(0deg) scale(1)';
                     return (
                       <div
                         key={unit.instanceId}
@@ -1223,6 +1431,8 @@ function BattlefieldRow({ gameState, playerId, myTurn, selectedTargetId, selectT
                           ...bfRowStyles.unitChip,
                           borderColor: isTarget ? '#fbbf24' : '#ef4444',
                           opacity: isReady ? 1 : 0.6,
+                          transform: unitTransform,
+                          transformOrigin: 'center',
                           cursor: 'pointer',
                         }}
                         onClick={() => selectTarget(unit.instanceId)}
@@ -1286,6 +1496,14 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
     minHeight: 0,
+  },
+  dropPanel: {
+    outline: '1px dashed rgba(255,255,255,0.16)',
+    outlineOffset: '-4px',
+  },
+  pendingDropPanel: {
+    boxShadow: 'inset 0 0 0 2px rgba(251,191,36,0.48), 0 2px 8px rgba(0,0,0,0.2)',
+    background: 'rgba(251,191,36,0.08)',
   },
   bfHeader: {
     height: '44px',
@@ -1562,6 +1780,176 @@ const topBarStyles: Record<string, React.CSSProperties> = {
 // ─────────────────────────────────────────
 // Main BoardLayout
 // ─────────────────────────────────────────
+function PlayConfirmModal({
+  pending,
+  onConfirm,
+  onCancel,
+}: {
+  pending: PendingPlayAction;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div style={confirmStyles.backdrop} onClick={onCancel}>
+      <div style={confirmStyles.dialog} onClick={e => e.stopPropagation()}>
+        <div style={confirmStyles.title}>Confirm Play</div>
+        <div style={confirmStyles.cardName}>{pending.cardName}</div>
+        <div style={confirmStyles.summary}>
+          <span>{pending.cardType}</span>
+          <span>{pending.destinationLabel}</span>
+        </div>
+        <div style={confirmStyles.costRow}>
+          <span>Rune cost</span>
+          <strong>{pending.runeCost}</strong>
+        </div>
+        <div style={confirmStyles.costRow}>
+          <span>Available runes</span>
+          <strong>{pending.availableRunes}</strong>
+        </div>
+        <div style={confirmStyles.actions}>
+          <button style={confirmStyles.cancelButton} onClick={onCancel}>Cancel</button>
+          <button style={confirmStyles.confirmButton} onClick={onConfirm}>Confirm</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MoveConfirmModal({
+  pending,
+  onConfirm,
+  onCancel,
+}: {
+  pending: PendingMoveAction;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div style={confirmStyles.moveDock}>
+      <div style={confirmStyles.dialog}>
+        <div style={confirmStyles.title}>Confirm Move</div>
+        <div style={confirmStyles.cardName}>{pending.destinationLabel}</div>
+        <div style={confirmStyles.summary}>
+          <span>{pending.units.length} unit{pending.units.length === 1 ? '' : 's'}</span>
+          <span>Move action</span>
+        </div>
+        <div style={confirmStyles.moveList}>
+          {pending.units.map(unit => (
+            <div key={unit.unitId} style={confirmStyles.moveItem}>
+              <strong>{unit.unitName}</strong>
+              <span>{unit.originLabel}{' -> '}{pending.destinationLabel}</span>
+            </div>
+          ))}
+        </div>
+        <div style={confirmStyles.actions}>
+          <button style={confirmStyles.cancelButton} onClick={onCancel}>Cancel</button>
+          <button style={confirmStyles.confirmButton} onClick={onConfirm}>Confirm</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const confirmStyles: Record<string, React.CSSProperties> = {
+  backdrop: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 10000,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.62)',
+  },
+  dialog: {
+    width: 'min(360px, calc(100vw - 32px))',
+    padding: '18px',
+    borderRadius: '8px',
+    background: '#111827',
+    border: '1px solid rgba(255,255,255,0.14)',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.55)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+  moveDock: {
+    position: 'fixed',
+    left: '50%',
+    bottom: '18px',
+    transform: 'translateX(-50%)',
+    zIndex: 10000,
+    width: 'min(380px, calc(100vw - 32px))',
+    pointerEvents: 'auto',
+  },
+  title: {
+    fontSize: '12px',
+    fontWeight: 900,
+    color: '#fdba74',
+    textTransform: 'uppercase',
+    letterSpacing: '0.8px',
+  },
+  cardName: {
+    fontSize: '18px',
+    fontWeight: 900,
+    color: '#f8fafc',
+  },
+  summary: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    color: '#cbd5e1',
+    fontSize: '13px',
+  },
+  costRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '8px 0',
+    borderTop: '1px solid rgba(255,255,255,0.08)',
+    color: '#e2e8f0',
+    fontSize: '13px',
+  },
+  moveList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    maxHeight: '220px',
+    overflowY: 'auto',
+    borderTop: '1px solid rgba(255,255,255,0.08)',
+    paddingTop: '10px',
+  },
+  moveItem: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    color: '#cbd5e1',
+    fontSize: '12px',
+  },
+  actions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    gap: '10px',
+    marginTop: '4px',
+  },
+  cancelButton: {
+    padding: '8px 14px',
+    borderRadius: '6px',
+    border: '1px solid rgba(255,255,255,0.16)',
+    background: 'rgba(255,255,255,0.06)',
+    color: '#e2e8f0',
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  confirmButton: {
+    padding: '8px 14px',
+    borderRadius: '6px',
+    border: 'none',
+    background: '#22c55e',
+    color: '#052e16',
+    fontWeight: 900,
+    cursor: 'pointer',
+  },
+};
+
 export function BoardLayout() {
   const store = useGameStore();
   const { gameState, myTurn, phase, playerId } = store;
@@ -1570,6 +1958,8 @@ export function BoardLayout() {
   // Right panel split: 0-100 (gameLog height as %)
   const [splitPct, setSplitPct] = React.useState(50);
   const [isDragging, setIsDragging] = React.useState(false);
+  const [pendingPlayAction, setPendingPlayAction] = React.useState<PendingPlayAction | null>(null);
+  const [pendingMoveAction, setPendingMoveAction] = React.useState<PendingMoveAction | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
 
   const handleDragStart = React.useCallback((e: React.MouseEvent) => {
@@ -1640,6 +2030,127 @@ export function BoardLayout() {
     gameService.submitAction(action);
   }, [playerId, gameState, withPowerRuneDomains]);
 
+  const queuePlayFromDrop = useCallback((cardInstanceId: string, battlefieldId: string, destinationKind: 'base' | 'battlefield') => {
+    if (!gameState) return;
+    const player = gameState.players[playerId];
+    const card = gameState.allCards[cardInstanceId];
+    const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
+    const destination = gameState.battlefields.find(bf => bf.id === battlefieldId);
+    const reject = (message: string) => store.addLog(message);
+
+    if (!player || !card || !def) return reject('Invalid play: card not found.');
+    if (!myTurn || phase !== 'Action') return reject('Invalid play: you can only play cards during your Action phase.');
+    if (card.ownerId !== playerId || card.location !== 'hand') return reject('Invalid play: card must be in your hand.');
+    if (!destination) return reject('Invalid play: destination not found.');
+
+    const runeCost = def.cost?.rune ?? 0;
+    const availableRunes = getAvailableRunes(player, gameState.allCards);
+    if (runeCost > availableRunes) {
+      return reject(`Invalid play: ${def.name} costs ${runeCost} runes, but you only have ${availableRunes}.`);
+    }
+
+    if (def.type === 'Unit') {
+      setPendingMoveAction(null);
+      setPendingPlayAction({
+        actionType: 'PlayUnit',
+        payload: { cardInstanceId, battlefieldId, hidden: false, accelerate: false },
+        cardName: def.name,
+        cardType: def.type,
+        destinationLabel: destinationKind === 'base' ? 'Your Base' : destination.name,
+        runeCost,
+        availableRunes,
+      });
+      return;
+    }
+
+    if (def.type === 'Gear') {
+      if (destinationKind !== 'base' || battlefieldId !== getBaseBattlefieldId(playerId)) {
+        return reject('Invalid play: gear must be dropped on your Base unless the card says otherwise.');
+      }
+      setPendingMoveAction(null);
+      setPendingPlayAction({
+        actionType: 'PlayGear',
+        payload: { cardInstanceId, targetBattlefieldId: battlefieldId },
+        cardName: def.name,
+        cardType: def.type,
+        destinationLabel: 'Your Base',
+        runeCost,
+        availableRunes,
+      });
+      return;
+    }
+
+    reject('Invalid play: only Unit and Gear cards can be dragged onto the board.');
+  }, [gameState, playerId, myTurn, phase, store]);
+
+  const queueMoveFromDrop = useCallback((cardInstanceId: string, destinationBattlefieldId: string) => {
+    if (!gameState) return;
+    const card = gameState.allCards[cardInstanceId];
+    const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
+    const origin = card?.battlefieldId ? gameState.battlefields.find(bf => bf.id === card.battlefieldId) : undefined;
+    const destination = gameState.battlefields.find(bf => bf.id === destinationBattlefieldId);
+    const reject = (message: string) => store.addLog(message);
+
+    if (!card || !def) return reject('Invalid move: unit not found.');
+    if (!myTurn || phase !== 'Action') return reject('Invalid move: you can only move units during your Action phase.');
+    if (card.ownerId !== playerId) return reject('Invalid move: you can only move your own units.');
+    if (def.type !== 'Unit') return reject('Invalid move: only units can move.');
+    if (card.location !== 'battlefield' || !card.battlefieldId || !origin) return reject('Invalid move: unit is not at a battlefield or base.');
+    if (!card.ready || card.exhausted) return reject('Invalid move: unit is exhausted.');
+    if (!destination) return reject('Invalid move: destination not found.');
+    if (card.battlefieldId === destinationBattlefieldId) return reject('Invalid move: unit is already there.');
+
+    const playerBaseId = getBaseBattlefieldId(playerId);
+    const fromIsBase = isBaseBattlefieldId(card.battlefieldId);
+    const toIsBase = isBaseBattlefieldId(destinationBattlefieldId);
+    if ((fromIsBase && card.battlefieldId !== playerBaseId) || (toIsBase && destinationBattlefieldId !== playerBaseId)) {
+      return reject('Invalid move: units can only move to and from your Base.');
+    }
+    if (!fromIsBase && !toIsBase && !(def.keywords ?? []).includes('Ganking')) {
+      return reject('Invalid move: unit needs Ganking to move battlefield to battlefield.');
+    }
+
+    const moveUnit: PendingMoveUnit = {
+      unitId: card.instanceId,
+      unitName: def.name,
+      originBattlefieldId: card.battlefieldId,
+      originLabel: getBattlefieldLabel(origin, playerId),
+    };
+    const destinationLabel = getBattlefieldLabel(destination, playerId);
+
+    setPendingPlayAction(null);
+    setPendingMoveAction(current => {
+      if (!current || current.destinationBattlefieldId !== destinationBattlefieldId) {
+        return { destinationBattlefieldId, destinationLabel, units: [moveUnit] };
+      }
+      if (current.units.some(unit => unit.unitId === card.instanceId)) {
+        reject('Invalid move: unit is already staged.');
+        return current;
+      }
+      return { ...current, units: [...current.units, moveUnit] };
+    });
+  }, [gameState, playerId, myTurn, phase, store]);
+
+  const handleMoveDragStart = useCallback((cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => {
+    event.dataTransfer.effectAllowed = 'move';
+    event.dataTransfer.setData('application/riftbound-unit', cardInstanceId);
+  }, []);
+
+  const confirmPendingPlay = useCallback(() => {
+    if (!pendingPlayAction) return;
+    handleAction(pendingPlayAction.actionType, pendingPlayAction.payload);
+    setPendingPlayAction(null);
+  }, [handleAction, pendingPlayAction]);
+
+  const confirmPendingMove = useCallback(() => {
+    if (!pendingMoveAction) return;
+    handleAction('MoveUnit', {
+      cardInstanceIds: pendingMoveAction.units.map(unit => unit.unitId),
+      toBattlefieldId: pendingMoveAction.destinationBattlefieldId,
+    });
+    setPendingMoveAction(null);
+  }, [handleAction, pendingMoveAction]);
+
   const handlePass = useCallback(() => {
     gameService.pass();
   }, []);
@@ -1674,6 +2185,9 @@ export function BoardLayout() {
   const opponentHandCount = opponent ? getPlayerCards(opponent, myCards, 'hand').length : 0;
   const isAIGame = Boolean(opponent?.id.startsWith('ai_') || opponent?.name.toLowerCase().includes('player 2'));
   const rightPanelLogPct = isAIGame ? 68 : splitPct;
+  const canMoveUnits = myTurn && phase === 'Action';
+  const pendingMoveUnitIds = new Set(pendingMoveAction?.units.map(unit => unit.unitId) ?? []);
+  const pendingMoveDestinationId = pendingMoveAction?.destinationBattlefieldId ?? null;
   const boardWithRightPanelStyle = {
     ...styles.boardWithRightPanel,
     ...(isNarrow ? styles.boardWithRightPanelNarrow : {}),
@@ -1729,6 +2243,7 @@ export function BoardLayout() {
                 isOpponent={true}
                 allCards={myCards}
                 cardDefs={cardDefs}
+                battlefields={gameState.battlefields}
               />
             </div>
 
@@ -1738,9 +2253,15 @@ export function BoardLayout() {
                 gameState={gameState}
                 playerId={playerId}
                 myTurn={myTurn}
+                canMoveUnits={canMoveUnits}
+                pendingMoveUnitIds={pendingMoveUnitIds}
+                pendingMoveDestinationId={pendingMoveDestinationId}
                 selectedTargetId={store.selectedTargetId}
                 selectTarget={store.selectTarget}
                 handleAction={handleAction}
+                onBattlefieldDrop={(cardInstanceId, battlefieldId) => queuePlayFromDrop(cardInstanceId, battlefieldId, 'battlefield')}
+                onMoveDrop={queueMoveFromDrop}
+                onMoveDragStart={handleMoveDragStart}
               />
             </div>
 
@@ -1752,6 +2273,13 @@ export function BoardLayout() {
                 isOpponent={false}
                 allCards={myCards}
                 cardDefs={cardDefs}
+                battlefields={gameState.battlefields}
+                canMoveUnits={canMoveUnits}
+                pendingMoveUnitIds={pendingMoveUnitIds}
+                pendingMoveDestinationId={pendingMoveDestinationId}
+                onBaseDrop={(cardInstanceId, baseBattlefieldId) => queuePlayFromDrop(cardInstanceId, baseBattlefieldId, 'base')}
+                onMoveDrop={queueMoveFromDrop}
+                onMoveDragStart={handleMoveDragStart}
               />
             </div>
 
@@ -1819,6 +2347,22 @@ export function BoardLayout() {
           cardId={store.modalCardId}
           cardDefs={cardDefs}
           onClose={() => store.setModalCard(null)}
+        />
+      )}
+
+      {pendingPlayAction && (
+        <PlayConfirmModal
+          pending={pendingPlayAction}
+          onConfirm={confirmPendingPlay}
+          onCancel={() => setPendingPlayAction(null)}
+        />
+      )}
+
+      {pendingMoveAction && (
+        <MoveConfirmModal
+          pending={pendingMoveAction}
+          onConfirm={confirmPendingMove}
+          onCancel={() => setPendingMoveAction(null)}
         />
       )}
 

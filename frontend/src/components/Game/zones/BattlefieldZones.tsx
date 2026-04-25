@@ -176,6 +176,7 @@ function UnitChip({
   const health = unit.currentStats.health ?? unit.stats.health ?? 1;
   const isReady = unit.ready && !unit.exhausted;
   const borderColor = isTarget ? '#fbbf24' : isEnemy ? '#ef4444' : '#22c55e';
+  const unitTransform = unit.exhausted ? 'rotate(90deg) scale(0.95)' : isReady ? 'rotate(0deg) scale(1)' : 'rotate(0deg) scale(0.95)';
 
   return (
     <div
@@ -183,7 +184,8 @@ function UnitChip({
         ...styles.unit,
         borderColor,
         opacity: isReady ? 1 : 0.6,
-        transform: isReady ? 'scale(1)' : 'scale(0.95)',
+        transform: unitTransform,
+        transformOrigin: 'center',
         boxShadow: isTarget ? `0 0 10px ${borderColor}60` : '0 1px 3px rgba(0,0,0,0.2)',
         cursor: isEnemy ? 'pointer' : 'default',
       }}

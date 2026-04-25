@@ -237,13 +237,15 @@ export interface PlaySpellPayload {
 
 export interface PlayGearPayload {
   cardInstanceId: string;
-  targetUnitId: string;
+  targetUnitId?: string;
+  targetBattlefieldId?: string;
   powerRuneDomains?: Domain[];
 }
 
 export interface MoveUnitPayload {
-  cardInstanceId: string;
-  fromBattlefieldId: string;
+  cardInstanceId?: string;
+  cardInstanceIds?: string[];
+  fromBattlefieldId?: string;
   toBattlefieldId: string;
 }
 

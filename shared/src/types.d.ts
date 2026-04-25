@@ -116,8 +116,9 @@ export interface PlayGearPayload {
     powerRuneDomains?: Domain[];
 }
 export interface MoveUnitPayload {
-    cardInstanceId: string;
-    fromBattlefieldId: string;
+    cardInstanceId?: string;
+    cardInstanceIds?: string[];
+    fromBattlefieldId?: string;
     toBattlefieldId: string;
 }
 export interface AttackPayload {

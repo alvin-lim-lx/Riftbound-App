@@ -8,6 +8,7 @@ import {
   checkWinCondition,
   getLegalActions,
   deepClone,
+  enterPhase,
 } from '../src/engine/GameEngine';
 import type { GameAction, GameState, SystemLogEntry, GameLogEntry } from '../shared/src/types';
 
@@ -52,6 +53,19 @@ function ensureHandCard(
   state.players[playerId].hand.push(deckCard);
   state.allCards[deckCard].location = 'hand';
   return deckCard;
+}
+
+function placeUnitAt(state: GameState, playerId: string, unitId: string, battlefieldId: string, ready = true): void {
+  for (const battlefield of state.battlefields) {
+    battlefield.units = battlefield.units.filter(id => id !== unitId);
+  }
+  state.players[playerId].hand = state.players[playerId].hand.filter(id => id !== unitId);
+  state.players[playerId].deck = state.players[playerId].deck.filter(id => id !== unitId);
+  state.allCards[unitId].location = 'battlefield';
+  state.allCards[unitId].battlefieldId = battlefieldId;
+  state.allCards[unitId].ready = ready;
+  state.allCards[unitId].exhausted = !ready;
+  state.battlefields.find(bf => bf.id === battlefieldId)!.units.push(unitId);
 }
 
 describe('GameEngine', () => {
@@ -127,6 +141,25 @@ describe('GameEngine', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('Not your turn.');
     });
+
+    it("readies only the active player's units during Awaken", () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      const battlefieldId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const p1UnitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      const p2UnitId = ensureHandCard(state, P2, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(p1UnitId).toBeDefined();
+      expect(p2UnitId).toBeDefined();
+      placeUnitAt(state, P1, p1UnitId!, battlefieldId, false);
+      placeUnitAt(state, P2, p2UnitId!, battlefieldId, false);
+
+      const awakened = enterPhase(state, 'Awaken');
+
+      expect(awakened.allCards[p1UnitId!].ready).toBe(true);
+      expect(awakened.allCards[p1UnitId!].exhausted).toBe(false);
+      expect(awakened.allCards[p2UnitId!].ready).toBe(false);
+      expect(awakened.allCards[p2UnitId!].exhausted).toBe(true);
+    });
   });
 
   describe('Mulligan', () => {
@@ -186,6 +219,57 @@ describe('GameEngine', () => {
   });
 
   describe('PlayUnit', () => {
+    it('rejects playing a unit without enough ready runes', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const unitId = ensureHandCard(state, P1, id => {
+        const def = state.cardDefinitions[state.allCards[id].cardId];
+        return def.type === 'Unit' && (def.cost?.rune ?? 0) > 0 && (def.cost?.power ?? 0) === 0;
+      });
+      expect(unitId).toBeDefined();
+
+      const result = executeAction(state, makeAction('PlayUnit', P1, {
+        cardInstanceId: unitId!,
+        battlefieldId: `base_${P1}`,
+        hidden: false,
+        accelerate: false,
+      }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Not enough ready runes.');
+    });
+
+    it('successfully plays a unit to the player base', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const baseId = `base_${P1}`;
+      const unitId = ensureHandCard(state, P1, id => {
+        const def = state.cardDefinitions[state.allCards[id].cardId];
+        return def.type === 'Unit' && (def.cost?.power ?? 0) === 0;
+      });
+      expect(unitId).toBeDefined();
+
+      const def = state.cardDefinitions[state.allCards[unitId!].cardId];
+      addReadyRunes(state, P1, (def.cost?.rune ?? 0) + 2);
+
+      const result = executeAction(state, makeAction('PlayUnit', P1, {
+        cardInstanceId: unitId!,
+        battlefieldId: baseId,
+        hidden: false,
+        accelerate: false,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.allCards[unitId!].location).toBe('battlefield');
+      expect(result.newState!.allCards[unitId!].battlefieldId).toBe(baseId);
+      expect(result.newState!.allCards[unitId!].ready).toBe(false);
+      expect(result.newState!.allCards[unitId!].exhausted).toBe(true);
+      expect(result.newState!.battlefields.find(bf => bf.id === baseId)!.units).toContain(unitId);
+      expect(result.newState!.players[P1].hand).not.toContain(unitId);
+    });
+
     it('rejects playing a card not in hand', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       // Set up a valid phase and active player for the action
@@ -271,37 +355,287 @@ describe('GameEngine', () => {
     });
   });
 
-  describe('MoveUnit (Ganking)', () => {
-    it('rejects moving a unit without Ganking keyword', () => {
+  describe('PlayGear', () => {
+    it('rejects playing gear without enough ready runes', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       state.activePlayerId = P1;
       state.phase = 'Action';
+      const gearId = ensureHandCard(state, P1, id => {
       const bfId = state.battlefields[0].id;
 
       const unitId = state.players[P1].hand.find(id => {
         const def = state.cardDefinitions[state.allCards[id].cardId];
-        return def.type === 'Unit' && !def.keywords.includes('Ganking');
+        return def.type === 'Gear' && (def.cost?.rune ?? 0) > 0 && (def.cost?.power ?? 0) === 0;
       });
-      if (!unitId) return;
+      expect(gearId).toBeDefined();
 
-      // Play the unit first
-      state.allCards[unitId].location = 'battlefield';
-      state.allCards[unitId].battlefieldId = bfId;
-      state.allCards[unitId].ready = true;
-      state.battlefields[0].units.push(unitId);
-      state.players[P1].hand = state.players[P1].hand.filter(id => id !== unitId);
+      const result = executeAction(state, makeAction('PlayGear', P1, {
+        cardInstanceId: gearId!,
+        targetBattlefieldId: `base_${P1}`,
+      }));
 
-      const moveAction = makeAction('MoveUnit', P1, {
-        cardInstanceId: unitId,
-        fromBattlefieldId: bfId,
-        toBattlefieldId: state.battlefields[1].id,
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Not enough ready runes.');
+    });
+
+    it('successfully plays gear to the player base by battlefield target', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const baseId = `base_${P1}`;
+      const gearId = ensureHandCard(state, P1, id => {
+        const def = state.cardDefinitions[state.allCards[id].cardId];
+        return def.type === 'Gear' && (def.cost?.power ?? 0) === 0;
       });
+      expect(gearId).toBeDefined();
+
+      const def = state.cardDefinitions[state.allCards[gearId!].cardId];
+      addReadyRunes(state, P1, (def.cost?.rune ?? 0) + 2);
+
+      const result = executeAction(state, makeAction('PlayGear', P1, {
+        cardInstanceId: gearId!,
+        targetBattlefieldId: baseId,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.allCards[gearId!].location).toBe('battlefield');
+      expect(result.newState!.allCards[gearId!].battlefieldId).toBe(baseId);
+      expect(result.newState!.players[P1].equipment[gearId!]).toBeUndefined();
+      expect(result.newState!.players[P1].hand).not.toContain(gearId);
+    });
+
+    it('rejects playing gear without a unit or battlefield target', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const gearId = ensureHandCard(state, P1, id =>
+        state.cardDefinitions[state.allCards[id].cardId].type === 'Gear'
+      );
+      expect(gearId).toBeDefined();
+
+      const result = executeAction(state, makeAction('PlayGear', P1, {
+        cardInstanceId: gearId!,
+      }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Gear needs a unit or battlefield target.');
+    });
+  });
+
+  describe('MoveUnit', () => {
+    it('moves a ready non-Ganking unit from base to battlefield and exhausts it', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const baseId = `base_${P1}`;
+      const targetBfId = state.battlefields.find(bf => bf.id !== baseId && !bf.id.startsWith('base_'))!.id;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      state.cardDefinitions[state.allCards[unitId!].cardId].keywords = [];
+      placeUnitAt(state, P1, unitId!, baseId, true);
+
+      const result = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        fromBattlefieldId: baseId,
+        toBattlefieldId: targetBfId,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.allCards[unitId!].battlefieldId).toBe(targetBfId);
+      expect(result.newState!.allCards[unitId!].ready).toBe(false);
+      expect(result.newState!.allCards[unitId!].exhausted).toBe(true);
+      expect(result.newState!.battlefields.find(bf => bf.id === baseId)!.units).not.toContain(unitId);
+      expect(result.newState!.battlefields.find(bf => bf.id === targetBfId)!.units).toContain(unitId);
+    });
+
+    it('moves a ready non-Ganking unit from battlefield to own base and exhausts it', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const sourceBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const baseId = `base_${P1}`;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      state.cardDefinitions[state.allCards[unitId!].cardId].keywords = [];
+      placeUnitAt(state, P1, unitId!, sourceBfId, true);
+
+      const result = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        toBattlefieldId: baseId,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.allCards[unitId!].battlefieldId).toBe(baseId);
+      expect(result.newState!.allCards[unitId!].exhausted).toBe(true);
+      expect(result.newState!.battlefields.find(bf => bf.id === sourceBfId)!.units).not.toContain(unitId);
+      expect(result.newState!.battlefields.find(bf => bf.id === baseId)!.units).toContain(unitId);
+    });
+
+    it('rejects battlefield-to-battlefield move without Ganking', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const sourceBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_') && bf.id !== sourceBfId)!.id;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      state.cardDefinitions[state.allCards[unitId!].cardId].keywords = [];
+      placeUnitAt(state, P1, unitId!, sourceBfId, true);
+
+      const result = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        fromBattlefieldId: sourceBfId,
+        toBattlefieldId: targetBfId,
+      }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Unit does not have Ganking.');
+      expect(state.allCards[unitId!].battlefieldId).toBe(sourceBfId);
+    });
+
+    it('moves a ready Ganking unit battlefield-to-battlefield and exhausts it', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const sourceBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_') && bf.id !== sourceBfId)!.id;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      state.cardDefinitions[state.allCards[unitId!].cardId].keywords = ['Ganking'];
+      placeUnitAt(state, P1, unitId!, sourceBfId, true);
+
+      const result = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        toBattlefieldId: targetBfId,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.allCards[unitId!].battlefieldId).toBe(targetBfId);
+      expect(result.newState!.allCards[unitId!].exhausted).toBe(true);
+    });
+
+    it('batch moves multiple ready units from different origins to one destination atomically', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const baseId = `base_${P1}`;
+      const sourceBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_') && bf.id !== sourceBfId)!.id;
+      const firstUnitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(firstUnitId).toBeDefined();
+      const secondUnitId = ensureHandCard(state, P1, id =>
+        id !== firstUnitId && state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
+      );
+      expect(secondUnitId).toBeDefined();
+      state.cardDefinitions[state.allCards[firstUnitId!].cardId].keywords = [];
+      state.cardDefinitions[state.allCards[secondUnitId!].cardId].keywords = ['Ganking'];
+      placeUnitAt(state, P1, firstUnitId!, baseId, true);
+      placeUnitAt(state, P1, secondUnitId!, sourceBfId, true);
+
+      const result = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceIds: [firstUnitId!, secondUnitId!],
+        toBattlefieldId: targetBfId,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.allCards[firstUnitId!].battlefieldId).toBe(targetBfId);
+      expect(result.newState!.allCards[secondUnitId!].battlefieldId).toBe(targetBfId);
+      expect(result.newState!.allCards[firstUnitId!].exhausted).toBe(true);
+      expect(result.newState!.allCards[secondUnitId!].exhausted).toBe(true);
+      expect(result.newState!.battlefields.find(bf => bf.id === targetBfId)!.units).toEqual(
+        expect.arrayContaining([firstUnitId!, secondUnitId!])
+      );
+    });
+
+    it('rejects a batch with one invalid unit and leaves every unit unmoved', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const baseId = `base_${P1}`;
+      const sourceBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_') && bf.id !== sourceBfId)!.id;
+      const firstUnitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(firstUnitId).toBeDefined();
+      const secondUnitId = ensureHandCard(state, P1, id =>
+        id !== firstUnitId && state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
+      );
+      expect(secondUnitId).toBeDefined();
+      state.cardDefinitions[state.allCards[firstUnitId!].cardId].keywords = [];
+      state.cardDefinitions[state.allCards[secondUnitId!].cardId].keywords = [];
+      placeUnitAt(state, P1, firstUnitId!, baseId, true);
+      placeUnitAt(state, P1, secondUnitId!, sourceBfId, true);
+
+      const result = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceIds: [firstUnitId!, secondUnitId!],
+        toBattlefieldId: targetBfId,
+      }));
       moveAction.turn = 1;
       moveAction.phase = 'Action';
 
-      const moveResult = executeAction(state, moveAction);
-      expect(moveResult.success).toBe(false);
-      expect(moveResult.error).toBe('Unit does not have Ganking.');
+      expect(result.success).toBe(false);
+      expect(result.newState).toBeUndefined();
+      expect(state.allCards[firstUnitId!].battlefieldId).toBe(baseId);
+      expect(state.allCards[secondUnitId!].battlefieldId).toBe(sourceBfId);
+      expect(state.allCards[firstUnitId!].ready).toBe(true);
+      expect(state.allCards[secondUnitId!].ready).toBe(true);
+    });
+
+    it('rejects exhausted, enemy, non-unit, duplicate, same-location, missing-destination, and wrong-phase moves', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const baseId = `base_${P1}`;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      placeUnitAt(state, P1, unitId!, baseId, false);
+
+      expect(executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        toBattlefieldId: targetBfId,
+      })).error).toBe('Unit is exhausted.');
+
+      state.allCards[unitId!].ready = true;
+      state.allCards[unitId!].exhausted = false;
+      expect(executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        toBattlefieldId: baseId,
+      })).error).toBe('Unit is already at that location.');
+
+      expect(executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        toBattlefieldId: 'missing_battlefield',
+      })).error).toBe('Destination battlefield not found.');
+
+      expect(executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceIds: [unitId!, unitId!],
+        toBattlefieldId: targetBfId,
+      })).error).toBe('Cannot move the same unit more than once.');
+
+      const enemyUnitId = ensureHandCard(state, P2, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(enemyUnitId).toBeDefined();
+      placeUnitAt(state, P2, enemyUnitId!, `base_${P2}`, true);
+      expect(executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: enemyUnitId!,
+        toBattlefieldId: targetBfId,
+      })).error).toBe('Cannot move enemy units.');
+
+      const gearId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Gear');
+      expect(gearId).toBeDefined();
+      state.allCards[gearId!].location = 'battlefield';
+      state.allCards[gearId!].battlefieldId = baseId;
+      state.battlefields.find(bf => bf.id === baseId)!.units.push(gearId!);
+      expect(executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: gearId!,
+        toBattlefieldId: targetBfId,
+      })).error).toBe('Only units can move.');
+
+      const wrongPhaseState = deepClone(state);
+      wrongPhaseState.phase = 'Draw';
+      expect(executeAction(wrongPhaseState, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        toBattlefieldId: targetBfId,
+      })).error).toBe('Move actions are only allowed during Action phase.');
     });
   });
 
@@ -348,7 +682,7 @@ describe('GameEngine', () => {
       const bfId = state.battlefields[0].id;
 
       // Put a unit on the BF first
-      const unitId = state.players[P1].hand.find(id =>
+      const unitId = ensureHandCard(state, P1, id =>
         state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
       );
       expect(unitId).toBeDefined();
@@ -359,7 +693,8 @@ describe('GameEngine', () => {
       state.players[P1].hand = state.players[P1].hand.filter(id => id !== unitId);
 
       // Find another unit
-      const nextUnitId = state.players[P1].hand.find(id =>
+      const nextUnitId = ensureHandCard(state, P1, id =>
+        id !== unitId &&
         state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
       );
       expect(nextUnitId).toBeDefined();
@@ -590,3 +925,4 @@ describe('GameEngine', () => {
     });
   });
 });
+
