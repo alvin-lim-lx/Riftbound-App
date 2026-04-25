@@ -361,6 +361,9 @@ describe('GameEngine', () => {
       state.activePlayerId = P1;
       state.phase = 'Action';
       const gearId = ensureHandCard(state, P1, id => {
+      const bfId = state.battlefields[0].id;
+
+      const unitId = state.players[P1].hand.find(id => {
         const def = state.cardDefinitions[state.allCards[id].cardId];
         return def.type === 'Gear' && (def.cost?.rune ?? 0) > 0 && (def.cost?.power ?? 0) === 0;
       });
@@ -566,6 +569,8 @@ describe('GameEngine', () => {
         cardInstanceIds: [firstUnitId!, secondUnitId!],
         toBattlefieldId: targetBfId,
       }));
+      moveAction.turn = 1;
+      moveAction.phase = 'Action';
 
       expect(result.success).toBe(false);
       expect(result.newState).toBeUndefined();
