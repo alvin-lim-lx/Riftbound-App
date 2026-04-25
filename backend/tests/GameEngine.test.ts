@@ -9,6 +9,11 @@ import {
   getLegalActions,
   deepClone,
   enterPhase,
+  enterShowdown,
+  canClaimFocus,
+  handleFocus,
+  canPlayReaction,
+  resolveCombat,
 } from '../src/engine/GameEngine';
 import type { GameAction, GameState, SystemLogEntry, GameLogEntry } from '../shared/src/types';
 
@@ -360,8 +365,9 @@ describe('GameEngine', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       state.activePlayerId = P1;
       state.phase = 'Action';
-      const gearId = ensureHandCard(state, P1, id => {
-      const bfId = state.battlefields[0].id;
+      const gearId = ensureHandCard(state, P1, id =>
+        state.cardDefinitions[state.allCards[id].cardId].type === 'Gear'
+      );
 
       const unitId = state.players[P1].hand.find(id => {
         const def = state.cardDefinitions[state.allCards[id].cardId];
@@ -569,8 +575,6 @@ describe('GameEngine', () => {
         cardInstanceIds: [firstUnitId!, secondUnitId!],
         toBattlefieldId: targetBfId,
       }));
-      moveAction.turn = 1;
-      moveAction.phase = 'Action';
 
       expect(result.success).toBe(false);
       expect(result.newState).toBeUndefined();
@@ -791,11 +795,11 @@ describe('GameEngine', () => {
     });
   });
 
-    describe('Concede', () => {
-      it('declares opponent as winner on concede', () => {
-        const state = createGame([P1, P2], ['Alice', 'Bob']);
-        state.activePlayerId = P1;
-        const result = executeAction(state, makeAction('Concede', P1));
+  describe('Concede', () => {
+    it('declares opponent as winner on concede', () => {
+      const state = createGame([P1, P2], ['Alice', 'Bob']);
+      state.activePlayerId = P1;
+      const result = executeAction(state, makeAction('Concede', P1));
       expect(result.success).toBe(true);
       if (result.newState) {
         expect(result.newState.phase).toBe('GameOver');
