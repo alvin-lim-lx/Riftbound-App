@@ -101,9 +101,6 @@ export type Phase =
   | 'Channel'
   | 'Draw'
   | 'Action'
-  | 'FirstMain'
-  | 'Combat'
-  | 'SecondMain'
   | 'End'
   | 'Showdown'
   | 'Scoring'
@@ -123,6 +120,18 @@ export interface CardInstance {
   attachments: string[]; // Gear instanceIds attached
   facing: 'up' | 'down'; // Hidden cards
   owner_hidden: boolean; // Opponent can't see this card
+}
+
+export interface ShowdownState {
+  battlefieldId: string;       // Which BF is contested
+  attackerId: string;          // Unit instanceId that triggered the showdown
+  attackerOwnerId: string;     // PlayerId who initiated the attack/move
+  focusPlayerId: string | null; // Player with Focus (Rule 513) — null if unclaimed
+  defenderIds: string[];       // Defender unit instanceIds at the BF
+  reactionWindowOpen: boolean;  // true = players may play REACTION cards
+  combatResolved: boolean;      // true = combat chain has resolved
+  winner: 'attacker' | 'defender' | 'draw' | null;
+  excessDamage: number;        // Damage remaining after defenders are wiped (for conquest check)
 }
 
 export interface BattlefieldState {
@@ -151,6 +160,7 @@ export interface PlayerState {
   mana: number;    // Current rune resource available
   maxMana: number; // Max rune resource this turn
   charges: number;  // Current charge resource
+  floatingEnergy: number; // Temporary generic energy from recycling ready runes
   legend: string | null;        // CardInstance.instanceId of Champion Legend (Legend Zone)
   chosenChampion: string | null; // CardInstance.instanceId of Chosen Champion (Champion Zone)
   hasGoneFirst: boolean;         // Tracks who went first (for first-turn asymmetry)
@@ -172,6 +182,7 @@ export interface GameState {
   createdAt: number;
   isPvP: boolean;
   effectStack: EffectStackEntry[];  // pending effects that require resolution (start of turn, etc.)
+  showdown: ShowdownState | null;  // active showdown, null when not in a showdown
 }
 
 // --- Action Types ---
@@ -193,7 +204,10 @@ export type ActionType =
   | 'AssignBlocker'
   | 'Concede'
   | 'PhaseChange'
-  | 'TurnChange';
+  | 'TurnChange'
+  | 'Focus'
+  | 'Reaction'
+  | 'CloseReactionWindow';
 
 export interface GameAction {
   id: string;
@@ -207,7 +221,7 @@ export interface GameAction {
 
 // --- Game Log Types ---
 
-export type LogEntryType = 'PhaseChange' | 'TurnChange' | 'Score' | 'GameStart' | 'GameOver' | 'System';
+export type LogEntryType = 'PhaseChange' | 'TurnChange' | 'Score' | 'GameStart' | 'GameOver' | 'System' | 'Showdown' | 'Combat' | 'Focus';
 
 export interface SystemLogEntry {
   id: string;
@@ -227,22 +241,27 @@ export interface PlayUnitPayload {
   battlefieldId: string;
   hidden: boolean;
   accelerate: boolean;
+  powerRuneDomains?: Domain[];
 }
 
 export interface PlaySpellPayload {
   cardInstanceId: string;
   targetId?: string;
   targetBattlefieldId?: string;
+  powerRuneDomains?: Domain[];
 }
 
 export interface PlayGearPayload {
   cardInstanceId: string;
-  targetUnitId: string;
+  targetUnitId?: string;
+  targetBattlefieldId?: string;
+  powerRuneDomains?: Domain[];
 }
 
 export interface MoveUnitPayload {
-  cardInstanceId: string;
-  fromBattlefieldId: string;
+  cardInstanceId?: string;
+  cardInstanceIds?: string[];
+  fromBattlefieldId?: string;
   toBattlefieldId: string;
 }
 
@@ -267,6 +286,20 @@ export interface HideCardPayload {
 export interface ReactFromHiddenPayload {
   cardInstanceId: string;
   triggerActionId?: string;
+}
+
+export interface FocusPayload {
+  // No payload needed — playerId in GameAction identifies who claims
+}
+
+export interface ReactionPayload {
+  cardInstanceId: string;
+  targetId?: string;           // optional target (unit, battlefield)
+  targetBattlefieldId?: string;
+}
+
+export interface CloseReactionWindowPayload {
+  // No payload — server decides when window closes
 }
 
 // --- Game Events (WebSocket) ---

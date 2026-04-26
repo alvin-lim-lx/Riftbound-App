@@ -14,7 +14,7 @@ import {
   canAutoAdvancePhase,
   deepClone,
 } from '../src/engine/GameEngine';
-import type { GameState, GameAction } from 'shared/src/types';
+import type { GameState, GameAction } from '../shared/src/types';
 
 const P1 = 'player_1';
 const P2 = 'player_2';
@@ -30,7 +30,7 @@ function makeAction(
     playerId,
     payload,
     turn: 1,
-    phase: 'FirstMain',
+    phase: 'Action',
     timestamp: Date.now(),
   };
 }
@@ -95,7 +95,7 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       expect(canAutoAdvancePhase(state)).toBe(false);
     });
 
-    it('returns false for Awaken phase when effect stack is non-empty', () => {
+    it('does not let an impossible non-Beginning stack block Awaken auto-advance', () => {
       const state: GameState = {
         ...createGame([P1, P2], ['Alice', 'Bob']),
         phase: 'Awaken',
@@ -110,11 +110,11 @@ describe('Phase Auto-Advance (Issue #12)', () => {
           },
         ],
       };
-      expect(canAutoAdvancePhase(state)).toBe(false);
+      expect(canAutoAdvancePhase(state)).toBe(true);
     });
 
     it('returns false for non-A-B-C-D phases regardless of stack', () => {
-      const phases: GameState['phase'][] = ['FirstMain', 'Combat', 'SecondMain', 'End', 'Action'];
+      const phases: GameState['phase'][] = ['Action', 'End', 'Showdown', 'Scoring'];
       for (const phase of phases) {
         const state: GameState = {
           ...createGame([P1, P2], ['Alice', 'Bob']),
@@ -161,9 +161,9 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       current = advancePhase(current);
       phasesVisited.push(current.phase);
 
-      // Should now be in Action phase (represented as FirstMain sub-phase)
-      expect(current.phase).toBe('FirstMain');
-      expect(phasesVisited).toEqual(['Awaken', 'Beginning', 'Channel', 'Draw', 'FirstMain']);
+      // Should now be in the real Action phase.
+      expect(current.phase).toBe('Action');
+      expect(phasesVisited).toEqual(['Awaken', 'Beginning', 'Channel', 'Draw', 'Action']);
     });
 
     it('blocks on Beginning phase when start-of-turn effect is on the stack', () => {
@@ -189,6 +189,37 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       // Beginning should NOT auto-advance when stack has pending effects
       expect(canAutoAdvancePhase(current)).toBe(false);
     });
+
+    it('adds in-play start-of-Beginning abilities to the stack and stops auto-advance', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.phase = 'Awaken';
+      state.activePlayerId = P1;
+      state.turn = 1;
+      state.effectStack = [];
+
+      const cardId = state.players[P1].hand[0];
+      state.players[P1].hand = state.players[P1].hand.filter(id => id !== cardId);
+      state.allCards[cardId].location = 'battlefield';
+      state.allCards[cardId].battlefieldId = state.battlefields[0].id;
+      state.battlefields[0].units.push(cardId);
+      state.cardDefinitions[state.allCards[cardId].cardId] = {
+        ...state.cardDefinitions[state.allCards[cardId].cardId],
+        abilities: [
+          {
+            trigger: 'Start of Beginning Phase',
+            effect: 'Draw a card.',
+            effectCode: 'BEGINNING:DRAW_1',
+          },
+        ],
+      };
+
+      const beginningState = advancePhase(state);
+
+      expect(beginningState.phase).toBe('Beginning');
+      expect(beginningState.effectStack.length).toBe(1);
+      expect(beginningState.effectStack[0].sourceId).toBe(cardId);
+      expect(canAutoAdvancePhase(beginningState)).toBe(false);
+    });
   });
 
   describe('executeAwakenPhase', () => {
@@ -212,15 +243,21 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       expect(newState.allCards[unitId].exhausted).toBe(false);
     });
 
-    it('resets mana and charges to 2 each', () => {
+    it('readies active runes and clears floating energy', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
-      state.players[P1].mana = 0;
+      state.activePlayerId = P1;
+      state.players[P1].floatingEnergy = 2;
       state.players[P1].charges = 0;
+      const runeId = state.players[P1].runeDeck.shift()!;
+      state.allCards[runeId].location = 'rune';
+      state.allCards[runeId].exhausted = true;
 
       const newState = enterPhase(state, 'Awaken');
 
-      expect(newState.players[P1].mana).toBe(2);
-      expect(newState.players[P1].maxMana).toBe(2);
+      expect(newState.allCards[runeId].exhausted).toBe(false);
+      expect(newState.players[P1].floatingEnergy).toBe(0);
+      expect(newState.players[P1].mana).toBe(1);
+      expect(newState.players[P1].maxMana).toBe(1);
       expect(newState.players[P1].charges).toBe(1);
     });
   });
@@ -244,6 +281,24 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       );
       expect(runePool.length).toBe(2);
     });
+
+    it('channels 3 runes for the second player on their first turn', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.phase = 'Channel';
+      state.activePlayerId = P2;
+      state.turn = 2;
+      state.players[P1].hasGoneFirst = true;
+      state.players[P2].hasGoneFirst = false;
+
+      const initialRuneDeckSize = state.players[P2].runeDeck.length;
+      const newState = enterPhase(state, 'Channel');
+
+      expect(newState.players[P2].runeDeck.length).toBe(initialRuneDeckSize - 3);
+      const runePool = Object.values(newState.allCards).filter(
+        c => c.ownerId === P2 && c.location === 'rune'
+      );
+      expect(runePool.length).toBe(3);
+    });
   });
 
   describe('executeDrawPhase', () => {
@@ -261,7 +316,7 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       expect(newState.players[P1].hand.length).toBe(initialHandSize + 1);
     });
 
-    it('clears the rune pool after drawing', () => {
+    it('keeps the rune pool after drawing', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
       state.phase = 'Channel';
       state.activePlayerId = P1;
@@ -279,11 +334,12 @@ describe('Phase Auto-Advance (Issue #12)', () => {
       const drawState: GameState = { ...channeledState, phase: 'Draw' };
       const newState = enterPhase(drawState, 'Draw');
 
-      // Rune pool should be cleared
+      // Rune pool should persist until runes are recycled for power.
       const runesAfterDraw = Object.values(newState.allCards).filter(
         c => c.ownerId === P1 && c.location === 'rune'
       );
-      expect(runesAfterDraw.length).toBe(0);
+      expect(runesAfterDraw.length).toBe(2);
     });
   });
 });
+

@@ -14,10 +14,10 @@
 import {
   GameState, PlayerState, CardInstance, BattlefieldState,
   Phase, ActionType, GameAction, CardDefinition,
-  SystemLogEntry, GameLogEntry, LogEntryType, EffectStackEntry
+  SystemLogEntry, GameLogEntry, LogEntryType, EffectStackEntry, Domain
 } from '../../shared/src/types';
 import { CARDS } from '../../shared/src/cards';
-import { randomId, shuffle } from './utils';
+import { pickRandom, randomId, shuffle } from './utils';
 
 // ============================================================
 // Types
@@ -46,6 +46,16 @@ export type GameSideEffect =
   | { type: 'ReadyPlayer'; playerId: string }
   | { type: 'GameWin'; playerId: string; reason: string };
 
+const BASE_BATTLEFIELD_PREFIX = 'base_';
+
+function getBaseBattlefieldId(playerId: string): string {
+  return `${BASE_BATTLEFIELD_PREFIX}${playerId}`;
+}
+
+function isBaseBattlefieldId(id: string): boolean {
+  return id.startsWith(BASE_BATTLEFIELD_PREFIX);
+}
+
 // ============================================================
 // Game Factory
 // ============================================================
@@ -65,17 +75,14 @@ export function createGame(
   options: {
     scoreLimit?: number;
     isPvP?: boolean;
+    matchFormat?: 'bo1' | 'bo3';
     playerDecks?: Record<string, PlayerDeckConfig>;
   } = {}
 ): GameState {
-  const { scoreLimit = 8, isPvP = true, playerDecks } = options;
+  const { scoreLimit = 8, isPvP = true, matchFormat = 'bo1', playerDecks } = options;
 
-  // Determine first player's deck config (for battlefield/rune settings)
-  const firstDeckConfig = playerDecks?.[playerIds[0]];
-
-  // Create battlefields
-  // If a deck config is provided with battlefieldIds, use those (first is starting bf)
-  // Otherwise fall back to default 3 battlefields
+  // Create battlefields. In Bo1, each player randomly chooses one of their
+  // three battlefields and those chosen cards are placed in the battlefield zone.
   // Mapping from logical battlefield names to real card IDs in CARDS
   const BF_ID_MAP: Record<string, string> = {
     'Baron_Pit': 'unl-t01',
@@ -84,51 +91,43 @@ export function createGame(
     'The_Grid': 'sfd-214-221',
   };
   const resolveBfCardId = (id: string) => BF_ID_MAP[id] ?? id;
-
-  let battlefields: BattlefieldState[];
-  if (firstDeckConfig?.battlefieldIds && firstDeckConfig.battlefieldIds.length >= 1) {
-    const bfCardIds = firstDeckConfig.battlefieldIds.slice(0, 3);
-    // Pad with defaults if fewer than 3
-    const defaults = ['Baron_Pit', 'Brush', 'The_Grid'];
-    while (bfCardIds.length < 3) bfCardIds.push(defaults[bfCardIds.length]);
-    // Create all 3 battlefields from the deck config
-    battlefields = bfCardIds.map((rawCardId, i) => {
-      const cardId = resolveBfCardId(rawCardId);
-      return {
-        id: `bf_${i}`,
-        name: CARDS[cardId]?.name ?? rawCardId,
-        cardId,
-        controllerId: null,
-        units: [],
-        scoringSince: null,
-        scoringPlayerId: null,
-      };
-    });
-  } else {
-    const battlefieldDefs = ['Baron_Pit', 'Brush'];
-    battlefields = battlefieldDefs.map((rawCardId, i) => {
-      const cardId = resolveBfCardId(rawCardId);
-      return {
-        id: `bf_${i}`,
-        name: CARDS[cardId]?.name ?? rawCardId,
-        cardId,
-        controllerId: null,
-        units: [],
-        scoringSince: null,
-        scoringPlayerId: null,
-      };
-    });
-    const gridCardId = resolveBfCardId('The_Grid');
-    battlefields.push({
-      id: 'bf_2',
-      name: CARDS[gridCardId]?.name ?? 'The Grid',
-      cardId: gridCardId,
+  const defaultBattlefieldIds = ['Baron_Pit', 'Brush', 'The_Grid'];
+  const makeBattlefield = (rawCardId: string, i: number): BattlefieldState => {
+    const cardId = resolveBfCardId(rawCardId);
+    return {
+      id: `bf_${i}`,
+      name: CARDS[cardId]?.name ?? rawCardId,
+      cardId,
       controllerId: null,
       units: [],
       scoringSince: null,
       scoringPlayerId: null,
+    };
+  };
+
+  let battlefields: BattlefieldState[];
+  if (matchFormat === 'bo1') {
+    const chosenBattlefieldIds = playerIds.map((pid, i) => {
+      const candidates = playerDecks?.[pid]?.battlefieldIds?.filter(Boolean).slice(0, 3);
+      return pickRandom(candidates && candidates.length > 0 ? candidates : defaultBattlefieldIds)
+        ?? defaultBattlefieldIds[i % defaultBattlefieldIds.length];
     });
+    battlefields = chosenBattlefieldIds.map(makeBattlefield);
+  } else {
+    const bfCardIds = playerDecks?.[playerIds[0]]?.battlefieldIds?.filter(Boolean).slice(0, 3) ?? [...defaultBattlefieldIds];
+    while (bfCardIds.length < 3) bfCardIds.push(defaultBattlefieldIds[bfCardIds.length]);
+    battlefields = bfCardIds.map(makeBattlefield);
   }
+
+  battlefields.push(...playerIds.map((pid, idx) => ({
+    id: getBaseBattlefieldId(pid),
+    name: `${playerNames[idx] ?? `Player ${idx + 1}`} Base`,
+    cardId: getBaseBattlefieldId(pid),
+    controllerId: pid,
+    units: [],
+    scoringSince: null,
+    scoringPlayerId: null,
+  })));
 
   // Create rune decks and initial hands for each player
   const allCards: Record<string, CardInstance> = {};
@@ -229,6 +228,7 @@ export function createGame(
         runeDeckIds.push(runeId);
       }
     }
+    runeDeckIds = shuffle(runeDeckIds);
 
     // Place Champion Legend in Legend Zone (Rule 112 / 103.1.a)
     let legendInstanceId: string | null = null;
@@ -295,6 +295,7 @@ export function createGame(
       mana: 0,
       maxMana: 0,
       charges: 0,
+      floatingEnergy: 0,
       legend: legendInstanceId,
       chosenChampion: chosenChampionInstanceId,
       hasGoneFirst: false,
@@ -305,6 +306,7 @@ export function createGame(
   // Determine first player randomly (Rule 116) — flip a coin
   const firstPlayerIdx = Math.floor(Math.random() * playerIds.length);
   const firstPlayerId = playerIds[firstPlayerIdx];
+  players[firstPlayerId].hasGoneFirst = true;
 
   return {
     id: `game_${randomId()}`,
@@ -330,6 +332,7 @@ export function createGame(
     createdAt: Date.now(),
     isPvP,
     effectStack: [],  // empty effect stack at game start
+    showdown: null,   // no active showdown at game start
   };
 }
 
@@ -341,8 +344,12 @@ export function executeAction(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  // Validate it's this player's turn
-  if (action.playerId !== state.activePlayerId) {
+  // In Showdown phase, any player involved (attacker or defender) may act
+  const isShowdownParticipant = state.phase === 'Showdown' && state.showdown &&
+    (action.playerId === state.showdown.attackerOwnerId ||
+     state.showdown.defenderIds.some(id => state.allCards[id]?.ownerId === action.playerId));
+
+  if (!isShowdownParticipant && action.playerId !== state.activePlayerId) {
     return { success: false, error: 'Not your turn.', action };
   }
 
@@ -418,6 +425,23 @@ export function executeAction(
       if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
+    case 'Focus': {
+      const result = handleFocus(state, action);
+      if (result.success && result.newState) result.newState.actionLog.push(action);
+      return result;
+    }
+    case 'Reaction': {
+      const result = handleReaction(state, action);
+      if (result.success && result.newState) result.newState.actionLog.push(action);
+      return result;
+    }
+    case 'CloseReactionWindow': {
+      const newState = closeReactionWindow(state);
+      // Automatically resolve combat after window closes
+      const combatResult = resolveCombat(newState);
+      if (combatResult.success && combatResult.newState) combatResult.newState.actionLog.push(action);
+      return combatResult;
+    }
     default:
       return { success: false, error: `Unknown action type: ${action.type}`, action };
   }
@@ -439,26 +463,14 @@ export function canAutoAdvancePhase(state: GameState): boolean {
   if (!AUTO_ADVANCE_PHASES.includes(state.phase)) {
     return false;
   }
-  // Only auto-advance when the effect stack is empty (defensive: treat undefined as empty)
+  if (state.phase !== 'Beginning') {
+    return true;
+  }
+
   return !state.effectStack || state.effectStack.length === 0;
 }
 
 export function advancePhase(state: GameState): GameState {
-  // Handle Action sub-phases
-  if (state.phase === 'FirstMain') {
-    const next = enterPhase(state, 'Combat');
-    return withPhaseLog(next, 'FirstMain', 'Combat');
-  }
-  if (state.phase === 'Combat') {
-    const next = enterPhase(state, 'SecondMain');
-    return withPhaseLog(next, 'Combat', 'SecondMain');
-  }
-  if (state.phase === 'SecondMain') {
-    // End of action phase — advance to End
-    const next = enterPhase(state, 'End');
-    return withPhaseLog(next, 'SecondMain', 'End');
-  }
-
   const currentIdx = PHASE_ORDER.indexOf(state.phase);
   if (currentIdx === -1) return state;
 
@@ -498,7 +510,7 @@ export function startNewTurn(state: GameState): GameState {
   const newState = deepClone(state);
   newState.turn = state.turn + 1;
   newState.activePlayerId = nextPlayerId;
-  newState.effectStack = (state.effectStack ?? []).slice(); // clear effect stack on new turn
+  newState.effectStack = [];
   newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange',
     `Turn ${newState.turn} begins for ${nextPlayerId}`));
   return enterPhase(newState, 'Awaken');
@@ -524,12 +536,6 @@ export function enterPhase(state: GameState, phase: Phase): GameState {
     case 'Draw':
       return executeDrawPhase(newState);
     case 'Action':
-      // Action is a parent phase — enter FirstMain sub-phase
-      return enterPhase(newState, 'FirstMain' as Phase);
-    case 'FirstMain':
-    case 'Combat':
-    case 'SecondMain':
-      // Sub-phases of Action — no special entry behavior
       return newState;
     case 'End':
       return executeEndPhase(newState);
@@ -562,19 +568,24 @@ function executeAwakenPhase(state: GameState): GameState {
   const newState = deepClone(state);
   const player = newState.players[playerId];
 
-  // Reset mana and charges (Awaken behavior)
-  player.mana = 2;
-  player.maxMana = 2;
+  player.floatingEnergy = 0;
   player.charges = 1;
 
-  // Ready all units at battlefields (Awaken behavior)
+  for (const runeId of getActiveRuneIds(newState, playerId)) {
+    newState.allCards[runeId].exhausted = false;
+  }
+
+  // Ready only the active player's units during their Awaken phase.
   for (const bf of newState.battlefields) {
     for (const unitId of bf.units) {
-      newState.allCards[unitId].ready = true;
-      newState.allCards[unitId].exhausted = false;
+      const unit = newState.allCards[unitId];
+      if (unit?.ownerId !== playerId) continue;
+      unit.ready = true;
+      unit.exhausted = false;
     }
   }
 
+  syncRuneResourceCounters(newState, playerId);
   return newState;
 }
 
@@ -583,12 +594,19 @@ function executeBeginningPhase(state: GameState): GameState {
   const newState = deepClone(state);
 
   // Score from Hold — check each battlefield
+  newState.effectStack = state.effectStack ?? [];
+
+  if (newState.effectStack.length === 0) {
+    newState.effectStack.push(...getBeginningPhaseTriggers(newState, playerId));
+  }
+
   for (const bf of newState.battlefields) {
-    if (bf.controllerId && bf.units.length > 0 && bf.scoringSince !== null) {
+    if (isBaseBattlefieldId(bf.id)) continue;
+    if (bf.controllerId === playerId && bf.units.length > 0 && bf.scoringSince !== null) {
       // Player has held battlefield with units all turn
-      const holder = newState.players[bf.scoringPlayerId!];
+      const holder = newState.players[playerId];
       holder.score += 1;
-        newState.actionLog.push(makeLog(newState, bf.scoringPlayerId!, 'Score', `Scored 1 point from ${bf.name}`));
+        newState.actionLog.push(makeLog(newState, playerId, 'Score', `Scored 1 point from ${bf.name}`));
     }
   }
 
@@ -600,15 +618,18 @@ function executeChannelPhase(state: GameState): GameState {
   const newState = deepClone(state);
   const player = newState.players[playerId];
 
-  // Channel 2 Runes from Rune Deck into Rune Pool (top bar)
-  for (let i = 0; i < 2; i++) {
+  // Channel 2 Runes from Rune Deck into Rune Pool. The second player channels 3 on their first turn.
+  const channelCount = state.turn === 2 && !player.hasGoneFirst ? 3 : 2;
+  for (let i = 0; i < channelCount; i++) {
     const runeId = player.runeDeck.shift();
     if (runeId) {
       // Set location to 'rune' (active rune pool visible in top bar)
       (newState.allCards[runeId] as { location: string }).location = 'rune';
+      newState.allCards[runeId].exhausted = false;
     }
   }
 
+  syncRuneResourceCounters(newState, playerId);
   return newState;
 }
 
@@ -624,15 +645,7 @@ function executeDrawPhase(state: GameState): GameState {
     player.hand.push(cardId);
   }
 
-  // Clear Rune Pool (discard all runes from rune pool)
-  const runeIds = Object.keys(newState.allCards).filter(
-    id => newState.allCards[id].ownerId === playerId && newState.allCards[id].location === 'rune'
-  );
-  for (const runeId of runeIds) {
-    (newState.allCards[runeId] as { location: string }).location = 'runeDiscard';
-    player.runeDiscard.push(runeId);
-  }
-
+  syncRuneResourceCounters(newState, playerId);
   return newState;
 }
 
@@ -643,6 +656,8 @@ function executeCombatPhase(state: GameState): GameState {
 
 function executeEndPhase(state: GameState): GameState {
   const newState = deepClone(state);
+  newState.players[newState.activePlayerId].floatingEnergy = 0;
+  syncRuneResourceCounters(newState, newState.activePlayerId);
 
   // Kill Temporary units (End of Turn behavior)
   for (const bf of newState.battlefields) {
@@ -676,6 +691,7 @@ function executeEndPhase(state: GameState): GameState {
 
 export function checkScoring(state: GameState): GameState {
   for (const bf of state.battlefields) {
+    if (isBaseBattlefieldId(bf.id)) continue;
     if (!bf.controllerId) continue;
     if (bf.units.length === 0) {
       // Controller has no units — stop scoring
@@ -702,10 +718,419 @@ export function checkWinCondition(state: GameState): string | null {
 }
 
 // ============================================================
+// Showdown & Combat
+// ============================================================
+
+export function enterShowdown(
+  state: GameState,
+  attackerId: string,
+  targetBattlefieldId: string
+): GameState {
+  const newState = deepClone(state);
+  const bf = newState.battlefields.find(b => b.id === targetBattlefieldId)!;
+  const attacker = state.allCards[attackerId];
+  const attackerOwner = attacker.ownerId;
+
+  // Gather defender unitIds at this BF (opponents only)
+  const defenderIds = bf.units.filter(id =>
+    newState.allCards[id].ownerId !== attackerOwner
+  );
+
+  // Determine who gets Focus:
+  // - If the BF is empty → attacker gets Focus immediately (Rule 508.1)
+  // - If the BF is contested → Focus is unclaimed; players must play Reaction cards
+  const bfIsEmpty = defenderIds.length === 0;
+  const focusPlayerId = bfIsEmpty ? attackerOwner : null;
+
+  newState.phase = 'Showdown';
+  newState.showdown = {
+    battlefieldId: targetBattlefieldId,
+    attackerId,
+    attackerOwnerId: attackerOwner,
+    focusPlayerId,
+    defenderIds,
+    reactionWindowOpen: true,
+    combatResolved: false,
+    winner: null,
+    excessDamage: 0,
+  };
+
+  newState.actionLog.push(makeLog(newState, attackerOwner, 'Showdown',
+    `${state.cardDefinitions[attacker.cardId].name} entered ${bf.name}${bfIsEmpty ? ' (Focus claimed)' : ' — Showdown!'}`));
+
+  return newState;
+}
+
+export function canClaimFocus(state: GameState, playerId: string): boolean {
+  if (state.phase !== 'Showdown' || !state.showdown) return false;
+  if (state.showdown.focusPlayerId !== null) return false;
+  const { attackerOwnerId, defenderIds } = state.showdown;
+  const isAttacker = playerId === attackerOwnerId;
+  const isDefender = defenderIds.some(id => state.allCards[id]?.ownerId === playerId);
+  return isAttacker || isDefender;
+}
+
+export function handleFocus(state: GameState, action: GameAction): ActionResult {
+  if (!canClaimFocus(state, action.playerId)) {
+    return { success: false, error: 'Cannot claim Focus.', action };
+  }
+
+  const newState = deepClone(state);
+  newState.showdown = { ...newState.showdown!, focusPlayerId: action.playerId };
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Focus', `Player claimed Focus.`));
+  return { success: true, action, newState };
+}
+
+export function canPlayReaction(state: GameState, playerId: string, cardInstanceId: string): boolean {
+  if (state.phase !== 'Showdown' || !state.showdown) return false;
+  if (!state.showdown.reactionWindowOpen) return false;
+  const card = state.allCards[cardInstanceId];
+  if (!card || card.location !== 'hand') return false;
+  if (card.ownerId !== playerId) return false;
+  const def = state.cardDefinitions[card.cardId];
+  if (!def.keywords.includes('Reaction')) return false;
+  const player = state.players[playerId];
+  const cost = def.cost?.charges ?? 0;
+  if (player.charges < cost) return false;
+  return true;
+}
+
+export function handleReaction(state: GameState, action: GameAction): ActionResult {
+  const { cardInstanceId } = action.payload as { cardInstanceId: string };
+  if (!canPlayReaction(state, action.playerId, cardInstanceId)) {
+    return { success: false, error: 'Cannot play Reaction card.', action };
+  }
+
+  const newState = deepClone(state);
+  const card = newState.allCards[cardInstanceId];
+  const def = newState.cardDefinitions[card.cardId];
+  const player = newState.players[action.playerId];
+
+  // Pay charges
+  const cost = def.cost?.charges ?? 0;
+  player.charges -= cost;
+
+  // Move to battlefield face-up
+  card.location = 'battlefield';
+  card.facing = 'up';
+  card.owner_hidden = false;
+  const bfId = state.showdown!.battlefieldId;
+  card.battlefieldId = bfId;
+  const bf = newState.battlefields.find(b => b.id === bfId)!;
+  if (!bf.units.includes(cardInstanceId)) bf.units.push(cardInstanceId);
+
+  // Remove from hand
+  player.hand = player.hand.filter(id => id !== cardInstanceId);
+
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Showdown',
+    `${player.name} played Reaction: ${def.name}`));
+
+  return { success: true, action, newState };
+}
+
+export function closeReactionWindow(state: GameState): GameState {
+  if (!state.showdown) return state;
+  const newState = deepClone(state);
+  newState.showdown = { ...newState.showdown, reactionWindowOpen: false };
+  return newState;
+}
+
+export function resolveCombat(state: GameState): ActionResult {
+  if (state.phase !== 'Showdown' || !state.showdown) {
+    return { success: false, error: 'Not in Showdown.', newState: state };
+  }
+  if (state.showdown.combatResolved) {
+    return { success: false, error: 'Combat already resolved.', newState: state };
+  }
+
+  const newState = deepClone(state);
+  const { battlefieldId, attackerId, attackerOwnerId, defenderIds } = newState.showdown;
+  const bf = newState.battlefields.find(b => b.id === battlefieldId)!;
+  const attacker = newState.allCards[attackerId];
+
+  // Close reaction window
+  newState.showdown = { ...newState.showdown, reactionWindowOpen: false };
+
+  // Calculate total Might for each side
+  let totalAttackerMight = calculateMight(newState, attackerId);
+  let totalDefenderMight = defenderIds.reduce((sum, id) => sum + calculateMight(newState, id), 0);
+
+  // Apply Assault keyword to attacker
+  const attackerDef = newState.cardDefinitions[attacker.cardId];
+  const assaultAbility = attackerDef.abilities?.find(a => a.effectCode?.startsWith('GIVE_ASSAULT'));
+  if (assaultAbility) {
+    const match = assaultAbility.effect.match(/\+(\d+)/);
+    if (match) totalAttackerMight += parseInt(match[1]);
+  }
+
+  const effects: GameSideEffect[] = [];
+  let survivingAttackers: string[] = [];
+  let survivingDefenders: string[] = [];
+
+  if (defenderIds.length === 0) {
+    // Empty BF — no combat, just Focus claimed
+    survivingAttackers = [attackerId];
+  } else {
+    // Both sides present — resolve combat
+    // Attacker takes defender Might damage
+    const attackerHp = attacker.currentStats.health ?? attacker.stats.health ?? 1;
+    const newAttackerHp = attackerHp - totalDefenderMight;
+    if (newAttackerHp <= 0) {
+      effects.push({ type: 'KillUnit', unitInstanceId: attackerId });
+      bf.units = bf.units.filter(id => id !== attackerId);
+      attacker.location = 'discard';
+      newState.players[attackerOwnerId].discardPile.push(attackerId);
+    } else {
+      attacker.currentStats.health = newAttackerHp;
+      survivingAttackers = [attackerId];
+    }
+
+    // Defenders each take attacker Might damage
+    survivingDefenders = [];
+    for (const duId of defenderIds) {
+      const defender = newState.allCards[duId];
+      const defHp = defender.currentStats.health ?? defender.stats.health ?? 1;
+      const newDefHp = defHp - totalAttackerMight;
+      if (newDefHp <= 0) {
+        effects.push({ type: 'KillUnit', unitInstanceId: duId });
+        bf.units = bf.units.filter(id => id !== duId);
+        defender.location = 'discard';
+        newState.players[defender.ownerId].discardPile.push(duId);
+      } else {
+        defender.currentStats.health = newDefHp;
+        survivingDefenders.push(duId);
+      }
+    }
+
+    // Determine winner
+    let winner: 'attacker' | 'defender' | 'draw' | null = null;
+    if (survivingAttackers.length > 0 && survivingDefenders.length === 0) {
+      winner = 'attacker';
+    } else if (survivingDefenders.length > 0 && survivingAttackers.length === 0) {
+      winner = 'defender';
+    } else {
+      winner = 'draw';
+    }
+
+    // Excess damage = Might difference for conquest
+    const excess = Math.abs(totalAttackerMight - totalDefenderMight);
+
+    // Conquest: if attacker wins and defenders are wiped
+    if (winner === 'attacker') {
+      bf.controllerId = attackerOwnerId;
+      bf.scoringSince = newState.turn;
+      bf.scoringPlayerId = attackerOwnerId;
+      effects.push({ type: 'ConquerBattlefield', battlefieldId: bf.id, playerId: attackerOwnerId });
+    }
+
+    newState.showdown = {
+      ...newState.showdown!,
+      combatResolved: true,
+      winner,
+      excessDamage: excess,
+    };
+
+    newState.actionLog.push(makeLog(newState, attackerOwnerId, 'Combat',
+      `Combat at ${bf.name}: Attacker Might ${totalAttackerMight} vs Defender Might ${totalDefenderMight} — ${winner?.toUpperCase()}`));
+  }
+
+  // Check win condition
+  const winner = checkWinCondition(newState);
+  if (winner) {
+    newState.phase = 'GameOver';
+    newState.winner = winner;
+    newState.showdown = null;
+    return {
+      success: true,
+      newState,
+      sideEffects: [...effects, { type: 'GameWin', playerId: winner, reason: 'score' }]
+    };
+  }
+
+  // Return to Action phase
+  newState.phase = 'Action';
+  newState.showdown = null;
+  const finalState = newState;
+  return { success: true, newState: finalState, sideEffects: effects };
+}
+
+// ============================================================
+// Rune Payment Helpers
+// ============================================================
+
+const RIFTBOUND_DOMAINS: Domain[] = ['Chaos', 'Calm', 'Fury', 'Mind', 'Body', 'Order'];
+
+type CostPaymentResult = { success: boolean; error?: string };
+
+function getPlayableDomains(def: CardDefinition): Domain[] {
+  return (def.domains ?? []).filter(domain => RIFTBOUND_DOMAINS.includes(domain));
+}
+
+function getRuneDomain(state: GameState, runeId: string): Domain | null {
+  const rune = state.allCards[runeId];
+  const def = rune ? state.cardDefinitions[rune.cardId] : undefined;
+  return getPlayableDomains(def ?? ({} as CardDefinition))[0] ?? null;
+}
+
+function getActiveRuneIds(state: GameState, playerId: string): string[] {
+  return Object.values(state.allCards)
+    .filter(card => card.ownerId === playerId && card.location === 'rune')
+    .map(card => card.instanceId);
+}
+
+function getReadyRuneIds(state: GameState, playerId: string): string[] {
+  return getActiveRuneIds(state, playerId).filter(runeId => !state.allCards[runeId].exhausted);
+}
+
+function syncRuneResourceCounters(state: GameState, playerId: string): void {
+  const player = state.players[playerId];
+  if (!player) return;
+  player.floatingEnergy = player.floatingEnergy ?? 0;
+  const activeRuneIds = getActiveRuneIds(state, playerId);
+  const readyRuneCount = activeRuneIds.filter(runeId => !state.allCards[runeId].exhausted).length;
+  player.mana = readyRuneCount + player.floatingEnergy;
+  player.maxMana = activeRuneIds.length + player.floatingEnergy;
+}
+
+function chooseEnergyRunes(
+  state: GameState,
+  playerId: string,
+  cardDomains: Domain[],
+  amount: number
+): string[] {
+  const readyRuneIds = getReadyRuneIds(state, playerId);
+  const selected = new Set<string>();
+  const take = (predicate: (runeId: string) => boolean, count: number) => {
+    for (const runeId of readyRuneIds) {
+      if (selected.size >= amount || count <= 0) break;
+      if (selected.has(runeId) || !predicate(runeId)) continue;
+      selected.add(runeId);
+      count--;
+    }
+  };
+
+  if (cardDomains.length >= 2) {
+    const firstTarget = Math.ceil(amount / 2);
+    const secondTarget = Math.floor(amount / 2);
+    take(runeId => getRuneDomain(state, runeId) === cardDomains[0], firstTarget);
+    take(runeId => getRuneDomain(state, runeId) === cardDomains[1], secondTarget);
+    take(runeId => cardDomains.includes(getRuneDomain(state, runeId) as Domain), amount - selected.size);
+  } else if (cardDomains.length === 1) {
+    take(runeId => getRuneDomain(state, runeId) === cardDomains[0], amount);
+  }
+
+  take(() => true, amount - selected.size);
+  return [...selected];
+}
+
+function choosePowerRune(
+  state: GameState,
+  playerId: string,
+  preferredDomain: Domain | undefined,
+  alreadySelected: Set<string>
+): string | null {
+  const activeRuneIds = getActiveRuneIds(state, playerId).filter(runeId => !alreadySelected.has(runeId));
+  const passes = [
+    (runeId: string) => state.allCards[runeId].exhausted && getRuneDomain(state, runeId) === preferredDomain,
+    (runeId: string) => !state.allCards[runeId].exhausted && getRuneDomain(state, runeId) === preferredDomain,
+    (runeId: string) => state.allCards[runeId].exhausted,
+    (runeId: string) => !state.allCards[runeId].exhausted,
+  ];
+
+  for (const pass of passes) {
+    const runeId = activeRuneIds.find(pass);
+    if (runeId) return runeId;
+  }
+  return null;
+}
+
+function payCardCosts(
+  state: GameState,
+  playerId: string,
+  def: CardDefinition,
+  extraEnergy = 0,
+  powerRuneDomains: Domain[] = []
+): CostPaymentResult {
+  const player = state.players[playerId];
+  if (!player) return { success: false, error: 'Player not found.' };
+
+  const cardDomains = getPlayableDomains(def);
+  const energyCost = (def.cost?.rune ?? 0) + extraEnergy;
+  const powerCost = def.cost?.power ?? 0;
+
+  if (cardDomains.length >= 2 && powerCost > 0) {
+    if (powerRuneDomains.length !== powerCost) {
+      return { success: false, error: 'Choose one rune domain for each power cost.' };
+    }
+    if (powerRuneDomains.some(domain => !cardDomains.includes(domain))) {
+      return { success: false, error: 'Power rune domain must match one of the card domains.' };
+    }
+  }
+
+  player.floatingEnergy = player.floatingEnergy ?? 0;
+  const floatingSpent = Math.min(player.floatingEnergy, energyCost);
+  const readyNeeded = energyCost - floatingSpent;
+  const energyRunes = chooseEnergyRunes(state, playerId, cardDomains, readyNeeded);
+  if (energyRunes.length < readyNeeded) return { success: false, error: 'Not enough ready runes.' };
+
+  player.floatingEnergy -= floatingSpent;
+  for (const runeId of energyRunes) {
+    state.allCards[runeId].exhausted = true;
+  }
+
+  const selectedPowerRunes = new Set<string>();
+  const selectedPowerRuneIds: string[] = [];
+  for (let i = 0; i < powerCost; i++) {
+    const preferredDomain = cardDomains.length >= 2 ? powerRuneDomains[i] : cardDomains[0];
+    const runeId = choosePowerRune(state, playerId, preferredDomain, selectedPowerRunes);
+    if (!runeId) return { success: false, error: 'Not enough runes to recycle for power.' };
+    selectedPowerRunes.add(runeId);
+    selectedPowerRuneIds.push(runeId);
+  }
+
+  for (const runeId of selectedPowerRuneIds) {
+    const rune = state.allCards[runeId];
+    if (!rune.exhausted) player.floatingEnergy += 1;
+    rune.location = 'runeDeck';
+    rune.exhausted = false;
+    rune.ready = false;
+    player.runeDeck.push(runeId);
+  }
+
+  syncRuneResourceCounters(state, playerId);
+  return { success: true };
+}
+
+function buildAutoPowerRuneDomains(def: CardDefinition): Domain[] {
+  const domains = getPlayableDomains(def);
+  const powerCost = def.cost?.power ?? 0;
+  if (domains.length < 2 || powerCost <= 0) return [];
+  return Array.from({ length: powerCost }, (_, index) => domains[index % 2]);
+}
+
+function canPayCardCosts(
+  state: GameState,
+  playerId: string,
+  def: CardDefinition,
+  extraEnergy = 0,
+  powerRuneDomains: Domain[] = buildAutoPowerRuneDomains(def)
+): boolean {
+  const testState = deepClone(state);
+  return payCardCosts(testState, playerId, def, extraEnergy, powerRuneDomains).success;
+}
+
+// ============================================================
 // Action Handlers
 // ============================================================
 
 function handlePass(state: GameState, action: GameAction): ActionResult {
+  // In Showdown phase, Pass closes the reaction window and resolves combat
+  if (state.phase === 'Showdown') {
+    const newState = closeReactionWindow(deepClone(state));
+    const combatResult = resolveCombat(newState);
+    if (combatResult.success && combatResult.newState) combatResult.newState.actionLog.push(action);
+    return combatResult;
+  }
   const newState = advancePhase(deepClone(state));
   return { success: true, action, newState };
 }
@@ -714,8 +1139,8 @@ function handlePlayUnit(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, battlefieldId, hidden, accelerate } = action.payload as {
-    cardInstanceId: string; battlefieldId: string; hidden: boolean; accelerate?: boolean;
+  const { cardInstanceId, battlefieldId, hidden, accelerate, powerRuneDomains } = action.payload as {
+    cardInstanceId: string; battlefieldId: string; hidden: boolean; accelerate?: boolean; powerRuneDomains?: Domain[];
   };
 
   const card = state.allCards[cardInstanceId];
@@ -727,10 +1152,7 @@ function handlePlayUnit(
   if (def.type !== 'Unit') return { success: false, error: 'Not a unit.', action };
   if (!def.cost) return { success: false, error: 'No cost defined.', action };
 
-  const player = state.players[action.playerId];
-  const manaCost = def.cost.rune;
   const accelCost = accelerate ? 1 : 0;
-  if (player.mana < manaCost + accelCost) return { success: false, error: 'Not enough mana.', action };
 
   const bf = state.battlefields.find(b => b.id === battlefieldId);
   if (!bf) return { success: false, error: 'Battlefield not found.', action };
@@ -738,9 +1160,11 @@ function handlePlayUnit(
   const newState = deepClone(state);
   newState.allCards[cardInstanceId] = { ...newState.allCards[cardInstanceId] };
   const newCard = newState.allCards[cardInstanceId];
+  const newBf = newState.battlefields.find(b => b.id === battlefieldId);
+  if (!newBf) return { success: false, error: 'Battlefield not found.', action };
 
-  // Pay costs
-  newState.players[action.playerId].mana -= (manaCost + accelCost);
+  const costResult = payCardCosts(newState, action.playerId, def, accelCost, powerRuneDomains);
+  if (!costResult.success) return { success: false, error: costResult.error, action };
 
   // Remove from hand
   newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
@@ -750,15 +1174,16 @@ function handlePlayUnit(
   newCard.battlefieldId = battlefieldId;
   newCard.facing = hidden ? 'down' : 'up';
   newCard.owner_hidden = hidden;
-  bf.units.push(cardInstanceId);
+  newBf.units.push(cardInstanceId);
 
-  // Ambush check — if card has Ambush, it can be played during showdown
-  // For now, units played in FirstMain enter ready if no Accelerate
+  // Units enter exhausted by default unless the play explicitly readies them.
   const hasAccelerate = def.keywords.includes('Accelerate');
   if (accelerate && hasAccelerate) {
     newCard.ready = true;
+    newCard.exhausted = false;
   } else {
     newCard.ready = false;
+    newCard.exhausted = true;
   }
 
   // Trigger play abilities
@@ -771,8 +1196,8 @@ function handlePlaySpell(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, targetId, targetBattlefieldId } = action.payload as {
-    cardInstanceId: string; targetId?: string; targetBattlefieldId?: string;
+  const { cardInstanceId, targetId, targetBattlefieldId, powerRuneDomains } = action.payload as {
+    cardInstanceId: string; targetId?: string; targetBattlefieldId?: string; powerRuneDomains?: Domain[];
   };
 
   const card = state.allCards[cardInstanceId];
@@ -782,16 +1207,12 @@ function handlePlaySpell(
   const def = state.cardDefinitions[card.cardId];
   if (def.type !== 'Spell') return { success: false, error: 'Not a spell.', action };
 
-  const player = state.players[action.playerId];
-  const cost = def.cost?.rune ?? 0;
-  if (player.mana < cost) return { success: false, error: 'Not enough mana.', action };
-
   const newState = deepClone(state);
   newState.allCards[cardInstanceId] = { ...newState.allCards[cardInstanceId] };
   const newCard = newState.allCards[cardInstanceId];
 
-  // Pay cost
-  newState.players[action.playerId].mana -= cost;
+  const costResult = payCardCosts(newState, action.playerId, def, 0, powerRuneDomains);
+  if (!costResult.success) return { success: false, error: costResult.error, action };
   newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
   newCard.location = 'discard';
   newState.players[action.playerId].discardPile.push(cardInstanceId);
@@ -806,30 +1227,48 @@ function handlePlayGear(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, targetUnitId } = action.payload as {
-    cardInstanceId: string; targetUnitId: string;
+  const { cardInstanceId, targetUnitId, targetBattlefieldId, powerRuneDomains } = action.payload as {
+    cardInstanceId: string; targetUnitId?: string; targetBattlefieldId?: string; powerRuneDomains?: Domain[];
   };
 
   const card = state.allCards[cardInstanceId];
   if (!card || card.location !== 'hand') return { success: false, error: 'Gear not in hand.', action };
+  if (card.ownerId !== action.playerId) return { success: false, error: 'Not your card.', action };
   const def = state.cardDefinitions[card.cardId];
   if (def.type !== 'Gear') return { success: false, error: 'Not gear.', action };
 
-  const player = state.players[action.playerId];
-  const cost = def.cost?.rune ?? 0;
-  if (player.mana < cost) return { success: false, error: 'Not enough mana.', action };
+  const targetUnit = targetUnitId ? state.allCards[targetUnitId] : undefined;
+  const targetBattlefield = targetBattlefieldId
+    ? state.battlefields.find(bf => bf.id === targetBattlefieldId)
+    : undefined;
+  if (!targetUnit && !targetBattlefield) {
+    return { success: false, error: 'Gear needs a unit or battlefield target.', action };
+  }
+  if (targetUnitId && (!targetUnit || targetUnit.ownerId !== action.playerId || targetUnit.location !== 'battlefield')) {
+    return { success: false, error: 'Gear target unit not found.', action };
+  }
+  if (targetBattlefieldId && (!targetBattlefield || targetBattlefield.controllerId !== action.playerId)) {
+    return { success: false, error: 'Gear target battlefield not found.', action };
+  }
 
   const newState = deepClone(state);
   const newCard = { ...newState.allCards[cardInstanceId] };
   newState.allCards[cardInstanceId] = newCard;
-  newState.players[action.playerId].mana -= cost;
+  const costResult = payCardCosts(newState, action.playerId, def, 0, powerRuneDomains);
+  if (!costResult.success) return { success: false, error: costResult.error, action };
   newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
 
-  // Attach to target unit
-  newCard.location = 'equipment';
-  newCard.battlefieldId = newState.allCards[targetUnitId].battlefieldId;
-  newState.allCards[targetUnitId].attachments.push(cardInstanceId);
-  newState.players[action.playerId].equipment[cardInstanceId] = targetUnitId;
+  if (targetUnitId) {
+    // Attach to target unit.
+    newCard.location = 'equipment';
+    newCard.battlefieldId = newState.allCards[targetUnitId].battlefieldId;
+    newState.allCards[targetUnitId].attachments.push(cardInstanceId);
+    newState.players[action.playerId].equipment[cardInstanceId] = targetUnitId;
+  } else if (targetBattlefieldId) {
+    // Base/zone gear is associated with the destination battlefield without being attached to a unit.
+    newCard.location = 'battlefield';
+    newCard.battlefieldId = targetBattlefieldId;
+  }
 
   return { success: true, action, newState };
 }
@@ -846,38 +1285,88 @@ function handleMoveUnit(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, fromBattlefieldId, toBattlefieldId } = action.payload as {
-    cardInstanceId: string; fromBattlefieldId: string; toBattlefieldId: string;
+  const { cardInstanceId, cardInstanceIds, fromBattlefieldId, toBattlefieldId } = action.payload as {
+    cardInstanceId?: string; cardInstanceIds?: string[]; fromBattlefieldId?: string; toBattlefieldId?: string;
   };
 
-  const unit = state.allCards[cardInstanceId];
-  if (!unit) return { success: false, error: 'Unit not found.', action };
-  if (!unit.ready) return { success: false, error: 'Unit is exhausted.', action };
-
-  const def = state.cardDefinitions[unit.cardId];
-  if (!def.keywords.includes('Ganking')) {
-    return { success: false, error: 'Unit does not have Ganking.', action };
+  if (state.phase !== 'Action') {
+    return { success: false, error: 'Move actions are only allowed during Action phase.', action };
   }
 
-  const fromBf = state.battlefields.find(b => b.id === fromBattlefieldId);
+  const moveUnitIds = cardInstanceIds ?? (cardInstanceId ? [cardInstanceId] : []);
+  if (moveUnitIds.length === 0) return { success: false, error: 'No units selected to move.', action };
+  if (new Set(moveUnitIds).size !== moveUnitIds.length) {
+    return { success: false, error: 'Cannot move the same unit more than once.', action };
+  }
+
+  if (!toBattlefieldId) return { success: false, error: 'Destination battlefield not found.', action };
   const toBf = state.battlefields.find(b => b.id === toBattlefieldId);
-  if (!fromBf || !toBf) return { success: false, error: 'Battlefield not found.', action };
-  if (!state.battlefields.find(b => b.id === toBattlefieldId)?.controllerId) {
-    // Can't move to unconquered BFs unless you have units there or it's neutral
+  if (!toBf) return { success: false, error: 'Destination battlefield not found.', action };
+  if (isBaseBattlefieldId(toBattlefieldId) && toBattlefieldId !== getBaseBattlefieldId(action.playerId)) {
+    return { success: false, error: 'Units can only move to their controller base.', action };
+  }
+
+  const moves: { unitId: string; fromBattlefieldId: string }[] = [];
+  for (const unitId of moveUnitIds) {
+    const unit = state.allCards[unitId];
+    if (!unit) return { success: false, error: 'Unit not found.', action };
+    const def = state.cardDefinitions[unit.cardId];
+    if (!def || def.type !== 'Unit') return { success: false, error: 'Only units can move.', action };
+    if (unit.ownerId !== action.playerId) return { success: false, error: 'Cannot move enemy units.', action };
+    if (unit.location !== 'battlefield' || !unit.battlefieldId) {
+      return { success: false, error: 'Unit is not at a battlefield or base.', action };
+    }
+    if (fromBattlefieldId && unit.battlefieldId !== fromBattlefieldId) {
+      return { success: false, error: 'Unit is not at the declared origin.', action };
+    }
+    if (!unit.ready || unit.exhausted) return { success: false, error: 'Unit is exhausted.', action };
+
+    const fromBf = state.battlefields.find(b => b.id === unit.battlefieldId);
+    if (!fromBf || !fromBf.units.includes(unitId)) {
+      return { success: false, error: 'Origin battlefield not found.', action };
+    }
+    if (unit.battlefieldId === toBattlefieldId) {
+      return { success: false, error: 'Unit is already at that location.', action };
+    }
+
+    const fromIsBase = isBaseBattlefieldId(unit.battlefieldId);
+    const toIsBase = isBaseBattlefieldId(toBattlefieldId);
+    if (fromIsBase && unit.battlefieldId !== getBaseBattlefieldId(action.playerId)) {
+      return { success: false, error: 'Units can only move from their controller base.', action };
+    }
+    if (!fromIsBase && !toIsBase && !(def.keywords ?? []).includes('Ganking')) {
+      return { success: false, error: 'Unit does not have Ganking.', action };
+    }
+
+    moves.push({ unitId, fromBattlefieldId: unit.battlefieldId });
   }
 
   const newState = deepClone(state);
-  const newUnit = newState.allCards[cardInstanceId];
-  newUnit.ready = false; // Moving exhausts
-  newUnit.battlefieldId = toBattlefieldId;
-
-  const newFromBf = newState.battlefields.find(b => b.id === fromBattlefieldId)!;
+  const effects: GameSideEffect[] = [];
   const newToBf = newState.battlefields.find(b => b.id === toBattlefieldId)!;
-  newFromBf.units = newFromBf.units.filter(id => id !== cardInstanceId);
-  newToBf.units.push(cardInstanceId);
+  for (const move of moves) {
+    const newUnit = newState.allCards[move.unitId];
+    newUnit.ready = false;
+    newUnit.exhausted = true;
+    newUnit.battlefieldId = toBattlefieldId;
 
-  // Trigger ability if any (e.g. Jhin: "When I move, Add 1 charge")
-  const effects = resolveAbilities(newState, cardInstanceId, 'MOVE');
+    const newFromBf = newState.battlefields.find(b => b.id === move.fromBattlefieldId)!;
+    newFromBf.units = newFromBf.units.filter(id => id !== move.unitId);
+    if (!newToBf.units.includes(move.unitId)) newToBf.units.push(move.unitId);
+
+    effects.push(...resolveAbilities(newState, move.unitId, 'MOVE'));
+  }
+
+  // Check if destination BF is contested — if so, trigger Showdown for each moved unit
+  const enemyUnitsAtTarget = newToBf.units.filter(id =>
+    newState.allCards[id].ownerId !== action.playerId
+  );
+  if (enemyUnitsAtTarget.length > 0) {
+    // Enter showdown with the first moved unit as attacker (convention)
+    const primaryUnitId = moves[0].unitId;
+    const showdownState = enterShowdown(newState, primaryUnitId, toBattlefieldId);
+    return { success: true, action, newState: showdownState, sideEffects: effects };
+  }
 
   return { success: true, action, newState, sideEffects: effects };
 }
@@ -897,10 +1386,18 @@ function handleAttack(
   const bf = state.battlefields.find(b => b.id === targetBattlefieldId);
   if (!bf) return { success: false, error: 'Target battlefield not found.', action };
 
+  // Move attacker from its current BF to the target BF
   const newState = deepClone(state);
-  newState.phase = 'Showdown';
+  const fromBf = newState.battlefields.find(b => b.id === attacker.battlefieldId);
+  if (fromBf) fromBf.units = fromBf.units.filter(id => id !== attackerId);
+  if (!bf.units.includes(attackerId)) bf.units.push(attackerId);
+  attacker.battlefieldId = targetBattlefieldId;
+  attacker.ready = false;
+  attacker.exhausted = true;
 
-  return { success: true, action, newState };
+  // Enter showdown state (sets phase + ShowdownState)
+  const showdownState = enterShowdown(newState, attackerId, targetBattlefieldId);
+  return { success: true, action, newState: showdownState };
 }
 
 export function resolveShowdown(
@@ -1040,6 +1537,7 @@ function handleDrawRune(state: GameState, action: GameAction): ActionResult {
   newState.allCards[runeId].location = 'hand';
   newState.players[action.playerId].hand.push(runeId);
   newState.players[action.playerId].charges += 1;
+  syncRuneResourceCounters(newState, action.playerId);
 
   return {
     success: true,
@@ -1059,6 +1557,7 @@ function handleUseRune(state: GameState, action: GameAction): ActionResult {
   newState.players[action.playerId].hand.pop();
   newState.players[action.playerId].runeDiscard.push(runeId);
   newState.players[action.playerId].mana += 1;
+  syncRuneResourceCounters(newState, action.playerId);
 
   return { success: true, action, newState };
 }
@@ -1132,40 +1631,30 @@ function handleMulligan(state: GameState, action: GameAction): ActionResult {
   const newState = deepClone(state);
   const allPlayerIds = Object.keys(newState.players);
 
-  // Rule 118: a player may set aside up to 2 cards during mulligan
-  const toReturn = player.hand.filter(id => !keepIds.includes(id));
-  if (toReturn.length > 2) {
+  // Rule 118: a player may set aside up to 2 cards during mulligan.
+  const uniqueKeepIds = Array.from(new Set(keepIds)).filter(id => player.hand.includes(id));
+  const setAsideIds = player.hand.filter(id => !uniqueKeepIds.includes(id));
+  if (setAsideIds.length > 2) {
     return { success: false, error: 'Mulligan: may set aside at most 2 cards.', action };
   }
-  const newHand = keepIds.filter(id => player.hand.includes(id));
 
-  for (const id of toReturn) {
+  newState.players[action.playerId].hand = uniqueKeepIds;
+
+  // Draw replacements before recycling the set-aside cards.
+  for (let i = 0; i < setAsideIds.length; i++) {
+    const replacementId = newState.players[action.playerId].deck.shift();
+    if (!replacementId) break;
+    newState.allCards[replacementId].location = 'hand';
+    newState.players[action.playerId].hand.push(replacementId);
+  }
+
+  // Recycle the set-aside cards by placing them on the bottom of the main deck.
+  for (const id of setAsideIds) {
     newState.allCards[id].location = 'deck';
     newState.players[action.playerId].deck.push(id);
   }
-  newState.players[action.playerId].hand = newHand;
 
-  // Shuffle returned cards back in
-  shuffle(newState.players[action.playerId].deck);
-
-  // Draw back up to hand size of 4 (Rule 118.1-118.3)
-  while (newState.players[action.playerId].hand.length < 4) {
-    const cardId = newState.players[action.playerId].deck.shift();
-    if (cardId) {
-      newState.allCards[cardId].location = 'hand';
-      newState.players[action.playerId].hand.push(cardId);
-    } else break;
-  }
-
-  // Track turn order: the player who was chosen first (activePlayerId at start
-  // of Mulligan phase) hasGoneFirst=true; the second player hasGoneFirst=false.
-  // The first player (hasGoneFirst=true) will take the first turn of the game.
   const opponentId = allPlayerIds.find(id => id !== action.playerId);
-  if (opponentId) {
-    // The player who is NOT acting right now is the first player (they act first in turn order)
-    newState.players[action.playerId].hasGoneFirst = false;  // second to act in turn order
-    newState.players[opponentId].hasGoneFirst = true;         // first to act in turn order
-  }
 
   // Check if both players have completed mulligan BEFORE marking current player ready
   const bothReady = allPlayerIds
@@ -1174,10 +1663,10 @@ function handleMulligan(state: GameState, action: GameAction): ActionResult {
 
   // Mark current player ready
   newState.players[action.playerId].isReady = true;
+  newState.players[action.playerId].mulligansComplete = true;
 
   if (bothReady) {
     // Both players have now completed mulligan — transition to first turn
-    newState.players[action.playerId].mulligansComplete = true;
     // First player (hasGoneFirst=true) takes first turn
     const firstPlayerId = allPlayerIds.find(id => newState.players[id].hasGoneFirst) ?? allPlayerIds[0];
     newState.turn = 1;
@@ -1200,6 +1689,33 @@ function handleMulligan(state: GameState, action: GameAction): ActionResult {
 // ============================================================
 // Ability Resolution
 // ============================================================
+
+function getBeginningPhaseTriggers(state: GameState, playerId: string): EffectStackEntry[] {
+  const triggers: EffectStackEntry[] = [];
+  const startOfBeginningPattern = /(start of .*beginning phase|beginning phase|start of turn)/i;
+
+  for (const card of Object.values(state.allCards)) {
+    if (card.ownerId !== playerId) continue;
+    if (!['battlefield', 'equipment', 'legend', 'championZone'].includes(card.location)) continue;
+
+    const def = state.cardDefinitions[card.cardId];
+    for (const ability of def?.abilities ?? []) {
+      const abilityText = `${ability.trigger} ${ability.effect} ${ability.effectCode ?? ''}`;
+      if (!startOfBeginningPattern.test(abilityText)) continue;
+
+      triggers.push({
+        id: randomId(),
+        sourceId: card.instanceId,
+        trigger: ability.trigger,
+        effect: ability.effect,
+        resolves: false,
+        triggeredBy: playerId,
+      });
+    }
+  }
+
+  return triggers;
+}
 
 function resolveAbilities(
   state: GameState,
@@ -1396,8 +1912,8 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
     actions.push(makeAction('Mulligan', playerId, { keepIds: [...player.hand] }));
   }
 
-  // Pass is legal in Action sub-phases (FirstMain, Combat, SecondMain) and when in Action parent
-  if (['FirstMain', 'Combat', 'SecondMain'].includes(state.phase) || state.phase === 'Action') {
+  // Pass is legal during the Action phase.
+  if (state.phase === 'Action') {
     actions.push(makeAction('Pass', playerId, {}));
   }
 
@@ -1407,42 +1923,50 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
     if (!card) continue;
     const def = state.cardDefinitions[card.cardId];
 
-    if (def.type === 'Unit' && player.mana >= (def.cost?.rune ?? 0)) {
+    if (def.type === 'Unit' && canPayCardCosts(state, playerId, def)) {
+      const powerRuneDomains = buildAutoPowerRuneDomains(def);
       for (const bf of state.battlefields) {
         // In MVP, can play to any BF where you have units (or it's unoccupied)
         if (bf.controllerId === playerId || bf.units.some(id => state.allCards[id]?.ownerId === playerId)) {
-          actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: false }));
-          if (def.keywords.includes('Accelerate')) {
-            actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: true }));
+          actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: false, powerRuneDomains }));
+          if (def.keywords.includes('Accelerate') && canPayCardCosts(state, playerId, def, 1)) {
+            actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: true, powerRuneDomains }));
           }
         }
       }
     }
 
-    if (def.type === 'Spell' && player.mana >= (def.cost?.rune ?? 0)) {
-      actions.push(makeAction('PlaySpell', playerId, { cardInstanceId: cardId }));
+    if (def.type === 'Spell' && canPayCardCosts(state, playerId, def)) {
+      actions.push(makeAction('PlaySpell', playerId, { cardInstanceId: cardId, powerRuneDomains: buildAutoPowerRuneDomains(def) }));
     }
 
-    if (def.type === 'Gear' && player.mana >= (def.cost?.rune ?? 0)) {
+    if (def.type === 'Gear' && canPayCardCosts(state, playerId, def)) {
+      const base = state.battlefields.find(bf => bf.id === getBaseBattlefieldId(playerId));
+      if (base) {
+        actions.push(makeAction('PlayGear', playerId, { cardInstanceId: cardId, targetBattlefieldId: base.id, powerRuneDomains: buildAutoPowerRuneDomains(def) }));
+      }
       for (const bf of state.battlefields) {
+        if (isBaseBattlefieldId(bf.id)) continue;
         const myUnits = bf.units.filter(id => state.allCards[id]?.ownerId === playerId);
         for (const unitId of myUnits) {
-          actions.push(makeAction('PlayGear', playerId, { cardInstanceId: cardId, targetUnitId: unitId }));
+          actions.push(makeAction('PlayGear', playerId, { cardInstanceId: cardId, targetUnitId: unitId, powerRuneDomains: buildAutoPowerRuneDomains(def) }));
         }
       }
     }
   }
 
-  // Move units (Ganking)
+  // Move units
   for (const bf of state.battlefields) {
     for (const unitId of bf.units) {
       const unit = state.allCards[unitId];
-      if (!unit || unit.ownerId !== playerId || !unit.ready) continue;
+      if (!unit || unit.ownerId !== playerId || !unit.ready || unit.exhausted) continue;
       const def = state.cardDefinitions[unit.cardId];
-      if (!def.keywords.includes('Ganking')) continue;
 
       for (const targetBf of state.battlefields) {
         if (targetBf.id === bf.id) continue;
+        if (isBaseBattlefieldId(targetBf.id) && targetBf.id !== getBaseBattlefieldId(playerId)) continue;
+        if (isBaseBattlefieldId(bf.id) && bf.id !== getBaseBattlefieldId(playerId)) continue;
+        if (!isBaseBattlefieldId(bf.id) && !isBaseBattlefieldId(targetBf.id) && !(def.keywords ?? []).includes('Ganking')) continue;
         actions.push(makeAction('MoveUnit', playerId, {
           cardInstanceId: unitId,
           fromBattlefieldId: bf.id,
@@ -1454,6 +1978,7 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
 
   // Attack
   for (const bf of state.battlefields) {
+    if (isBaseBattlefieldId(bf.id)) continue;
     for (const unitId of bf.units) {
       const unit = state.allCards[unitId];
       if (!unit || unit.ownerId !== playerId || !unit.ready) continue;
@@ -1479,7 +2004,7 @@ function makeAction(type: ActionType, playerId: string, payload: Record<string, 
     playerId,
     payload,
     turn: 0,
-    phase: 'FirstMain',
+    phase: 'Action',
     timestamp: Date.now(),
   };
 }

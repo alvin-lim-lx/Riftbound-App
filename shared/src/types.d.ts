@@ -1,5 +1,5 @@
 export type CardType = 'Unit' | 'Spell' | 'Gear' | 'Battlefield' | 'Legend' | 'Rune' | 'Champion' | 'Signature';
-export type Domain = 'Demacia' | 'Noxus' | 'Ionia' | 'Shurima' | 'Freljord' | 'Bilgewater' | 'Piltover' | 'Zaun' | 'Shadow Isles' | 'Void' | 'Ixtal' | 'Bandle';
+export type Domain = 'Chaos' | 'Calm' | 'Fury' | 'Mind' | 'Body' | 'Order' | 'Colorless' | 'Demacia' | 'Noxus' | 'Ionia' | 'Shurima' | 'Freljord' | 'Bilgewater' | 'Piltover' | 'Zaun' | 'Shadow Isles' | 'Void' | 'Ixtal' | 'Bandle';
 export type Keyword = 'Ambush' | 'Assault' | 'Deflect' | 'Ganking' | 'Hidden' | 'Hunt' | 'Accelerate' | 'Temporary' | 'Legions' | 'Lifesteal' | 'SpellShield' | 'Quick' | 'Fearsome' | 'Elusive' | 'Repeat' | 'Action' | 'Reaction' | 'Equip';
 export interface CardCost {
     rune: number;
@@ -29,7 +29,7 @@ export interface CardDefinition {
     imageUrl?: string;
     flavorText?: string;
 }
-export type Phase = 'Setup' | 'Mulligan' | 'Awaken' | 'Beginning' | 'Channel' | 'Draw' | 'Action' | 'FirstMain' | 'Combat' | 'SecondMain' | 'End' | 'Showdown' | 'Scoring' | 'GameOver';
+export type Phase = 'Setup' | 'Mulligan' | 'Awaken' | 'Beginning' | 'Channel' | 'Draw' | 'Action' | 'End' | 'Showdown' | 'Scoring' | 'GameOver';
 export interface CardInstance {
     instanceId: string;
     cardId: string;
@@ -70,6 +70,7 @@ export interface PlayerState {
     mana: number;
     maxMana: number;
     charges: number;
+    floatingEnergy: number;
 }
 export interface GameState {
     id: string;
@@ -101,19 +102,23 @@ export interface PlayUnitPayload {
     battlefieldId: string;
     hidden: boolean;
     accelerate: boolean;
+    powerRuneDomains?: Domain[];
 }
 export interface PlaySpellPayload {
     cardInstanceId: string;
     targetId?: string;
     targetBattlefieldId?: string;
+    powerRuneDomains?: Domain[];
 }
 export interface PlayGearPayload {
     cardInstanceId: string;
     targetUnitId: string;
+    powerRuneDomains?: Domain[];
 }
 export interface MoveUnitPayload {
-    cardInstanceId: string;
-    fromBattlefieldId: string;
+    cardInstanceId?: string;
+    cardInstanceIds?: string[];
+    fromBattlefieldId?: string;
     toBattlefieldId: string;
 }
 export interface AttackPayload {

@@ -14,7 +14,8 @@ import type {
   GameStartEvent, ActionResultEvent, PhaseChangeEvent, GameOverEvent
 } from '../../shared/src/types';
 import {
-  createGame, executeAction, resolveShowdown, advancePhase,
+  createGame, executeAction,
+  advancePhase,
   canAutoAdvancePhase, getLegalActions, type ActionResult
 } from '../engine/GameEngine';
 
@@ -361,15 +362,6 @@ export class GameServer {
         if (result.newState) {
           game.state = result.newState;
 
-          // Handle showdown phase
-          if (game.state.phase === 'Showdown') {
-            const { attackerId, targetBattlefieldId } = action.payload as any;
-            const showdownResult = resolveShowdown(game.state, attackerId, targetBattlefieldId);
-            if (showdownResult.newState) {
-              game.state = showdownResult.newState;
-            }
-          }
-
           // Auto-advance through A-B-C-D phases (Awaken→Beginning→Channel→Draw)
           // when effect stack is empty, BEFORE broadcasting state
           if (game.state.phase !== 'GameOver') {
@@ -415,6 +407,35 @@ export class GameServer {
 
           this.broadcastGameState(game);
           this.scheduleAIMove(game);
+        }
+        break;
+      }
+
+      case 'chat_message': {
+        if (!client) return;
+        const { text } = msg;
+        if (!text || typeof text !== 'string') return;
+
+        // Echo the message back to the sender (and to opponent in PvP games)
+        const echo = {
+          type: 'chat_message',
+          playerId: client.playerId,
+          text: text.slice(0, 200),
+          timestamp: Date.now(),
+        };
+
+        this.send(ws, echo);
+
+        // If in a game, also send to the opponent
+        if (client.gameId) {
+          const game = this.liveGames.get(client.gameId);
+          if (game) {
+            for (const [pid, opponentWs] of game.clients) {
+              if (pid !== client.playerId && opponentWs.readyState === WebSocket.OPEN) {
+                this.send(opponentWs, echo);
+              }
+            }
+          }
         }
         break;
       }
@@ -574,10 +595,8 @@ export class GameServer {
       if (result.success && result.newState) {
         game.state = result.newState;
 
-        if (game.state.phase === 'Showdown') {
-          const { attackerId, targetBattlefieldId } = action.payload as any;
-          const sr = resolveShowdown(game.state, attackerId, targetBattlefieldId);
-          if (sr.newState) game.state = sr.newState;
+        if (game.state.phase !== 'GameOver') {
+          autoAdvanceABCDPhases(game);
         }
 
         this.broadcastGameState(game);

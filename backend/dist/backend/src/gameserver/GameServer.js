@@ -14,6 +14,19 @@ const http_1 = require("http");
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const GameEngine_1 = require("../engine/GameEngine");
+/**
+ * Auto-advance loop for A-B-C-D phases.
+ * After each action, keeps advancing through Awaken→Beginning→Channel→Draw
+ * until either the effect stack blocks further advancement or we reach Action phase.
+ */
+function autoAdvanceABCDPhases(game) {
+    while ((0, GameEngine_1.canAutoAdvancePhase)(game.state)) {
+        const nextState = (0, GameEngine_1.advancePhase)(game.state);
+        game.state = nextState;
+        if (game.state.phase === 'GameOver')
+            return;
+    }
+}
 const RulesBasedAI_1 = require("../ai/RulesBasedAI");
 const cards_1 = require("../../shared/src/cards");
 const utils_1 = require("../engine/utils");
@@ -300,6 +313,11 @@ class GameServer {
                             game.state = showdownResult.newState;
                         }
                     }
+                    // Auto-advance through A-B-C-D phases (Awaken→Beginning→Channel→Draw)
+                    // when effect stack is empty, BEFORE broadcasting state
+                    if (game.state.phase !== 'GameOver') {
+                        autoAdvanceABCDPhases(game);
+                    }
                     this.broadcastGameState(game);
                     // Handle game over
                     if (game.state.phase === 'GameOver' && game.state.winner) {
@@ -330,8 +348,39 @@ class GameServer {
                 const result = (0, GameEngine_1.executeAction)(game.state, passAction);
                 if (result.success && result.newState) {
                     game.state = result.newState;
+                    // Auto-advance through A-B-C-D phases after pass
+                    if (game.state.phase !== 'GameOver') {
+                        autoAdvanceABCDPhases(game);
+                    }
                     this.broadcastGameState(game);
                     this.scheduleAIMove(game);
+                }
+                break;
+            }
+            case 'chat_message': {
+                if (!client)
+                    return;
+                const { text } = msg;
+                if (!text || typeof text !== 'string')
+                    return;
+                // Echo the message back to the sender (and to opponent in PvP games)
+                const echo = {
+                    type: 'chat_message',
+                    playerId: client.playerId,
+                    text: text.slice(0, 200),
+                    timestamp: Date.now(),
+                };
+                this.send(ws, echo);
+                // If in a game, also send to the opponent
+                if (client.gameId) {
+                    const game = this.liveGames.get(client.gameId);
+                    if (game) {
+                        for (const [pid, opponentWs] of game.clients) {
+                            if (pid !== client.playerId && opponentWs.readyState === ws_1.WebSocket.OPEN) {
+                                this.send(opponentWs, echo);
+                            }
+                        }
+                    }
                 }
                 break;
             }

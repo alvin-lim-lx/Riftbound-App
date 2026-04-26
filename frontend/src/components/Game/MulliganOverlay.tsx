@@ -1,9 +1,6 @@
 /**
- * MulliganOverlay — shown during the Mulligan phase.
- * Player clicks cards to select which to KEEP; non-kept cards go back to deck.
- * Rule 118: draw back up to 4 cards after the exchange.
+ * MulliganOverlay - opening-hand keep/replace decision.
  */
-
 import React, { useState, useEffect } from 'react';
 import { gameService } from '../../services/gameService';
 import { CardArtView } from './CardArtView';
@@ -11,13 +8,13 @@ import type { CardInstance, CardDefinition } from '../../shared/types';
 
 interface Props {
   playerId: string;
-  hand: CardInstance[];          // 4 CardInstances in hand
+  hand: CardInstance[];
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
   isMyTurn: boolean;
 }
 
-export function MulliganOverlay({ playerId, hand, allCards, cardDefs, isMyTurn }: Props) {
+export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
   const [selected, setSelected] = useState<Set<string>>(
     () => new Set(hand.map(c => c.instanceId))
   );
@@ -27,6 +24,8 @@ export function MulliganOverlay({ playerId, hand, allCards, cardDefs, isMyTurn }
     setSelected(prev => {
       const next = new Set(prev);
       if (next.has(instanceId)) {
+        const replaceCount = hand.length - next.size;
+        if (replaceCount >= 2) return next;
         next.delete(instanceId);
       } else {
         next.add(instanceId);
@@ -35,12 +34,10 @@ export function MulliganOverlay({ playerId, hand, allCards, cardDefs, isMyTurn }
     });
   }
 
-  // Dismiss overlay when backend advances phase (e.g. after mulligan is accepted)
-  // Also add a safety timeout in case the WS message gets lost
   useEffect(() => {
     const timeout = setTimeout(() => {
       if (isSubmitting) {
-        console.warn('[MulliganOverlay] Safety timeout — force-dismissing');
+        console.warn('[MulliganOverlay] Safety timeout - force-dismissing');
         setIsSubmitting(false);
       }
     }, 8000);
@@ -63,36 +60,51 @@ export function MulliganOverlay({ playerId, hand, allCards, cardDefs, isMyTurn }
 
     const keepIds = hand.filter(c => selected.has(c.instanceId)).map(c => c.instanceId);
     gameService.submitAction({
+      id: `mulligan-${Date.now()}`,
       type: 'Mulligan',
       playerId,
       turn: 0,
       phase: 'Mulligan',
       payload: { keepIds },
+      timestamp: Date.now(),
     });
   }
+
+  const keepCount = selected.size;
+  const replaceCount = hand.length - keepCount;
+  const canSubmit = isMyTurn && !isSubmitting && replaceCount <= 2;
 
   return (
     <div style={styles.overlay}>
       <div style={styles.modal}>
-        <h2 style={styles.title}>⚄ Mulligan Phase</h2>
-        <p style={styles.subtitle}>
-          Click cards you want to <strong>KEEP</strong>. The rest will be shuffled back into your deck.
-          You will draw back up to 4 cards.
-        </p>
+        <div style={styles.header}>
+          <div>
+            <h2 style={styles.title}>Mulligan</h2>
+            <p style={styles.subtitle}>Choose the cards to keep. You may replace up to 2 cards, then draw replacements.</p>
+          </div>
+          <div style={styles.summary}>
+            <span style={styles.keepCount}>{keepCount} keep</span>
+            <span style={styles.replaceCount}>{replaceCount} replace</span>
+          </div>
+        </div>
 
         <div style={styles.cardGrid}>
           {hand.map(card => {
             const def = cardDefs[card.cardId];
             const isSelected = selected.has(card.instanceId);
             return (
-              <div
+              <button
                 key={card.instanceId}
+                type="button"
                 style={{
                   ...styles.cardWrapper,
-                  opacity: isSelected ? 1 : 0.4,
-                  boxShadow: isSelected ? '0 0 0 3px #22c55e' : 'none',
+                  opacity: isSelected ? 1 : 0.58,
+                  borderColor: isSelected ? '#22c55e' : '#f97316',
+                  background: isSelected ? 'rgba(34,197,94,0.1)' : 'rgba(249,115,22,0.1)',
                 }}
                 onClick={() => isMyTurn && !isSubmitting && toggleCard(card.instanceId)}
+                disabled={!isMyTurn || isSubmitting}
+                title={isSelected && replaceCount >= 2 ? 'You can replace up to 2 cards' : isSelected ? 'Click to replace this card' : 'Click to keep this card'}
               >
                 <CardArtView
                   card={card}
@@ -104,29 +116,29 @@ export function MulliganOverlay({ playerId, hand, allCards, cardDefs, isMyTurn }
                 />
                 <div style={{
                   ...styles.keepBadge,
-                  background: isSelected ? '#22c55e' : 'rgba(255,255,255,0.1)',
+                  background: isSelected ? '#22c55e' : '#f97316',
                 }}>
-                  {isSelected ? '✓ KEEP' : 'DISCARD'}
+                  {isSelected ? 'KEEP' : 'REPLACE'}
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
 
         <div style={styles.footer}>
           <span style={styles.count}>
-            Keeping {selected.size} of {hand.length} cards
+            Keeping {keepCount}; replacing {replaceCount}
           </span>
           <button
             style={{
               ...styles.confirmBtn,
-              opacity: (!isMyTurn || isSubmitting) ? 0.5 : 1,
-              cursor: (!isMyTurn || isSubmitting) ? 'not-allowed' : 'pointer',
+              opacity: canSubmit ? 1 : 0.55,
+              cursor: canSubmit ? 'pointer' : 'not-allowed',
             }}
             onClick={handleConfirm}
-            disabled={!isMyTurn || isSubmitting}
+            disabled={!canSubmit}
           >
-            {isSubmitting ? 'Submitting…' : 'Confirm Mulligan'}
+            {isSubmitting ? 'Submitting...' : replaceCount > 0 ? `Replace ${replaceCount} and Start` : 'Keep All and Start'}
           </button>
         </div>
       </div>
@@ -138,60 +150,86 @@ const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(0,0,0,0.85)',
+    background: 'rgba(0,0,0,0.78)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     zIndex: 1000,
-    backdropFilter: 'blur(4px)',
+    backdropFilter: 'blur(3px)',
   },
   modal: {
-    background: '#1a1a2e',
-    border: '1px solid rgba(255,255,255,0.15)',
-    borderRadius: '16px',
-    padding: '32px',
-    maxWidth: '720px',
+    background: 'linear-gradient(180deg, #1e1b35 0%, #111827 100%)',
+    border: '1px solid rgba(148,163,184,0.28)',
+    borderRadius: '14px',
+    padding: '28px 32px',
+    maxWidth: '760px',
     width: '90vw',
-    boxShadow: '0 24px 64px rgba(0,0,0,0.6)',
+    boxShadow: '0 24px 64px rgba(0,0,0,0.62)',
+  },
+  header: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '24px',
+    alignItems: 'flex-start',
+    marginBottom: '22px',
   },
   title: {
-    color: '#e8e8e8',
-    fontSize: '22px',
-    fontWeight: 700,
-    margin: '0 0 8px',
-    textAlign: 'center' as const,
+    color: '#f8fafc',
+    fontSize: '24px',
+    fontWeight: 900,
+    margin: '0 0 6px',
   },
   subtitle: {
-    color: '#9ca3af',
+    color: '#cbd5e1',
     fontSize: '14px',
-    margin: '0 0 24px',
-    textAlign: 'center' as const,
-    lineHeight: 1.5,
+    margin: 0,
+    lineHeight: 1.45,
+    maxWidth: '520px',
+  },
+  summary: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: '6px',
+    flexShrink: 0,
+  },
+  keepCount: {
+    color: '#86efac',
+    fontSize: '12px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+  },
+  replaceCount: {
+    color: '#fdba74',
+    fontSize: '12px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
   },
   cardGrid: {
     display: 'flex',
-    gap: '16px',
+    gap: '12px',
     justifyContent: 'center',
-    flexWrap: 'wrap' as const,
+    flexWrap: 'wrap',
     marginBottom: '24px',
   },
   cardWrapper: {
     display: 'flex',
-    flexDirection: 'column' as const,
+    flexDirection: 'column',
     alignItems: 'center',
     gap: '8px',
     cursor: 'pointer',
-    borderRadius: '10px',
-    transition: 'opacity 0.15s, box-shadow 0.15s',
-    padding: '4px',
+    borderRadius: '12px',
+    transition: 'opacity 0.15s, border-color 0.15s, background 0.15s',
+    padding: '7px',
+    border: '2px solid',
   },
   keepBadge: {
     fontSize: '11px',
-    fontWeight: 700,
-    padding: '3px 10px',
-    borderRadius: '20px',
+    fontWeight: 900,
+    padding: '4px 11px',
+    borderRadius: '999px',
     color: '#fff',
-    letterSpacing: '0.5px',
+    letterSpacing: '0.6px',
   },
   footer: {
     display: 'flex',
@@ -200,17 +238,19 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '16px',
   },
   count: {
-    color: '#9ca3af',
+    color: '#cbd5e1',
     fontSize: '14px',
+    fontWeight: 700,
   },
   confirmBtn: {
-    background: '#22c55e',
+    background: 'linear-gradient(135deg, #22c55e, #16a34a)',
     color: '#fff',
-    border: 'none',
+    border: '1px solid rgba(255,255,255,0.14)',
     borderRadius: '8px',
-    padding: '10px 24px',
+    padding: '11px 24px',
     fontSize: '15px',
-    fontWeight: 700,
+    fontWeight: 900,
     transition: 'opacity 0.15s',
+    boxShadow: '0 8px 20px rgba(34,197,94,0.2)',
   },
 };

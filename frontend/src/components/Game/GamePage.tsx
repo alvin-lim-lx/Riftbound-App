@@ -33,16 +33,23 @@ export function GamePage() {
       storeRef.current.addLog(`Error: ${data.message}`);
     };
 
+    const onChatMessage = (data: any) => {
+      const sender = data.playerId === storeRef.current.playerId ? 'player' : 'opponent';
+      storeRef.current.addChatMessage({ sender, text: data.text });
+    };
+
     gameService.on('game_start', onGameStart);
     gameService.on('game_state_update', onStateUpdate);
     gameService.on('game_over', onGameOver);
     gameService.on('error', onError);
+    gameService.on('chat_message', onChatMessage);
 
     return () => {
       gameService.off('game_start', onGameStart);
       gameService.off('game_state_update', onStateUpdate);
       gameService.off('game_over', onGameOver);
       gameService.off('error', onError);
+      gameService.off('chat_message', onChatMessage);
     };
   }, []);
 

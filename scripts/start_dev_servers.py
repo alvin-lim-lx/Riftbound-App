@@ -193,16 +193,29 @@ def main():
     log("Riftbound Dev Server Manager")
     log("=" * 50)
 
-    # Pre-flight: check Tailscale
+    # Pre-flight: check and start Tailscale if needed
     ts_ok, _ = is_tailscale_running()
     if ts_ok:
         ts_ip = get_tailscale_ip()
         log(f"Tailscale: RUNNING at {ts_ip}")
     else:
-        log("WARNING: Tailscale is not running.")
-        log("  Windows/mobile browsers will not be able to reach dev servers.")
-        log("  Start it with: ~/bin/tailscaled --tun=userspace-networking &")
-        log("  Then: ~/bin/tailscale up --authkey=<key>")
+        log("Tailscale is not running. Starting it...")
+        run("sudo mkdir -p /var/run/tailscale && sudo chown $(whoami):$(whoami) /var/run/tailscale 2>/dev/null || true")
+        run("mkdir -p ~/.local/share/tailscale")
+        # Start daemon in background
+        run("~/bin/tailscaled --tun=userspace-networking &")
+        time.sleep(4)
+        # Authenticate with stored key (key is provisioned once; Tailscale stores session for auto-reconnect)
+        TAILSCALE_AUTHKEY = os.environ.get("TAILSCALE_AUTHKEY", "<key>")
+        up_result = run(f"~/bin/tailscale up --authkey={TAILSCALE_AUTHKEY} 2>&1 || true")
+        ts_ok2, _ = is_tailscale_running()
+        if ts_ok2:
+            ts_ip = get_tailscale_ip()
+            log(f"Tailscale: RUNNING at {ts_ip}")
+        else:
+            log("WARNING: Tailscale started but not connected. Network access may be unavailable.")
+            log("  If authentication is needed, set the TAILSCALE_AUTHKEY env var or run:")
+            log("  ~/bin/tailscale up --authkey=<your-auth-key>")
 
     # Kill existing
     kill_all()

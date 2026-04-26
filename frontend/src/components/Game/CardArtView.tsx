@@ -14,22 +14,40 @@ interface Props {
   showStats?: boolean;     // reserved for future use (stats not shown per issue #13)
   showKeywords?: boolean;  // reserved for future use (keywords not shown per issue #13)
   size?: 'sm' | 'md' | 'lg';
+  maxHeight?: number;      // if set, scales card down to fit this height
+  landscape?: boolean;     // if true, enlarge uses landscape shape (for battlefield cards)
   onClick?: () => void;
   onHover?: (instanceId: string | null) => void;
 }
 
 // Card art aspect ratio (width / height)
 const CARD_ASPECT = 744 / 1039;
+// Battlefield card art aspect ratio (landscape)
+const BF_ASPECT = 1039 / 744;
 
-const sizeMap = {
+const portraitSizeMap = {
   sm: { w: 64, h: 86 },
   md: { w: 100, h: 134 },
   lg: { w: 140, h: 188 },
 };
 
-const ENLARGE_W = 300;
+const landscapeSizeMap = {
+  sm: { w: 104, h: 74 },
+  md: { w: 132, h: 94 },
+  lg: { w: 168, h: 120 },
+};
 
-function getEnlargeDims(smW: number, smH: number): { w: number; h: number; left: number; top: number } {
+const ENLARGE_W = 300;
+const ENLARGE_H = 300;
+
+function getEnlargeDims(smW: number, smH: number, isLandscape: boolean): { w: number; h: number; left: number; top: number } {
+  if (isLandscape) {
+    // Landscape: constrain by height, compute width maintaining landscape aspect
+    const maxH = window.innerHeight - 32;
+    const h = Math.min(ENLARGE_H, maxH);
+    const w = Math.round(h * BF_ASPECT);
+    return { w, h, left: 0, top: 0 };
+  }
   const scale = ENLARGE_W / smW;
   const h = Math.round(smH * scale);
   const maxH = window.innerHeight - 32;
@@ -41,7 +59,7 @@ function getEnlargeDims(smW: number, smH: number): { w: number; h: number; left:
 export function CardArtView({
   card, cardDef, isOpponent = false,
   showStats = false, showKeywords = false,
-  size = 'md', onClick, onHover
+  size = 'md', maxHeight, landscape = false, onClick, onHover
 }: Props) {
   const [hovering, setHovering] = useState(false);
   const [enlargePos, setEnlargePos] = useState<{ w: number; h: number; left: number; top: number } | null>(null);
@@ -54,8 +72,23 @@ export function CardArtView({
 
   const hidden = isOpponent && card.owner_hidden;
   const def = cardDef;
+  const isExhaustedUnitOrGear = card.exhausted && (def?.type === 'Unit' || def?.type === 'Gear');
 
-  const dims = sizeMap[size];
+  const base = landscape ? landscapeSizeMap[size] : portraitSizeMap[size];
+  const aspect = landscape ? BF_ASPECT : CARD_ASPECT;
+  const dims = maxHeight ? { w: Math.round(maxHeight * aspect), h: maxHeight } : base;
+  const reservedDims = isExhaustedUnitOrGear ? { w: dims.h, h: dims.w } : dims;
+
+  const wrapperStyle: React.CSSProperties = {
+    width: reservedDims.w,
+    height: reservedDims.h,
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    overflow: 'visible',
+    position: 'relative',
+  };
 
   const imgStyle: React.CSSProperties = {
     width: dims.w,
@@ -77,14 +110,16 @@ export function CardArtView({
     boxShadow: hovering
       ? '0 8px 24px rgba(0,0,0,0.5)'
       : '0 1px 4px rgba(0,0,0,0.3)',
-    transform: hovering ? 'scale(1.06)' : 'scale(1)',
+    transform: `${isExhaustedUnitOrGear ? 'rotate(90deg)' : 'rotate(0deg)'} ${hovering ? 'scale(1.06)' : 'scale(1)'}`,
+    transformOrigin: 'center',
   };
 
   const handleMouseEnter = () => {
     setHovering(true);
     if (ref.current && def?.imageUrl) {
       const rect = ref.current.getBoundingClientRect();
-      const { w, h } = getEnlargeDims(dims.w, dims.h);
+      const isLandscape = landscape;
+      const { w, h } = getEnlargeDims(dims.w, dims.h, isLandscape);
       // Flip to left if not enough space on right
       const leftSpace = rect.left;
       const rightSpace = window.innerWidth - rect.right;
@@ -110,6 +145,7 @@ export function CardArtView({
 
   if (hidden) {
     return (
+      <div style={wrapperStyle}>
       <div
         ref={ref}
         style={imgStyle}
@@ -124,11 +160,13 @@ export function CardArtView({
           <span style={mightText}>?</span>
         </div>
       </div>
+      </div>
     );
   }
 
   return (
     <>
+      <div style={wrapperStyle}>
       <div
         ref={ref}
         style={imgStyle}
@@ -137,6 +175,7 @@ export function CardArtView({
         onMouseLeave={handleMouseLeave}
         title={def?.name ?? card.cardId}
       />
+      </div>
       {hovering && enlargePos && def?.imageUrl && ReactDOM.createPortal(
         <div
           style={{
@@ -147,7 +186,7 @@ export function CardArtView({
             height: enlargePos.h,
             borderRadius: '10px',
             border: '2px solid rgba(255,255,255,0.3)',
-            background: `url(${def.imageUrl}) center / cover no-repeat`,
+            background: `url(${def.imageUrl}) center / contain no-repeat`,
             boxShadow: '0 16px 48px rgba(0,0,0,0.7)',
             zIndex: 9999,
             pointerEvents: 'none',
