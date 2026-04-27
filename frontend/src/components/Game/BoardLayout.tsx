@@ -32,7 +32,8 @@ import { GameLog } from './GameLog';
 import { ChatBox } from './ChatBox';
 import { MulliganOverlay } from './MulliganOverlay';
 import { CardArtView } from './CardArtView';
-import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase, Domain, BattlefieldState } from '../../shared/types';
+import { SpellTargetingModal, PendingSpell } from './SpellTargetingModal';
+import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase, Domain, BattlefieldState, SpellTargetType, SpellTargeting } from '../../shared/types';
 import { CARDS } from '../../shared/cards';
 import { randomId } from '../../utils/helpers';
 import bodyRuneIcon from '../../assets/runes/Body Rune.png';
@@ -625,11 +626,31 @@ interface PlayerHandRowProps {
   cards: CardInstance[];
   cardDefs: Record<string, CardDefinition>;
   onCardClick?: (instanceId: string) => void;
+  pendingSpell?: PendingSpell | null;
+  onSpellCardClick?: (instanceId: string) => void;
   canInteract?: boolean;
   maxCardHeight?: number;
 }
 
-function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false, maxCardHeight = CARD_HEIGHTS.handMax }: PlayerHandRowProps) {
+function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCardClick, canInteract = false, maxCardHeight = CARD_HEIGHTS.handMax }: PlayerHandRowProps) {
+  const handleClick = (instanceId: string) => {
+    const card = cards.find(c => c.instanceId === instanceId);
+    const def = card ? cardDefs[card.cardId] : undefined;
+
+    if (def && pendingSpell && onSpellCardClick) {
+      // During spell targeting, only allow clicking the pending spell card to cancel
+      if (instanceId === pendingSpell.cardInstanceId) {
+        onSpellCardClick(instanceId);
+        return;
+      }
+      return;
+    }
+    if (def && onSpellCardClick && canInteract && (def.type === 'Spell' || def.type === 'Gear')) {
+      onSpellCardClick(instanceId);
+    } else {
+      onCardClick?.(instanceId);
+    }
+  };
   if (cards.length === 0) {
     return (
       <div style={handStyles.playerContainer}>
@@ -690,7 +711,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, canInteract = false, maxC
                 showKeywords={true}
                 size="md"
                 maxHeight={maxCardHeight}
-                onClick={() => onCardClick?.(card.instanceId)}
+                onClick={() => handleClick(card.instanceId)}
               />
             </div>
           );
@@ -1136,15 +1157,17 @@ interface DeckAreaProps {
   isOpponent: boolean;
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
-  handCards: CardInstance[];    // already-filtered hand cards
-  opponentHandCount: number;    // just the count (hidden)
+  handCards: CardInstance[];
+  opponentHandCount: number;
   myTurn?: boolean;
   phase?: Phase;
   onCardClick?: (instanceId: string) => void;
+  pendingSpell?: PendingSpell | null;
+  onSpellCardClick?: (instanceId: string) => void;
   compactCards?: boolean;
 }
 
-function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick, compactCards = false }: DeckAreaProps) {
+function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick, pendingSpell, onSpellCardClick, compactCards = false }: DeckAreaProps) {
   if (!player) return null;
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
@@ -1210,6 +1233,8 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
           cards={handCards}
           cardDefs={cardDefs}
           onCardClick={onCardClick}
+          pendingSpell={pendingSpell}
+          onSpellCardClick={onSpellCardClick}
           canInteract={myTurn && phase === 'Action'}
           maxCardHeight={handMaxH}
         />
@@ -1257,15 +1282,15 @@ interface BattlefieldRowProps {
   canMoveUnits?: boolean;
   pendingMoveUnitIds?: Set<string>;
   pendingMoveDestinationId?: string | null;
-  selectedTargetId: string | null;
-  selectTarget: (id: string | null) => void;
-  handleAction: (type: string, payload?: Record<string, unknown>) => void;
+  pendingSpell?: PendingSpell | null;
+  onBattlefieldUnitClick?: (unitInstanceId: string) => void;
+  handleAction?: (type: string, payload?: Record<string, unknown>) => void;
   onBattlefieldDrop?: (cardInstanceId: string, battlefieldId: string) => void;
   onMoveDrop?: (cardInstanceId: string, destinationBattlefieldId: string) => void;
   onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, selectedTargetId, selectTarget, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart }: BattlefieldRowProps) {
+function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell, onBattlefieldUnitClick, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart }: BattlefieldRowProps) {
   const { battlefields, allCards, cardDefinitions } = gameState;
   const rowRef = React.useRef<HTMLDivElement>(null);
   const [rowH, setRowH] = React.useState(0);
@@ -1348,6 +1373,8 @@ function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pen
                     const unitTransform = unit.exhausted ? 'rotate(90deg) scale(0.95)' : 'rotate(0deg) scale(1)';
                     const canDragMove = canMoveUnits && isReady;
                     const isPendingMove = pendingMoveUnitIds?.has(unit.instanceId) ?? false;
+                    const isSpellTarget = pendingSpell?.targetType === 'unit' && pendingSpell.selectedTargetIds.includes(unit.instanceId);
+                    const isTargetable = pendingSpell?.targetType === 'unit';
                     return (
                       <div
                         key={unit.instanceId}
@@ -1356,19 +1383,22 @@ function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pen
                           if (!canDragMove) return;
                           onMoveDragStart?.(unit.instanceId, e);
                         }}
+                        onClick={() => isTargetable && onBattlefieldUnitClick?.(unit.instanceId)}
                         style={{
                           ...bfRowStyles.unitChip,
-                          borderColor: '#22c55e',
+                          borderColor: isSpellTarget ? '#fbbf24' : '#22c55e',
+                          boxShadow: isSpellTarget ? '0 0 10px rgba(251,191,36,0.6)' : '0 1px 3px rgba(0,0,0,0.2)',
                           opacity: isPendingMove ? 0.72 : isReady ? 1 : 0.6,
                           transform: unitTransform,
                           transformOrigin: 'center',
-                          cursor: canDragMove ? 'grab' : 'default',
-                          outline: isPendingMove ? '2px solid rgba(251,191,36,0.9)' : 'none',
+                          cursor: isTargetable ? 'crosshair' : canDragMove ? 'grab' : 'default',
+                          outline: isSpellTarget ? '2px solid rgba(251,191,36,0.9)' : isPendingMove ? '2px solid rgba(251,191,36,0.9)' : 'none',
                           outlineOffset: '2px',
                         }}
                         title={def?.name}
                       >
                         <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
+                        {isSpellTarget && <div style={bfRowStyles.targetHint}>Target</div>}
                         <div style={bfRowStyles.unitStats}>
                           <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
                           <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
@@ -1422,24 +1452,30 @@ function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pen
                     const might = unit.currentStats.might ?? unit.stats.might ?? 0;
                     const health = unit.currentStats.health ?? unit.stats.health ?? 1;
                     const isReady = unit.ready && !unit.exhausted;
-                    const isTarget = selectedTargetId === unit.instanceId;
+                    const isSpellTarget = pendingSpell?.targetType === 'unit' && pendingSpell.selectedTargetIds.includes(unit.instanceId);
+                    const isTargetable = pendingSpell?.targetType === 'unit';
                     const unitTransform = unit.exhausted ? 'rotate(90deg) scale(0.95)' : 'rotate(0deg) scale(1)';
                     return (
                       <div
                         key={unit.instanceId}
                         style={{
                           ...bfRowStyles.unitChip,
-                          borderColor: isTarget ? '#fbbf24' : '#ef4444',
+                          borderColor: isSpellTarget ? '#fbbf24' : '#ef4444',
+                          boxShadow: isSpellTarget ? '0 0 10px rgba(251,191,36,0.6)' : '0 1px 3px rgba(0,0,0,0.2)',
                           opacity: isReady ? 1 : 0.6,
                           transform: unitTransform,
                           transformOrigin: 'center',
-                          cursor: 'pointer',
+                          cursor: isTargetable ? 'crosshair' : 'pointer',
                         }}
-                        onClick={() => selectTarget(unit.instanceId)}
+                        onClick={() => isTargetable && onBattlefieldUnitClick?.(unit.instanceId)}
                         title={def?.name}
                       >
                         <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
-                        <div style={bfRowStyles.targetHint}>{isTarget ? 'Target' : 'Select target'}</div>
+                        {isSpellTarget ? (
+                          <div style={bfRowStyles.targetHint}>Target</div>
+                        ) : isTargetable ? (
+                          <div style={bfRowStyles.targetHint}>Select target</div>
+                        ) : null}
                         <div style={bfRowStyles.unitStats}>
                           <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
                           <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
@@ -1950,6 +1986,70 @@ const confirmStyles: Record<string, React.CSSProperties> = {
   },
 };
 
+// ─────────────────────────────────────────
+// Spell targeting helpers
+// ─────────────────────────────────────────
+function getSpellTargeting(def: CardDefinition): SpellTargeting {
+  const effectText = def.abilities.map(a => `${a.effect} ${a.effectCode ?? ''}`).join(' ').toLowerCase();
+
+  const hitsGear = effectText.includes('equip') ||
+    effectText.includes('target a gear');
+
+  const hitsUnit = effectText.includes('unit') ||
+    effectText.includes('deal') ||
+    effectText.includes('buff') ||
+    effectText.includes('stun') ||
+    effectText.includes('banish') ||
+    effectText.includes('ready') ||
+    effectText.includes('kill') ||
+    effectText.includes('destroy');
+
+  // Spell with no target needed (e.g. card draw, board-wide effect)
+  if (!hitsUnit && !hitsGear) return { needsTarget: false, targetType: 'unit' };
+
+  if (hitsGear && !hitsUnit) return { needsTarget: true, targetType: 'gear' };
+  return { needsTarget: true, targetType: 'unit' };
+}
+
+interface ShowdownState {
+  focusPlayerId: string | null;
+  chainOpen: boolean;
+}
+
+function canCastSpell(
+  def: CardDefinition,
+  myTurn: boolean,
+  phase: Phase,
+  showdown: ShowdownState | null,
+  hasFocus: boolean,
+): { allowed: boolean; reason?: string } {
+  const hasReactionKeyword = def.keywords.includes('Reaction');
+  const hasActionKeyword = def.keywords.includes('Action');
+  const chainOpen = showdown?.chainOpen ?? false;
+
+  // Non-showdown (Action phase): all spells can be cast on your turn
+  if (phase !== 'Showdown') {
+    if (phase === 'Action' && myTurn) return { allowed: true };
+    return { allowed: false, reason: 'You can only cast spells during your turn in the Action phase.' };
+  }
+
+  // Showdown phase: action or reaction keyword required + focus
+  if (!hasFocus) return { allowed: false, reason: 'You do not have focus.' };
+
+  if (hasReactionKeyword) {
+    // Reaction: must have open chain + focus
+    if (!chainOpen) return { allowed: false, reason: 'No chain is open — reaction-speed spells require an open chain.' };
+  } else if (hasActionKeyword) {
+    // Action: must have no open chain + focus
+    if (chainOpen) return { allowed: false, reason: 'A chain is open — only reaction-speed spells can be played.' };
+  } else {
+    // No keyword: cannot be played during showdown at all
+    return { allowed: false, reason: 'This spell cannot be played during showdown.' };
+  }
+
+  return { allowed: true };
+}
+
 export function BoardLayout() {
   const store = useGameStore();
   const { gameState, myTurn, phase, playerId } = store;
@@ -1960,6 +2060,7 @@ export function BoardLayout() {
   const [isDragging, setIsDragging] = React.useState(false);
   const [pendingPlayAction, setPendingPlayAction] = React.useState<PendingPlayAction | null>(null);
   const [pendingMoveAction, setPendingMoveAction] = React.useState<PendingMoveAction | null>(null);
+  const [pendingSpell, setPendingSpell] = React.useState<PendingSpell | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
 
   const handleDragStart = React.useCallback((e: React.MouseEvent) => {
@@ -2159,14 +2260,96 @@ export function BoardLayout() {
     store.setModalCard(instanceId);
   }, [store]);
 
-  // DEBUG: track phase changes
-  const prevPhaseRef = React.useRef(phase);
-  React.useEffect(() => {
-    if (prevPhaseRef.current !== phase) {
-      console.log(`[BoardLayout] phase changed: ${prevPhaseRef.current} -> ${phase}`);
-      prevPhaseRef.current = phase;
+  // ─── Spell targeting handlers ─────────────────────────────────────────────────
+
+  const handleSpellCardClick = useCallback((cardInstanceId: string) => {
+    if (!gameState) return;
+
+    // If a spell is already pending, clicking it again cancels
+    if (pendingSpell && cardInstanceId === pendingSpell.cardInstanceId) {
+      const def = gameState?.cardDefinitions[gameState.allCards[pendingSpell.cardInstanceId]?.cardId];
+      store.addLog(`Cancelled casting ${def?.name ?? 'spell'}.`);
+      setPendingSpell(null);
+      return;
     }
-  });
+    if (pendingSpell) return; // different card clicked while spell pending — ignore
+
+    const card = gameState.allCards[cardInstanceId];
+    const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
+    if (!card || !def) {
+
+      return;
+    }
+
+
+
+    const showdown = gameState.showdown;
+    const hasFocus = showdown?.focusPlayerId === playerId;
+    const eligibility = canCastSpell(def, myTurn, phase, showdown ?? null, hasFocus);
+
+    if (!eligibility.allowed) {
+      store.addLog(eligibility.reason ?? 'Cannot cast this spell now.');
+      return;
+    }
+
+    const targeting = getSpellTargeting(def);
+    setPendingSpell({ cardInstanceId, targetType: targeting.targetType, selectedTargetIds: [] });
+    store.addLog(targeting.needsTarget
+      ? `Select targets for ${def.name}.`
+      : `Cast ${def.name}?`
+    );
+  }, [gameState, myTurn, phase, playerId, store]);
+
+  const handleConfirmSpell = useCallback(() => {
+    if (!pendingSpell) return;
+    const def = gameState?.cardDefinitions[gameState.allCards[pendingSpell.cardInstanceId]?.cardId];
+
+    const payload: Record<string, unknown> = { cardInstanceId: pendingSpell.cardInstanceId };
+    if (pendingSpell.selectedTargetIds.length > 0) {
+      payload.targetId = pendingSpell.selectedTargetIds[0];
+    }
+
+    handleAction('PlaySpell', payload);
+    store.addLog(`Cast ${def?.name ?? 'spell'}.`);
+    setPendingSpell(null);
+  }, [pendingSpell, handleAction, gameState, store]);
+
+  const handleTargetSelect = useCallback((targetId: string) => {
+    if (!pendingSpell) return;
+    if (pendingSpell.selectedTargetIds.includes(targetId)) return;
+    setPendingSpell({
+      ...pendingSpell,
+      selectedTargetIds: [...pendingSpell.selectedTargetIds, targetId],
+    });
+  }, [pendingSpell]);
+
+  const handleRemoveTarget = useCallback((targetId: string) => {
+    if (!pendingSpell) return;
+    setPendingSpell({
+      ...pendingSpell,
+      selectedTargetIds: pendingSpell.selectedTargetIds.filter(id => id !== targetId),
+    });
+  }, [pendingSpell]);
+
+  const handleCancelSpell = useCallback(() => {
+    if (!pendingSpell) return;
+    const def = gameState?.cardDefinitions[gameState.allCards[pendingSpell.cardInstanceId]?.cardId];
+    store.addLog(`Cancelled casting ${def?.name ?? 'spell'}.`);
+    setPendingSpell(null);
+  }, [pendingSpell, gameState, store]);
+
+  // Escape key closes the modal
+  React.useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && pendingSpell) {
+        handleCancelSpell();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [pendingSpell, handleCancelSpell]);
+
+
 
   if (!gameState) {
     return (
@@ -2256,8 +2439,8 @@ export function BoardLayout() {
                 canMoveUnits={canMoveUnits}
                 pendingMoveUnitIds={pendingMoveUnitIds}
                 pendingMoveDestinationId={pendingMoveDestinationId}
-                selectedTargetId={store.selectedTargetId}
-                selectTarget={store.selectTarget}
+                pendingSpell={pendingSpell}
+                onBattlefieldUnitClick={handleTargetSelect}
                 handleAction={handleAction}
                 onBattlefieldDrop={(cardInstanceId, battlefieldId) => queuePlayFromDrop(cardInstanceId, battlefieldId, 'battlefield')}
                 onMoveDrop={queueMoveFromDrop}
@@ -2296,6 +2479,8 @@ export function BoardLayout() {
                 myTurn={myTurn}
                 phase={phase}
                 onCardClick={handleCardClick}
+                pendingSpell={pendingSpell}
+                onSpellCardClick={handleSpellCardClick}
                 compactCards={isShort || isNarrow}
               />
             </div>
@@ -2366,6 +2551,18 @@ export function BoardLayout() {
         />
       )}
 
+      {/* Spell targeting modal */}
+      {pendingSpell && (
+        <SpellTargetingModal
+          pendingSpell={pendingSpell}
+          allCards={gameState.allCards}
+          cardDefs={cardDefs}
+          onConfirm={handleConfirmSpell}
+          onCancel={handleCancelSpell}
+          onRemoveTarget={handleRemoveTarget}
+        />
+      )}
+
       {/* Mulligan overlay */}
       {phase === 'Mulligan' && playerHandCards.length > 0 && (
         <MulliganOverlay
@@ -2422,12 +2619,6 @@ const styles: Record<string, React.CSSProperties> = {
   },
   boardGridShort: {
     gap: '3px',
-  },
-  // Generic row
-  row: {
-    flexShrink: 0,
-    maxWidth: '100%',
-    overflowX: 'hidden',
   },
 
   // Fallback row style; named rows below carry the weighted layout.

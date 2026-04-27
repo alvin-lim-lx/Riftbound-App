@@ -105,6 +105,51 @@ export interface CardInstance {
   owner_hidden: boolean;
 }
 
+export interface EffectStackEntry {
+  id: string;
+  sourceId: string;
+  trigger: string;
+  effect: string;
+  resolves: boolean;
+  triggeredBy?: string;
+}
+
+export interface ReactionPayload {
+  cardInstanceId: string;
+  targetId?: string;
+  targetBattlefieldId?: string;
+}
+
+// Spell targeting
+export type SpellTargetType = 'unit' | 'gear';
+
+export interface SpellTargeting {
+  needsTarget: boolean;
+  targetType: SpellTargetType;
+}
+
+export interface ShowdownState {
+  focusPlayerId: string | null;
+  chainOpen: boolean;
+}
+
+export interface GameState {
+  id: string;
+  turn: number;
+  phase: Phase;
+  activePlayerId: string;
+  players: Record<string, PlayerState>;
+  battlefields: BattlefieldState[];
+  allCards: Record<string, CardInstance>;
+  cardDefinitions: Record<string, CardDefinition>;
+  winner: string | null;
+  scoreLimit: number;
+  actionLog: GameAction[];
+  createdAt: number;
+  isPvP: boolean;
+  showdown?: ShowdownState;
+}
+
 export interface BattlefieldState {
   id: string;
   name: string;
@@ -167,7 +212,10 @@ export type ActionType =
   | 'HideCard'
   | 'ReactFromHidden'
   | 'AssignBlocker'
-  | 'Concede';
+  | 'Concede'
+  | 'Focus'
+  | 'Reaction'
+  | 'CloseReactionWindow';
 
 export interface GameAction {
   id: string;
