@@ -2423,6 +2423,12 @@ const styles: Record<string, React.CSSProperties> = {
   boardGridShort: {
     gap: '3px',
   },
+  // Generic row
+  row: {
+    flexShrink: 0,
+    maxWidth: '100%',
+    overflowX: 'hidden',
+  },
 
   // Fallback row style; named rows below carry the weighted layout.
   row: {

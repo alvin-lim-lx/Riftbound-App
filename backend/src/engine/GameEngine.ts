@@ -14,7 +14,8 @@
 import {
   GameState, PlayerState, CardInstance, BattlefieldState,
   Phase, ActionType, GameAction, CardDefinition,
-  SystemLogEntry, GameLogEntry, LogEntryType, EffectStackEntry, Domain
+  SystemLogEntry, GameLogEntry, LogEntryType, EffectStackEntry, Domain,
+  ShowdownStackEntry
 } from '../../shared/src/types';
 import { CARDS } from '../../shared/src/cards';
 import { pickRandom, randomId, shuffle } from './utils';
@@ -174,6 +175,7 @@ export function createGame(
         attachments: [],
         facing: 'up',
         owner_hidden: false,
+        damage: 0,
       };
       deckInstanceIds.push(instId);
     }
@@ -204,6 +206,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         runeDeckIds.push(rid);
       }
@@ -224,6 +227,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         runeDeckIds.push(runeId);
       }
@@ -249,6 +253,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         legendInstanceId = lid;
       }
@@ -273,6 +278,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         chosenChampionInstanceId = cid;
       }
@@ -300,6 +306,7 @@ export function createGame(
       chosenChampion: chosenChampionInstanceId,
       hasGoneFirst: false,
       mulligansComplete: false,
+      baseZone: [],
     };
   });
 
@@ -426,9 +433,10 @@ export function executeAction(
       return result;
     }
     case 'Focus': {
-      const result = handleFocus(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
+      // Focus action is deprecated — attacker now starts with focus automatically.
+      // handleFocus is kept as-is for backwards compatibility but is unreachable
+      // via executeAction since the Focus case is no longer routed here.
+      return { success: false, error: 'Focus action is deprecated.', action };
     }
     case 'Reaction': {
       const result = handleReaction(state, action);
@@ -656,6 +664,10 @@ function executeCombatPhase(state: GameState): GameState {
 
 function executeEndPhase(state: GameState): GameState {
   const newState = deepClone(state);
+
+  // Reset damage for all units at end of turn
+  resetDamage(newState);
+
   newState.players[newState.activePlayerId].floatingEnergy = 0;
   syncRuneResourceCounters(newState, newState.activePlayerId);
 
@@ -738,14 +750,14 @@ export function enterShowdown(
 
   // Determine who gets Focus:
   // - If the BF is empty → attacker gets Focus immediately (Rule 508.1)
-  // - If the BF is contested → Focus is unclaimed; players must play Reaction cards
+  // - If the BF is contested → Focus goes to attacker automatically (flowchart: attacker starts)
   const bfIsEmpty = defenderIds.length === 0;
-  const focusPlayerId = bfIsEmpty ? attackerOwner : null;
+  const focusPlayerId = bfIsEmpty ? attackerOwner : attackerOwner;
 
   newState.phase = 'Showdown';
   newState.showdown = {
     battlefieldId: targetBattlefieldId,
-    attackerId,
+    attackerIds: [attackerId],
     attackerOwnerId: attackerOwner,
     focusPlayerId,
     defenderIds,
@@ -753,7 +765,45 @@ export function enterShowdown(
     combatResolved: false,
     winner: null,
     excessDamage: 0,
+    actionStack: [],
+    passTracker: [false, false],
+    chainOpen: true,
   };
+
+  // --- Initial Chain (automatic) ---
+  // Push "When I Attack" ability from the attacker onto the stack
+  const attackerDef = state.cardDefinitions[attacker.cardId];
+  for (const ability of attackerDef.abilities ?? []) {
+    if (ability.trigger === 'ATTACK') {
+      newState.showdown.actionStack.push({
+        id: randomId(),
+        sourceId: attackerId,
+        ownerId: attackerOwner,
+        type: 'ability',
+        effect: ability.effect,
+        resolves: false,
+      });
+    }
+  }
+
+  // Push "When I Defend" ability from each defender onto the stack
+  for (const defId of defenderIds) {
+    const defCard = state.allCards[defId];
+    if (!defCard) continue;
+    const defDef = state.cardDefinitions[defCard.cardId];
+    for (const ability of defDef.abilities ?? []) {
+      if (ability.trigger === 'DEFEND') {
+        newState.showdown.actionStack.push({
+          id: randomId(),
+          sourceId: defId,
+          ownerId: defCard.ownerId,
+          type: 'ability',
+          effect: ability.effect,
+          resolves: false,
+        });
+      }
+    }
+  }
 
   newState.actionLog.push(makeLog(newState, attackerOwner, 'Showdown',
     `${state.cardDefinitions[attacker.cardId].name} entered ${bf.name}${bfIsEmpty ? ' (Focus claimed)' : ' — Showdown!'}`));
@@ -784,6 +834,8 @@ export function handleFocus(state: GameState, action: GameAction): ActionResult 
 export function canPlayReaction(state: GameState, playerId: string, cardInstanceId: string): boolean {
   if (state.phase !== 'Showdown' || !state.showdown) return false;
   if (!state.showdown.reactionWindowOpen) return false;
+  // Must have focus to play a reaction
+  if (state.showdown.focusPlayerId !== playerId) return false;
   const card = state.allCards[cardInstanceId];
   if (!card || card.location !== 'hand') return false;
   if (card.ownerId !== playerId) return false;
@@ -822,6 +874,13 @@ export function handleReaction(state: GameState, action: GameAction): ActionResu
   // Remove from hand
   player.hand = player.hand.filter(id => id !== cardInstanceId);
 
+  // Push onto showdown action stack
+  pushToActionStack(newState, cardInstanceId, action.playerId, 'reaction', `Reaction: ${def.name}`);
+
+  // Flip focus to opponent
+  const opponentId = getOpponentId(newState, action.playerId);
+  newState.showdown!.focusPlayerId = opponentId;
+
   newState.actionLog.push(makeLog(newState, action.playerId, 'Showdown',
     `${player.name} played Reaction: ${def.name}`));
 
@@ -835,6 +894,180 @@ export function closeReactionWindow(state: GameState): GameState {
   return newState;
 }
 
+// ============================================================
+// Showdown Action Stack
+// ============================================================
+
+function pushToActionStack(
+  state: GameState,
+  sourceId: string,
+  ownerId: string,
+  type: ShowdownStackEntry['type'],
+  effect: string
+): void {
+  // Mutate in-place — caller already did deepClone
+  state.showdown!.actionStack.push({
+    id: randomId(),
+    sourceId,
+    ownerId,
+    type,
+    effect,
+    resolves: false,
+  });
+  // Any non-pass action resets the pass tracker
+  state.showdown!.passTracker = [false, false];
+  state.showdown!.chainOpen = true;
+}
+
+function canChainReact(state: GameState, playerId: string): boolean {
+  if (!state.showdown || !state.showdown.chainOpen) return false;
+  if (state.showdown.focusPlayerId !== playerId) return false;
+  return true;
+}
+
+function canStartChain(state: GameState, playerId: string): boolean {
+  if (!state.showdown) return false;
+  if (state.showdown.combatResolved) return false;
+  if (state.showdown.focusPlayerId !== playerId) return false;
+  // Can start a chain only when no chain is currently open
+  // (once a chain is open, players can only join, not start a new one)
+  return true;
+}
+
+function executeStackEntry(
+  state: GameState,
+  entry: ShowdownStackEntry
+): GameSideEffect[] {
+  const card = state.allCards[entry.sourceId];
+  if (!card) return [];
+
+  const def = state.cardDefinitions[card.cardId];
+  const effects: GameSideEffect[] = [];
+
+  // Apply the ability's effectCode to the game state
+  for (const ability of def.abilities ?? []) {
+    const code = ability.effectCode ?? ability.trigger;
+
+    // Deal damage effects
+    if (code.includes('DEAL_')) {
+      const match = code.match(/DEAL_(\d+)/);
+      const damage = match ? parseInt(match[1]) : 0;
+      // Find target(s) — for now, find enemy units at the contested BF
+      const bf = state.battlefields.find(b => b.id === state.showdown!.battlefieldId);
+      if (bf) {
+        const enemies = bf.units.filter(id => state.allCards[id]?.ownerId !== entry.ownerId);
+        for (const enemyId of enemies) {
+          const died = takeDamage(state, enemyId, damage);
+          effects.push({ type: 'DamageUnit', unitInstanceId: enemyId, damage });
+        }
+      }
+    }
+
+    // Give might effects
+    if (code.includes('GIVE_MIGHT')) {
+      const match = code.match(/GIVE_MIGHT_(\d+)/);
+      const bonus = match ? parseInt(match[1]) : 0;
+      const targetId = entry.sourceId;
+      const unit = state.allCards[targetId];
+      if (unit) {
+        unit.currentStats.might = (unit.currentStats.might ?? 0) + bonus;
+        effects.push({ type: 'ApplyModifier', unitInstanceId: targetId, modifier: 'might', value: bonus });
+      }
+    }
+
+    // Ready unit effects
+    if (code.includes('READY_UNIT')) {
+      const targetId = entry.sourceId;
+      const unit = state.allCards[targetId];
+      if (unit && unit.location === 'battlefield') {
+        unit.ready = true;
+        effects.push({ type: 'ReadyUnit', unitInstanceId: targetId });
+      }
+    }
+
+    // Assault effects
+    if (code.includes('GIVE_ASSAULT')) {
+      const match = code.match(/\+(\d+)/);
+      const bonus = match ? parseInt(match[1]) : 0;
+      const targetId = entry.sourceId;
+      const unit = state.allCards[targetId];
+      if (unit) {
+        effects.push({ type: 'ApplyModifier', unitInstanceId: targetId, modifier: 'assault', value: bonus });
+      }
+    }
+  }
+
+  return effects;
+}
+
+function resolveActionStack(state: GameState): ActionResult {
+  const newState = deepClone(state);
+  newState.showdown!.chainOpen = false;
+
+  while (newState.showdown!.actionStack.length > 0) {
+    const entry = newState.showdown!.actionStack.pop()!; // LIFO
+
+    // Execute the entry's effect
+    const effects = executeStackEntry(newState, entry);
+
+    // ⚠️ If executeStackEntry triggers a new reaction (e.g., unit death → deathrattle),
+    // new entries are pushed onto actionStack and chainOpen becomes true.
+    // The while loop must re-evaluate — a new chain has started.
+    if (newState.showdown!.chainOpen) {
+      // Chain restarted during resolution — break and let players continue
+      break;
+    }
+  }
+
+  // If stack is fully drained and chain is closed, mark reaction window closed
+  if (newState.showdown!.actionStack.length === 0 && !newState.showdown!.chainOpen) {
+    newState.showdown!.reactionWindowOpen = false;
+  }
+
+  return { success: true, newState };
+}
+
+function takeDamage(state: GameState, unitId: string, amount: number): boolean {
+  const unit = state.allCards[unitId];
+  if (!unit || unit.location === 'discard' || unit.location === 'hand') return false;
+  if (amount <= 0) return false;
+  unit.damage = (unit.damage || 0) + amount;
+  return checkUnitDeath(state, unitId);
+}
+
+function checkUnitDeath(state: GameState, unitId: string): boolean {
+  const unit = state.allCards[unitId];
+  if (!unit || unit.location === 'discard') return false;
+  const totalHealth = unit.currentStats.might ?? unit.stats.might ?? 1;
+  if ((unit.damage || 0) >= totalHealth) {
+    killUnit(state, unitId);
+    return true;
+  }
+  return false;
+}
+
+function killUnit(state: GameState, unitId: string): void {
+  const unit = state.allCards[unitId];
+  if (!unit) return;
+  unit.location = 'discard';
+  unit.damage = 0;
+  for (const bf of state.battlefields) {
+    bf.units = bf.units.filter(id => id !== unitId);
+  }
+  const ownerId = unit.ownerId;
+  state.players[ownerId].discardPile.push(unitId);
+  state.actionLog.push(makeLog(state, ownerId, 'System', `${state.cardDefinitions[unit.cardId].name} was killed.`));
+}
+
+function resetDamage(state: GameState): void {
+  for (const bf of state.battlefields) {
+    for (const uid of bf.units) {
+      const unit = state.allCards[uid];
+      if (unit) unit.damage = 0;
+    }
+  }
+}
+
 export function resolveCombat(state: GameState): ActionResult {
   if (state.phase !== 'Showdown' || !state.showdown) {
     return { success: false, error: 'Not in Showdown.', newState: state };
@@ -844,8 +1077,9 @@ export function resolveCombat(state: GameState): ActionResult {
   }
 
   const newState = deepClone(state);
-  const { battlefieldId, attackerId, attackerOwnerId, defenderIds } = newState.showdown;
+  const { battlefieldId, attackerIds, attackerOwnerId, defenderIds } = newState.showdown;
   const bf = newState.battlefields.find(b => b.id === battlefieldId)!;
+  const attackerId = attackerIds[0];
   const attacker = newState.allCards[attackerId];
 
   // Close reaction window
@@ -869,37 +1103,31 @@ export function resolveCombat(state: GameState): ActionResult {
 
   if (defenderIds.length === 0) {
     // Empty BF — no combat, just Focus claimed
-    survivingAttackers = [attackerId];
+    survivingAttackers = attackerIds;
   } else {
-    // Both sides present — resolve combat
-    // Attacker takes defender Might damage
-    const attackerHp = attacker.currentStats.health ?? attacker.stats.health ?? 1;
-    const newAttackerHp = attackerHp - totalDefenderMight;
-    if (newAttackerHp <= 0) {
-      effects.push({ type: 'KillUnit', unitInstanceId: attackerId });
-      bf.units = bf.units.filter(id => id !== attackerId);
-      attacker.location = 'discard';
-      newState.players[attackerOwnerId].discardPile.push(attackerId);
-    } else {
-      attacker.currentStats.health = newAttackerHp;
-      survivingAttackers = [attackerId];
+    // Both sides present — bidirectional ordered damage assignment
+    // Phase 1: Attacker distributes totalAttackerMight across defenders
+    survivingDefenders = [];
+    let remainingAttackerDamage = totalAttackerMight;
+    for (const defenderId of defenderIds) {
+      if (remainingAttackerDamage <= 0) { survivingDefenders.push(defenderId); continue; }
+      const killThreshold = calculateMight(newState, defenderId);
+      const damageToAssign = Math.min(remainingAttackerDamage, killThreshold);
+      const died = takeDamage(newState, defenderId, damageToAssign);
+      if (!died) survivingDefenders.push(defenderId);
+      remainingAttackerDamage -= damageToAssign;
     }
 
-    // Defenders each take attacker Might damage
-    survivingDefenders = [];
-    for (const duId of defenderIds) {
-      const defender = newState.allCards[duId];
-      const defHp = defender.currentStats.health ?? defender.stats.health ?? 1;
-      const newDefHp = defHp - totalAttackerMight;
-      if (newDefHp <= 0) {
-        effects.push({ type: 'KillUnit', unitInstanceId: duId });
-        bf.units = bf.units.filter(id => id !== duId);
-        defender.location = 'discard';
-        newState.players[defender.ownerId].discardPile.push(duId);
-      } else {
-        defender.currentStats.health = newDefHp;
-        survivingDefenders.push(duId);
-      }
+    // Phase 2: Defender distributes totalDefenderMight across attackers
+    survivingAttackers = [];
+    let remainingDefenderDamage = totalDefenderMight;
+    for (const atkId of attackerIds) {
+      if (remainingDefenderDamage <= 0) { survivingAttackers.push(atkId); continue; }
+      const killThreshold = calculateMight(newState, atkId);
+      const damageToAssign = Math.min(remainingDefenderDamage, killThreshold);
+      const died = takeDamage(newState, atkId, damageToAssign);
+      if (!died) survivingAttackers.push(atkId);
+      remainingDefenderDamage -= damageToAssign;
     }
 
     // Determine winner
@@ -929,6 +1157,12 @@ export function resolveCombat(state: GameState): ActionResult {
       winner,
       excessDamage: excess,
     };
+
+    // Reset damage for all surviving units after combat
+    for (const uid of [...survivingAttackers, ...survivingDefenders]) {
+      const u = newState.allCards[uid];
+      if (u) u.damage = 0;
+    }
 
     newState.actionLog.push(makeLog(newState, attackerOwnerId, 'Combat',
       `Combat at ${bf.name}: Attacker Might ${totalAttackerMight} vs Defender Might ${totalDefenderMight} — ${winner?.toUpperCase()}`));
@@ -1020,7 +1254,7 @@ function chooseEnergyRunes(
   }
 
   take(() => true, amount - selected.size);
-  return [...selected];
+  return Array.from(selected);
 }
 
 function choosePowerRune(
@@ -1124,13 +1358,47 @@ function canPayCardCosts(
 // ============================================================
 
 function handlePass(state: GameState, action: GameAction): ActionResult {
-  // In Showdown phase, Pass closes the reaction window and resolves combat
+  // In Showdown phase, Pass checks for consecutive passes then resolves
   if (state.phase === 'Showdown') {
-    const newState = closeReactionWindow(deepClone(state));
-    const combatResult = resolveCombat(newState);
-    if (combatResult.success && combatResult.newState) combatResult.newState.actionLog.push(action);
-    return combatResult;
+    const newState = deepClone(state);
+    const { focusPlayerId, attackerOwnerId, defenderIds } = newState.showdown!;
+
+    const isAttacker = focusPlayerId === attackerOwnerId;
+
+    // Set pass flag for current player
+    if (isAttacker) {
+      newState.showdown!.passTracker[0] = true;
+    } else {
+      newState.showdown!.passTracker[1] = true;
+    }
+
+    // Check if both passed consecutively
+    if (newState.showdown!.passTracker[0] && newState.showdown!.passTracker[1]) {
+      // Both passed consecutively — resolve action stack LIFO
+      const stackResult = resolveActionStack(newState);
+      if (!stackResult.success) return stackResult;
+
+      // After stack drains: if combat not yet resolved, resolve combat
+      if (!stackResult.newState!.showdown!.combatResolved) {
+        const combatResult = resolveCombat(stackResult.newState!);
+        if (combatResult.success && combatResult.newState) {
+          combatResult.newState.actionLog.push(action);
+        }
+        return combatResult;
+      }
+
+      return { success: true, action, newState: stackResult.newState };
+    } else {
+      // Flip focus to opponent
+      const opponentId = getOpponentId(newState, focusPlayerId!);
+      newState.showdown!.focusPlayerId = opponentId;
+      newState.actionLog.push(makeLog(newState, action.playerId, 'System',
+        `${newState.players[action.playerId].name} passed focus.`));
+      return { success: true, action, newState };
+    }
   }
+
+  // Non-showdown: normal phase advance
   const newState = advancePhase(deepClone(state));
   return { success: true, action, newState };
 }
@@ -1207,6 +1475,50 @@ function handlePlaySpell(
   const def = state.cardDefinitions[card.cardId];
   if (def.type !== 'Spell') return { success: false, error: 'Not a spell.', action };
 
+  // --- Showdown: push to stack instead of immediate resolution ---
+  if (state.phase === 'Showdown' && state.showdown) {
+    const newState = deepClone(state);
+
+    const costResult = payCardCosts(newState, action.playerId, def, 0, powerRuneDomains);
+    if (!costResult.success) return { success: false, error: costResult.error, action };
+    newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
+
+    // Determine spell speed: Reaction keyword = Reaction speed; otherwise Action speed
+    const isReactionSpell = def.keywords.includes('Reaction');
+
+    // If chain is open, only Reaction spells can be played
+    if (state.showdown.chainOpen && !isReactionSpell) {
+      return { success: false, error: 'Only Reaction-speed spells can be played while a chain is active.', action };
+    }
+
+    // If starting a new chain, must have focus
+    if (!state.showdown.chainOpen && state.showdown.focusPlayerId !== action.playerId) {
+      return { success: false, error: 'You do not have focus to start a new chain.', action };
+    }
+
+    // If joining an active chain, must have focus
+    if (state.showdown.chainOpen && state.showdown.focusPlayerId !== action.playerId) {
+      return { success: false, error: 'You do not have focus.', action };
+    }
+
+    // Move card to discard (spells resolve from discard pile)
+    newState.allCards[cardInstanceId].location = 'discard';
+    newState.players[action.playerId].discardPile.push(cardInstanceId);
+
+    // Push onto showdown action stack
+    pushToActionStack(newState, cardInstanceId, action.playerId, 'spell', `Spell: ${def.name}`);
+
+    // Flip focus to opponent
+    const opponentId = getOpponentId(newState, action.playerId);
+    newState.showdown!.focusPlayerId = opponentId;
+
+    newState.actionLog.push(makeLog(newState, action.playerId, 'Showdown',
+      `${newState.players[action.playerId].name} cast Spell: ${def.name}`));
+
+    return { success: true, action, newState };
+  }
+
+  // --- Normal (non-showdown) spell resolution ---
   const newState = deepClone(state);
   newState.allCards[cardInstanceId] = { ...newState.allCards[cardInstanceId] };
   const newCard = newState.allCards[cardInstanceId];
@@ -1451,15 +1763,9 @@ export function resolveShowdown(
 
     // Kill defender units (excess damage kills them all for now — simplified)
     for (const duId of defenderUnitIds) {
-      const defender = newState.allCards[duId];
-      const defHp = defender.currentStats.health ?? defender.stats.health ?? 1;
-      defender.currentStats.health = defHp - 1;
-      if (defender.currentStats.health <= 0) {
+      const died = takeDamage(newState, duId, 1);
+      if (died) {
         effects.push({ type: 'KillUnit', unitInstanceId: duId });
-        bf.units = bf.units.filter(id => id !== duId);
-        defender.location = 'discard';
-        const pOwner = defender.ownerId;
-        newState.players[pOwner].discardPile.push(duId);
       }
     }
 
@@ -1467,7 +1773,7 @@ export function resolveShowdown(
     survivingAttackers.push(attackerId);
 
     // If defender side is wiped, attacker conquers
-    if (defenderUnitIds.every(id => (newState.allCards[id]?.currentStats.health ?? 0) <= 0)) {
+    if (defenderUnitIds.every(id => !newState.allCards[id] || newState.allCards[id].location === 'discard')) {
       bf.controllerId = attackerOwner;
       bf.units = bf.units.filter(id => id !== attackerId); // remove attacker for now
       bf.units.push(attackerId); // attacker stays
@@ -1478,14 +1784,9 @@ export function resolveShowdown(
   } else if (totalDefenderMight > totalAttackerMight) {
     // Defenders win — attacker dies
     survivingDefenders.push(...defenderUnitIds);
-    const attackerHp = newAttacker.currentStats.health ?? newAttacker.stats.health ?? 1;
-    newAttacker.currentStats.health = attackerHp - 1;
-    if (newAttacker.currentStats.health <= 0) {
+    const died = takeDamage(newState, attackerId, 1);
+    if (died) {
       effects.push({ type: 'KillUnit', unitInstanceId: attackerId });
-      const fromBf = newState.battlefields.find(b => b.id === newAttacker.battlefieldId);
-      if (fromBf) fromBf.units = fromBf.units.filter(id => id !== attackerId);
-      newAttacker.location = 'discard';
-      newState.players[attackerOwner].discardPile.push(attackerId);
     }
   } else {
     // Draw — both sides survive but no conquest
@@ -1608,6 +1909,35 @@ function handleUseAbility(
     cardInstanceId: string; abilityIndex: number; targetId?: string; targetBattlefieldId?: string;
   };
 
+  // --- Showdown: push triggered ability onto stack ---
+  if (state.phase === 'Showdown' && state.showdown) {
+    const newState = deepClone(state);
+
+    // Must have focus to trigger an ability
+    if (state.showdown.focusPlayerId !== action.playerId) {
+      return { success: false, error: 'You do not have focus to use an ability.', action };
+    }
+
+    const card = state.allCards[cardInstanceId];
+    if (!card) return { success: false, error: 'Card not found.', action };
+    const def = state.cardDefinitions[card.cardId];
+    const ability = def.abilities?.[abilityIndex];
+    if (!ability) return { success: false, error: 'Ability not found.', action };
+
+    // Push onto showdown action stack
+    pushToActionStack(newState, cardInstanceId, action.playerId, 'ability', ability.effect);
+
+    // Flip focus to opponent
+    const opponentId = getOpponentId(newState, action.playerId);
+    newState.showdown!.focusPlayerId = opponentId;
+
+    newState.actionLog.push(makeLog(newState, action.playerId, 'Showdown',
+      `${newState.players[action.playerId].name} triggered ability: ${ability.effect}`));
+
+    return { success: true, action, newState };
+  }
+
+  // --- Normal (non-showdown) ability resolution ---
   const newState = deepClone(state);
   const effects = resolveAbilities(newState, cardInstanceId, 'ABILITY', abilityIndex, targetId, targetBattlefieldId);
 
@@ -1782,6 +2112,7 @@ function resolveAbilities(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         const bf = state.battlefields.find(b => b.id === card.battlefieldId);
         if (bf) bf.units.push(goldId);
@@ -1824,17 +2155,8 @@ function resolveSpellEffect(
 
     if (code.includes('DEAL_3') || code.includes('DEAL_3_BANISH_ON_DEATH')) {
       if (targetCard) {
-        const hp = targetCard.currentStats.health ?? targetCard.stats.health ?? 1;
-        targetCard.currentStats.health = hp - 3;
+        const died = takeDamage(state, targetId!, 3);
         effects.push({ type: 'DamageUnit', unitInstanceId: targetId!, damage: 3 });
-        if (targetCard.currentStats.health <= 0) {
-          effects.push({ type: 'KillUnit', unitInstanceId: targetId! });
-          targetCard.location = 'discard';
-          const p = state.players[targetCard.ownerId];
-          if (p) p.discardPile.push(targetId!);
-          const bf = state.battlefields.find(b => b.id === targetCard.battlefieldId);
-          if (bf) bf.units = bf.units.filter(id => id !== targetId);
-        }
       }
     }
 
@@ -1845,7 +2167,7 @@ function resolveSpellEffect(
       );
       const damage = hasFacedown ? 4 : 2;
       if (targetCard) {
-        targetCard.currentStats.health = (targetCard.currentStats.health ?? 1) - damage;
+        const died = takeDamage(state, targetId!, damage);
         effects.push({ type: 'DamageUnit', unitInstanceId: targetId!, damage });
       }
     }
