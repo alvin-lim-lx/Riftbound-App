@@ -175,6 +175,7 @@ export function createGame(
         attachments: [],
         facing: 'up',
         owner_hidden: false,
+        damage: 0,
       };
       deckInstanceIds.push(instId);
     }
@@ -205,6 +206,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         runeDeckIds.push(rid);
       }
@@ -225,6 +227,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         runeDeckIds.push(runeId);
       }
@@ -250,6 +253,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         legendInstanceId = lid;
       }
@@ -274,6 +278,7 @@ export function createGame(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         chosenChampionInstanceId = cid;
       }
@@ -301,6 +306,7 @@ export function createGame(
       chosenChampion: chosenChampionInstanceId,
       hasGoneFirst: false,
       mulligansComplete: false,
+      baseZone: [],
     };
   });
 
@@ -658,6 +664,10 @@ function executeCombatPhase(state: GameState): GameState {
 
 function executeEndPhase(state: GameState): GameState {
   const newState = deepClone(state);
+
+  // Reset damage for all units at end of turn
+  resetDamage(newState);
+
   newState.players[newState.activePlayerId].floatingEnergy = 0;
   syncRuneResourceCounters(newState, newState.activePlayerId);
 
@@ -747,7 +757,7 @@ export function enterShowdown(
   newState.phase = 'Showdown';
   newState.showdown = {
     battlefieldId: targetBattlefieldId,
-    attackerId,
+    attackerIds: [attackerId],
     attackerOwnerId: attackerOwner,
     focusPlayerId,
     defenderIds,
@@ -947,17 +957,8 @@ function executeStackEntry(
       if (bf) {
         const enemies = bf.units.filter(id => state.allCards[id]?.ownerId !== entry.ownerId);
         for (const enemyId of enemies) {
-          const enemy = state.allCards[enemyId];
-          if (!enemy) continue;
-          const hp = enemy.currentStats.health ?? enemy.stats.health ?? 1;
-          enemy.currentStats.health = hp - damage;
+          const died = takeDamage(state, enemyId, damage);
           effects.push({ type: 'DamageUnit', unitInstanceId: enemyId, damage });
-          if (enemy.currentStats.health <= 0) {
-            effects.push({ type: 'KillUnit', unitInstanceId: enemyId });
-            enemy.location = 'discard';
-            state.players[enemy.ownerId].discardPile.push(enemyId);
-            bf.units = bf.units.filter(id => id !== enemyId);
-          }
         }
       }
     }
@@ -1026,6 +1027,47 @@ function resolveActionStack(state: GameState): ActionResult {
   return { success: true, newState };
 }
 
+function takeDamage(state: GameState, unitId: string, amount: number): boolean {
+  const unit = state.allCards[unitId];
+  if (!unit || unit.location === 'discard' || unit.location === 'hand') return false;
+  if (amount <= 0) return false;
+  unit.damage = (unit.damage || 0) + amount;
+  return checkUnitDeath(state, unitId);
+}
+
+function checkUnitDeath(state: GameState, unitId: string): boolean {
+  const unit = state.allCards[unitId];
+  if (!unit || unit.location === 'discard') return false;
+  const totalHealth = unit.currentStats.might ?? unit.stats.might ?? 1;
+  if ((unit.damage || 0) >= totalHealth) {
+    killUnit(state, unitId);
+    return true;
+  }
+  return false;
+}
+
+function killUnit(state: GameState, unitId: string): void {
+  const unit = state.allCards[unitId];
+  if (!unit) return;
+  unit.location = 'discard';
+  unit.damage = 0;
+  for (const bf of state.battlefields) {
+    bf.units = bf.units.filter(id => id !== unitId);
+  }
+  const ownerId = unit.ownerId;
+  state.players[ownerId].discardPile.push(unitId);
+  state.actionLog.push(makeLog(state, ownerId, 'System', `${state.cardDefinitions[unit.cardId].name} was killed.`));
+}
+
+function resetDamage(state: GameState): void {
+  for (const bf of state.battlefields) {
+    for (const uid of bf.units) {
+      const unit = state.allCards[uid];
+      if (unit) unit.damage = 0;
+    }
+  }
+}
+
 export function resolveCombat(state: GameState): ActionResult {
   if (state.phase !== 'Showdown' || !state.showdown) {
     return { success: false, error: 'Not in Showdown.', newState: state };
@@ -1035,8 +1077,9 @@ export function resolveCombat(state: GameState): ActionResult {
   }
 
   const newState = deepClone(state);
-  const { battlefieldId, attackerId, attackerOwnerId, defenderIds } = newState.showdown;
+  const { battlefieldId, attackerIds, attackerOwnerId, defenderIds } = newState.showdown;
   const bf = newState.battlefields.find(b => b.id === battlefieldId)!;
+  const attackerId = attackerIds[0];
   const attacker = newState.allCards[attackerId];
 
   // Close reaction window
@@ -1060,37 +1103,31 @@ export function resolveCombat(state: GameState): ActionResult {
 
   if (defenderIds.length === 0) {
     // Empty BF — no combat, just Focus claimed
-    survivingAttackers = [attackerId];
+    survivingAttackers = attackerIds;
   } else {
-    // Both sides present — resolve combat
-    // Attacker takes defender Might damage
-    const attackerHp = attacker.currentStats.health ?? attacker.stats.health ?? 1;
-    const newAttackerHp = attackerHp - totalDefenderMight;
-    if (newAttackerHp <= 0) {
-      effects.push({ type: 'KillUnit', unitInstanceId: attackerId });
-      bf.units = bf.units.filter(id => id !== attackerId);
-      attacker.location = 'discard';
-      newState.players[attackerOwnerId].discardPile.push(attackerId);
-    } else {
-      attacker.currentStats.health = newAttackerHp;
-      survivingAttackers = [attackerId];
+    // Both sides present — bidirectional ordered damage assignment
+    // Phase 1: Attacker distributes totalAttackerMight across defenders
+    survivingDefenders = [];
+    let remainingAttackerDamage = totalAttackerMight;
+    for (const defenderId of defenderIds) {
+      if (remainingAttackerDamage <= 0) { survivingDefenders.push(defenderId); continue; }
+      const killThreshold = calculateMight(newState, defenderId);
+      const damageToAssign = Math.min(remainingAttackerDamage, killThreshold);
+      const died = takeDamage(newState, defenderId, damageToAssign);
+      if (!died) survivingDefenders.push(defenderId);
+      remainingAttackerDamage -= damageToAssign;
     }
 
-    // Defenders each take attacker Might damage
-    survivingDefenders = [];
-    for (const duId of defenderIds) {
-      const defender = newState.allCards[duId];
-      const defHp = defender.currentStats.health ?? defender.stats.health ?? 1;
-      const newDefHp = defHp - totalAttackerMight;
-      if (newDefHp <= 0) {
-        effects.push({ type: 'KillUnit', unitInstanceId: duId });
-        bf.units = bf.units.filter(id => id !== duId);
-        defender.location = 'discard';
-        newState.players[defender.ownerId].discardPile.push(duId);
-      } else {
-        defender.currentStats.health = newDefHp;
-        survivingDefenders.push(duId);
-      }
+    // Phase 2: Defender distributes totalDefenderMight across attackers
+    survivingAttackers = [];
+    let remainingDefenderDamage = totalDefenderMight;
+    for (const atkId of attackerIds) {
+      if (remainingDefenderDamage <= 0) { survivingAttackers.push(atkId); continue; }
+      const killThreshold = calculateMight(newState, atkId);
+      const damageToAssign = Math.min(remainingDefenderDamage, killThreshold);
+      const died = takeDamage(newState, atkId, damageToAssign);
+      if (!died) survivingAttackers.push(atkId);
+      remainingDefenderDamage -= damageToAssign;
     }
 
     // Determine winner
@@ -1120,6 +1157,12 @@ export function resolveCombat(state: GameState): ActionResult {
       winner,
       excessDamage: excess,
     };
+
+    // Reset damage for all surviving units after combat
+    for (const uid of [...survivingAttackers, ...survivingDefenders]) {
+      const u = newState.allCards[uid];
+      if (u) u.damage = 0;
+    }
 
     newState.actionLog.push(makeLog(newState, attackerOwnerId, 'Combat',
       `Combat at ${bf.name}: Attacker Might ${totalAttackerMight} vs Defender Might ${totalDefenderMight} — ${winner?.toUpperCase()}`));
@@ -1720,15 +1763,9 @@ export function resolveShowdown(
 
     // Kill defender units (excess damage kills them all for now — simplified)
     for (const duId of defenderUnitIds) {
-      const defender = newState.allCards[duId];
-      const defHp = defender.currentStats.health ?? defender.stats.health ?? 1;
-      defender.currentStats.health = defHp - 1;
-      if (defender.currentStats.health <= 0) {
+      const died = takeDamage(newState, duId, 1);
+      if (died) {
         effects.push({ type: 'KillUnit', unitInstanceId: duId });
-        bf.units = bf.units.filter(id => id !== duId);
-        defender.location = 'discard';
-        const pOwner = defender.ownerId;
-        newState.players[pOwner].discardPile.push(duId);
       }
     }
 
@@ -1736,7 +1773,7 @@ export function resolveShowdown(
     survivingAttackers.push(attackerId);
 
     // If defender side is wiped, attacker conquers
-    if (defenderUnitIds.every(id => (newState.allCards[id]?.currentStats.health ?? 0) <= 0)) {
+    if (defenderUnitIds.every(id => !newState.allCards[id] || newState.allCards[id].location === 'discard')) {
       bf.controllerId = attackerOwner;
       bf.units = bf.units.filter(id => id !== attackerId); // remove attacker for now
       bf.units.push(attackerId); // attacker stays
@@ -1747,14 +1784,9 @@ export function resolveShowdown(
   } else if (totalDefenderMight > totalAttackerMight) {
     // Defenders win — attacker dies
     survivingDefenders.push(...defenderUnitIds);
-    const attackerHp = newAttacker.currentStats.health ?? newAttacker.stats.health ?? 1;
-    newAttacker.currentStats.health = attackerHp - 1;
-    if (newAttacker.currentStats.health <= 0) {
+    const died = takeDamage(newState, attackerId, 1);
+    if (died) {
       effects.push({ type: 'KillUnit', unitInstanceId: attackerId });
-      const fromBf = newState.battlefields.find(b => b.id === newAttacker.battlefieldId);
-      if (fromBf) fromBf.units = fromBf.units.filter(id => id !== attackerId);
-      newAttacker.location = 'discard';
-      newState.players[attackerOwner].discardPile.push(attackerId);
     }
   } else {
     // Draw — both sides survive but no conquest
@@ -2080,6 +2112,7 @@ function resolveAbilities(
           attachments: [],
           facing: 'up',
           owner_hidden: false,
+          damage: 0,
         };
         const bf = state.battlefields.find(b => b.id === card.battlefieldId);
         if (bf) bf.units.push(goldId);
@@ -2122,17 +2155,8 @@ function resolveSpellEffect(
 
     if (code.includes('DEAL_3') || code.includes('DEAL_3_BANISH_ON_DEATH')) {
       if (targetCard) {
-        const hp = targetCard.currentStats.health ?? targetCard.stats.health ?? 1;
-        targetCard.currentStats.health = hp - 3;
+        const died = takeDamage(state, targetId!, 3);
         effects.push({ type: 'DamageUnit', unitInstanceId: targetId!, damage: 3 });
-        if (targetCard.currentStats.health <= 0) {
-          effects.push({ type: 'KillUnit', unitInstanceId: targetId! });
-          targetCard.location = 'discard';
-          const p = state.players[targetCard.ownerId];
-          if (p) p.discardPile.push(targetId!);
-          const bf = state.battlefields.find(b => b.id === targetCard.battlefieldId);
-          if (bf) bf.units = bf.units.filter(id => id !== targetId);
-        }
       }
     }
 
@@ -2143,7 +2167,7 @@ function resolveSpellEffect(
       );
       const damage = hasFacedown ? 4 : 2;
       if (targetCard) {
-        targetCard.currentStats.health = (targetCard.currentStats.health ?? 1) - damage;
+        const died = takeDamage(state, targetId!, damage);
         effects.push({ type: 'DamageUnit', unitInstanceId: targetId!, damage });
       }
     }

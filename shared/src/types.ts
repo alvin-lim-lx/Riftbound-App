@@ -116,6 +116,7 @@ export interface CardInstance {
   exhausted: boolean;   // Tapped / used this turn
   stats: CardStats;
   currentStats: CardStats; // Mutable during game (buffed/damaged)
+  damage: number;          // Accumulated damage this turn
   counters: Record<string, number>; // Various counters
   attachments: string[]; // Gear instanceIds attached
   facing: 'up' | 'down'; // Hidden cards
@@ -133,7 +134,7 @@ export interface ShowdownStackEntry {
 
 export interface ShowdownState {
   battlefieldId: string;         // Which BF is contested
-  attackerId: string;            // Unit instanceId that triggered the showdown
+  attackerIds: string[];         // Unit instanceIds that triggered the showdown
   attackerOwnerId: string;       // PlayerId who initiated the attack/move
   focusPlayerId: string | null;  // Player with Focus — null if unclaimed
   defenderIds: string[];         // Defender unit instanceIds at the BF
@@ -177,6 +178,7 @@ export interface PlayerState {
   chosenChampion: string | null; // CardInstance.instanceId of Chosen Champion (Champion Zone)
   hasGoneFirst: boolean;         // Tracks who went first (for first-turn asymmetry)
   mulligansComplete: boolean;    // Both players done with mulligan
+  baseZone: string[];           // CardInstance.instanceIds in the base zone
 }
 
 export interface GameState {
