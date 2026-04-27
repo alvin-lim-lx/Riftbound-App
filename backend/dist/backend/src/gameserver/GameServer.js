@@ -305,14 +305,6 @@ class GameServer {
                 }
                 if (result.newState) {
                     game.state = result.newState;
-                    // Handle showdown phase
-                    if (game.state.phase === 'Showdown') {
-                        const { attackerId, targetBattlefieldId } = action.payload;
-                        const showdownResult = (0, GameEngine_1.resolveShowdown)(game.state, attackerId, targetBattlefieldId);
-                        if (showdownResult.newState) {
-                            game.state = showdownResult.newState;
-                        }
-                    }
                     // Auto-advance through A-B-C-D phases (Awaken→Beginning→Channel→Draw)
                     // when effect stack is empty, BEFORE broadcasting state
                     if (game.state.phase !== 'GameOver') {
@@ -522,11 +514,8 @@ class GameServer {
             const result = (0, GameEngine_1.executeAction)(game.state, action);
             if (result.success && result.newState) {
                 game.state = result.newState;
-                if (game.state.phase === 'Showdown') {
-                    const { attackerId, targetBattlefieldId } = action.payload;
-                    const sr = (0, GameEngine_1.resolveShowdown)(game.state, attackerId, targetBattlefieldId);
-                    if (sr.newState)
-                        game.state = sr.newState;
+                if (game.state.phase !== 'GameOver') {
+                    autoAdvanceABCDPhases(game);
                 }
                 this.broadcastGameState(game);
                 if (game.state.phase === 'GameOver' && game.state.winner) {

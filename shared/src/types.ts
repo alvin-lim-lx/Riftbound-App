@@ -122,16 +122,28 @@ export interface CardInstance {
   owner_hidden: boolean; // Opponent can't see this card
 }
 
+export interface ShowdownStackEntry {
+  id: string;
+  sourceId: string;         // cardInstanceId that produced this entry
+  ownerId: string;          // player who played/called this
+  type: 'ability' | 'spell' | 'reaction';
+  effect: string;           // human-readable description
+  resolves: boolean;        // whether this entry has been resolved
+}
+
 export interface ShowdownState {
-  battlefieldId: string;       // Which BF is contested
-  attackerId: string;          // Unit instanceId that triggered the showdown
-  attackerOwnerId: string;     // PlayerId who initiated the attack/move
-  focusPlayerId: string | null; // Player with Focus (Rule 513) — null if unclaimed
-  defenderIds: string[];       // Defender unit instanceIds at the BF
-  reactionWindowOpen: boolean;  // true = players may play REACTION cards
-  combatResolved: boolean;      // true = combat chain has resolved
+  battlefieldId: string;         // Which BF is contested
+  attackerId: string;            // Unit instanceId that triggered the showdown
+  attackerOwnerId: string;       // PlayerId who initiated the attack/move
+  focusPlayerId: string | null;  // Player with Focus — null if unclaimed
+  defenderIds: string[];         // Defender unit instanceIds at the BF
+  reactionWindowOpen: boolean;    // true = players may play REACTION cards
+  combatResolved: boolean;       // true = combat chain has resolved
   winner: 'attacker' | 'defender' | 'draw' | null;
-  excessDamage: number;        // Damage remaining after defenders are wiped (for conquest check)
+  excessDamage: number;           // Damage remaining after defenders are wiped
+  actionStack: ShowdownStackEntry[]; // abilities/spells to resolve LIFO
+  passTracker: [boolean, boolean];   // [attackerPassed, defenderPassed]
+  chainOpen: boolean;                // true = chain accepting reactions
 }
 
 export interface BattlefieldState {
