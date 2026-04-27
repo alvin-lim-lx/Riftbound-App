@@ -211,8 +211,6 @@ export type ActionType =
   | 'UseAbility'
   | 'Pass'
   | 'Mulligan'
-  | 'DrawRune'
-  | 'UseRune'
   | 'HideCard'
   | 'ReactFromHidden'
   | 'AssignBlocker'

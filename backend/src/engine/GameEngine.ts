@@ -33,7 +33,6 @@ export interface ActionResult {
 }
 
 export type GameSideEffect =
-  | { type: 'DrawRune'; playerId: string; runeInstanceId: string }
   | { type: 'DamageUnit'; unitInstanceId: string; damage: number }
   | { type: 'KillUnit'; unitInstanceId: string }
   | { type: 'ReadyUnit'; unitInstanceId: string }
@@ -394,16 +393,6 @@ export function executeAction(
     }
     case 'Attack': {
       const result = handleAttack(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'DrawRune': {
-      const result = handleDrawRune(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'UseRune': {
-      const result = handleUseRune(state, action);
       if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
@@ -1829,40 +1818,6 @@ function calculateMight(state: GameState, unitInstanceId: string): number {
   return total;
 }
 
-function handleDrawRune(state: GameState, action: GameAction): ActionResult {
-  const player = state.players[action.playerId];
-  const runeId = player.runeDeck.shift();
-  if (!runeId) return { success: false, error: 'No runes left.', action };
-
-  const newState = deepClone(state);
-  newState.allCards[runeId].location = 'hand';
-  newState.players[action.playerId].hand.push(runeId);
-  newState.players[action.playerId].charges += 1;
-  syncRuneResourceCounters(newState, action.playerId);
-
-  return {
-    success: true,
-    action,
-    newState,
-    sideEffects: [{ type: 'DrawRune', playerId: action.playerId, runeInstanceId: runeId }]
-  };
-}
-
-function handleUseRune(state: GameState, action: GameAction): ActionResult {
-  const player = state.players[action.playerId];
-  if (player.hand.length === 0) return { success: false, error: 'No runes in hand.', action };
-
-  const runeId = player.hand[player.hand.length - 1];
-  const newState = deepClone(state);
-  newState.allCards[runeId].location = 'runeDiscard';
-  newState.players[action.playerId].hand.pop();
-  newState.players[action.playerId].runeDiscard.push(runeId);
-  newState.players[action.playerId].mana += 1;
-  syncRuneResourceCounters(newState, action.playerId);
-
-  return { success: true, action, newState };
-}
-
 function handleHideCard(state: GameState, action: GameAction): ActionResult {
   const { cardInstanceId } = action.payload as { cardInstanceId: string };
   const card = state.allCards[cardInstanceId];
@@ -2309,11 +2264,6 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
         actions.push(makeAction('Attack', playerId, { attackerId: unitId, targetBattlefieldId: bf.id }));
       }
     }
-  }
-
-  // Use runes
-  if (player.hand.some(id => state.allCards[id]?.cardId === 'Rune') && player.runeDeck.length > 0) {
-    actions.push(makeAction('UseRune', playerId, {}));
   }
 
   return actions;

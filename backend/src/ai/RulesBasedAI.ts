@@ -171,12 +171,6 @@ export class RulesBasedAI {
         return { action, score, reason: `Move ${def.name} to ${targetBf?.name}` };
       }
 
-      case 'UseRune': {
-        // Spending rune for mana is always good
-        const score = 8;
-        return { action, score, reason: 'Use rune for mana' };
-      }
-
       case 'Mulligan': {
         // Keep all cards — no penalty, no bonus
         const score = 5;
