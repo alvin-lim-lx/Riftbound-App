@@ -33,7 +33,7 @@ export function PointTracker({ player, isOpponent, compact }: Props) {
           <div style={styles.resourcesSection}>
             <div style={styles.resourceRow}>
               <div style={styles.runeIcon}>◆</div>
-              <div style={styles.runeValue}>{player.mana}/{player.maxMana}</div>
+              <div style={styles.runeValue}>{player.energy}/{player.maxEnergy}</div>
             </div>
             <div style={styles.resourceRow}>
               <div style={styles.xpIcon}>✦</div>

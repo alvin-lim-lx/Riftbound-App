@@ -53,7 +53,7 @@ export function PlayerPanel({ player, isOpponent, cardDefs }: Props) {
           {!isOpponent && (
             <>
               <div style={styles.stat}>
-                <span>◆ {player.mana}/{player.maxMana}</span>
+                <span>◆ {player.energy}/{player.maxEnergy}</span>
               </div>
               <div style={styles.stat}>
                 <span>✦ {player.xp} XP</span>

@@ -256,8 +256,8 @@ describe('Phase Auto-Advance (Issue #12)', () => {
 
       expect(newState.allCards[runeId].exhausted).toBe(false);
       expect(newState.players[P1].floatingEnergy).toBe(0);
-      expect(newState.players[P1].mana).toBe(1);
-      expect(newState.players[P1].maxMana).toBe(1);
+      expect(newState.players[P1].energy).toBe(1);
+      expect(newState.players[P1].maxEnergy).toBe(1);
       expect(newState.players[P1].charges).toBe(1);
     });
   });

@@ -437,11 +437,11 @@ function PlayerInfoBar({ player, isPlayer, allCards, cardDefs }: PlayerInfoBarPr
           <span style={infoBarStyles.star}>★</span>
           <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843' }}>{player.score}</span>
           <span style={{ ...infoBarStyles.sep }}>·</span>
-          <span style={infoBarStyles.mana}>◆ {player.mana}/{player.maxMana}</span>
+          <span style={infoBarStyles.mana}>◆ {player.energy}/{player.maxEnergy}</span>
           {!isYou && <span style={infoBarStyles.sep}>·</span>}
           {!isYou && (
             <span style={{ fontSize: '11px', color: '#888' }}>
-              ◆{player.mana}
+              ◆{player.energy}
             </span>
           )}
         </div>

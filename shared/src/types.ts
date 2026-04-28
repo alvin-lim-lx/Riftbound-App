@@ -170,8 +170,8 @@ export interface PlayerState {
   equipment: Record<string, string>; // gearInstanceId → unitInstanceId
   hiddenZone: string[];  // Hidden cards instanceIds
   isReady: boolean;
-  mana: number;    // Current rune resource available
-  maxMana: number; // Max rune resource this turn
+  energy: number;    // Current energy available
+  maxEnergy: number; // Max energy this turn
   charges: number;  // Current charge resource
   floatingEnergy: number; // Temporary generic energy from recycling ready runes
   legend: string | null;        // CardInstance.instanceId of Champion Legend (Legend Zone)
@@ -233,7 +233,16 @@ export interface GameAction {
 
 // --- Game Log Types ---
 
-export type LogEntryType = 'PhaseChange' | 'TurnChange' | 'Score' | 'GameStart' | 'GameOver' | 'System' | 'Showdown' | 'Combat' | 'Focus';
+export type LogEntryType =
+  | 'PhaseChange' | 'TurnChange' | 'Score' | 'GameStart' | 'GameOver'
+  | 'System' | 'Showdown' | 'Combat' | 'Focus'
+  | 'Mulligan'        // mulligan decisions
+  | 'Channel'         // rune channeled from rune deck to rune pool
+  | 'Draw'            // card drawn from main deck
+  | 'Move'            // unit moved between BFs or base
+  | 'Hide'            // card hidden
+  | 'ReactFromHidden' // card revealed from hidden
+  | 'Equip';          // gear equipped to unit
 
 export interface SystemLogEntry {
   id: string;
@@ -243,6 +252,7 @@ export interface SystemLogEntry {
   turn: number;
   phase: Phase;
   timestamp: number;
+  detail?: Record<string, unknown>;
 }
 
 export type GameLogEntry = GameAction | SystemLogEntry;
@@ -319,6 +329,7 @@ export interface CloseReactionWindowPayload {
 export type GameEventType =
   | 'game_start'
   | 'game_state_update'
+  | 'game_log'
   | 'action_result'
   | 'phase_change'
   | 'turn_change'
@@ -358,6 +369,12 @@ export interface PhaseChangeEvent {
 export interface GameOverEvent {
   winnerId: string;
   reason: 'score' | 'concede' | 'timeout';
+}
+
+export interface GameLogEvent {
+  gameId: string;
+  entries: GameLogEntry[];  // incremental human-readable log entries since last broadcast
+  timestamp: number;
 }
 
 // --- Lobby / Matchmaking ---

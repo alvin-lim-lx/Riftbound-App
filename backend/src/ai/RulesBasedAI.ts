@@ -120,8 +120,8 @@ export class RulesBasedAI {
         if (def.keywords.includes('Hunt')) score += 12;
         if (def.keywords.includes('Accelerate')) score += 5;
 
-        // Mana efficiency
-        if (manaCost <= me.mana) score += 5;
+        // Energy efficiency
+        if (manaCost <= me.energy) score += 5;
 
         return { action, score, reason: `Play ${def.name} cost=${manaCost} might=${might}` };
       }

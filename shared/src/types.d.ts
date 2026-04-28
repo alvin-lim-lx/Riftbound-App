@@ -67,8 +67,8 @@ export interface PlayerState {
     equipment: Record<string, string>;
     hiddenZone: string[];
     isReady: boolean;
-    mana: number;
-    maxMana: number;
+    energy: number;
+    maxEnergy: number;
     charges: number;
     floatingEnergy: number;
 }

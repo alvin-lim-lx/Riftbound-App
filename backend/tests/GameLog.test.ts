@@ -125,7 +125,7 @@ describe('GameLog', () => {
         activePlayerId: P1,
         players: {
           ...state.players,
-          [P1]: { ...state.players[P1], mana: 5 },
+          [P1]: { ...state.players[P1], energy: 5 },
         },
       };
 
@@ -165,7 +165,7 @@ describe('GameLog', () => {
         activePlayerId: P1,
         players: {
           ...state.players,
-          [P1]: { ...state.players[P1], mana: 5 },
+          [P1]: { ...state.players[P1], energy: 5 },
         },
       };
 
