@@ -33,6 +33,8 @@ import { ChatBox } from './ChatBox';
 import { MulliganOverlay } from './MulliganOverlay';
 import { CardArtView } from './CardArtView';
 import { SpellTargetingModal, PendingSpell } from './SpellTargetingModal';
+import { DiscardPileModal } from './DiscardPileModal';
+import { PowerRuneSelectionModal } from './PowerRuneSelectionModal';
 import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase, Domain, BattlefieldState, SpellTargetType, SpellTargeting } from '../../shared/types';
 import { CARDS } from '../../shared/cards';
 import { randomId } from '../../utils/helpers';
@@ -145,13 +147,17 @@ function getAvailableRunes(player: PlayerState | undefined, allCards: Record<str
 }
 
 interface PendingPlayAction {
-  actionType: 'PlayUnit' | 'PlayGear';
+  actionType: 'PlayUnit' | 'PlayGear' | 'PlaySpell';
   payload: Record<string, unknown>;
   cardName: string;
   cardType: string;
-  destinationLabel: string;
-  runeCost: number;
-  availableRunes: number;
+  destinationLabel?: string; // not used for spells
+  runeCost?: number; // not used for spells
+  availableRunes?: number; // not used for spells
+  powerCost?: number;
+  powerDomains?: Domain[];
+  targetType?: SpellTargetType; // only for spells
+  selectedTargetIds?: string[]; // only for spells
 }
 
 interface PendingMoveUnit {
@@ -1165,9 +1171,10 @@ interface DeckAreaProps {
   pendingSpell?: PendingSpell | null;
   onSpellCardClick?: (instanceId: string) => void;
   compactCards?: boolean;
+  onGraveyardClick?: () => void;
 }
 
-function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick, pendingSpell, onSpellCardClick, compactCards = false }: DeckAreaProps) {
+function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick, pendingSpell, onSpellCardClick, compactCards = false, onGraveyardClick }: DeckAreaProps) {
   if (!player) return null;
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
@@ -1223,6 +1230,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
         isPlayer={!isOpponent}
         size="sm"
         maxHeightPx={cardMaxH}
+        onClick={onGraveyardClick}
       />
 
       {/* Hand (center) */}
@@ -2061,6 +2069,8 @@ export function BoardLayout() {
   const [pendingPlayAction, setPendingPlayAction] = React.useState<PendingPlayAction | null>(null);
   const [pendingMoveAction, setPendingMoveAction] = React.useState<PendingMoveAction | null>(null);
   const [pendingSpell, setPendingSpell] = React.useState<PendingSpell | null>(null);
+  const [discardPileModal, setDiscardPileModal] = React.useState<{ playerId: string; isOpponent: boolean } | null>(null);
+  const [pendingPowerRuneSelection, setPendingPowerRuneSelection] = React.useState<PendingPlayAction | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
 
   const handleDragStart = React.useCallback((e: React.MouseEvent) => {
@@ -2101,19 +2111,10 @@ export function BoardLayout() {
     const domains = (def?.domains ?? []).filter(domain => RUNE_ICONS[domain]);
     const powerCost = def?.cost?.power ?? 0;
     if (!def || powerCost <= 0 || domains.length !== 2 || payload.powerRuneDomains) return payload;
-
-    const selected: Domain[] = [];
-    for (let i = 0; i < powerCost; i++) {
-      const response = window.prompt(
-        `Choose power rune ${i + 1}/${powerCost} for ${def.name}: ${domains[0]} or ${domains[1]}`,
-        domains[i % 2]
-      );
-      if (!response) return null;
-      const match = domains.find(domain => domain.toLowerCase() === response.trim().toLowerCase());
-      if (!match) return null;
-      selected.push(match);
-    }
-    return { ...payload, powerRuneDomains: selected };
+    // This branch is now unreachable — dual-domain power cost selection is handled
+    // by PowerRuneSelectionModal which sets powerRuneDomains before calling handleAction.
+    // Kept for type-safety so the function still returns the correct shape.
+    return payload;
   }, [gameState]);
 
   const handleAction = useCallback((actionType: string, payload: Record<string, unknown> = {}) => {
@@ -2149,6 +2150,8 @@ export function BoardLayout() {
     if (runeCost > availableRunes) {
       return reject(`Invalid play: ${def.name} costs ${runeCost} runes, but you only have ${availableRunes}.`);
     }
+    const powerCost = def.cost?.power ?? 0;
+    const powerDomains = (def.domains ?? []).filter((d: string) => RUNE_ICONS[d as Domain]);
 
     if (def.type === 'Unit') {
       setPendingMoveAction(null);
@@ -2160,6 +2163,8 @@ export function BoardLayout() {
         destinationLabel: destinationKind === 'base' ? 'Your Base' : destination.name,
         runeCost,
         availableRunes,
+        powerCost,
+        powerDomains,
       });
       return;
     }
@@ -2177,6 +2182,8 @@ export function BoardLayout() {
         destinationLabel: 'Your Base',
         runeCost,
         availableRunes,
+        powerCost,
+        powerDomains,
       });
       return;
     }
@@ -2239,9 +2246,28 @@ export function BoardLayout() {
 
   const confirmPendingPlay = useCallback(() => {
     if (!pendingPlayAction) return;
+    // Dual-domain card with power cost → show rune selection modal
+    if ((pendingPlayAction.powerDomains?.length ?? 0) === 2 && (pendingPlayAction.powerCost ?? 0) > 0) {
+      setPendingPowerRuneSelection(pendingPlayAction);
+      return;
+    }
     handleAction(pendingPlayAction.actionType, pendingPlayAction.payload);
     setPendingPlayAction(null);
   }, [handleAction, pendingPlayAction]);
+
+  const handlePowerRuneConfirm = useCallback((selectedDomains: Domain[]) => {
+    if (!pendingPowerRuneSelection) return;
+    handleAction(pendingPowerRuneSelection.actionType, {
+      ...pendingPowerRuneSelection.payload,
+      powerRuneDomains: selectedDomains,
+    });
+    setPendingPowerRuneSelection(null);
+    setPendingPlayAction(null);
+    // Also clear pendingSpell if this power rune selection was for a spell
+    if (pendingPowerRuneSelection.actionType === 'PlaySpell') {
+      setPendingSpell(null);
+    }
+  }, [handleAction, pendingPowerRuneSelection]);
 
   const confirmPendingMove = useCallback(() => {
     if (!pendingMoveAction) return;
@@ -2303,6 +2329,23 @@ export function BoardLayout() {
   const handleConfirmSpell = useCallback(() => {
     if (!pendingSpell) return;
     const def = gameState?.cardDefinitions[gameState.allCards[pendingSpell.cardInstanceId]?.cardId];
+    const powerCost = def?.cost?.power ?? 0;
+    const powerDomains = (def?.domains ?? []).filter((d: string) => RUNE_ICONS[d as Domain]);
+
+    // Dual-domain card with power cost → show rune selection modal
+    if (powerDomains.length === 2 && powerCost > 0) {
+      setPendingPowerRuneSelection({
+        actionType: 'PlaySpell',
+        payload: { cardInstanceId: pendingSpell.cardInstanceId },
+        cardName: def?.name ?? 'spell',
+        cardType: def?.type ?? 'Spell',
+        powerCost,
+        powerDomains,
+        targetType: pendingSpell.targetType,
+        selectedTargetIds: pendingSpell.selectedTargetIds,
+      });
+      return;
+    }
 
     const payload: Record<string, unknown> = { cardInstanceId: pendingSpell.cardInstanceId };
     if (pendingSpell.selectedTargetIds.length > 0) {
@@ -2335,19 +2378,28 @@ export function BoardLayout() {
     if (!pendingSpell) return;
     const def = gameState?.cardDefinitions[gameState.allCards[pendingSpell.cardInstanceId]?.cardId];
     store.addLog(`Cancelled casting ${def?.name ?? 'spell'}.`);
+    // Clear power rune selection too if this spell had dual-domain power cost
+    if (pendingPowerRuneSelection?.actionType === 'PlaySpell') {
+      setPendingPowerRuneSelection(null);
+    }
     setPendingSpell(null);
-  }, [pendingSpell, gameState, store]);
+  }, [pendingSpell, gameState, store, pendingPowerRuneSelection]);
 
   // Escape key closes the modal
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && pendingSpell) {
+        // If power rune modal is also showing (spell with dual-domain power cost),
+        // clear both; otherwise just cancel the spell targeting
+        if (pendingPowerRuneSelection?.actionType === 'PlaySpell') {
+          setPendingPowerRuneSelection(null);
+        }
         handleCancelSpell();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [pendingSpell, handleCancelSpell]);
+  }, [pendingSpell, pendingPowerRuneSelection, handleCancelSpell]);
 
 
 
@@ -2415,6 +2467,7 @@ export function BoardLayout() {
                 handCards={[]}
                 opponentHandCount={opponentHandCount}
                 compactCards={isShort || isNarrow}
+                onGraveyardClick={() => opponent && setDiscardPileModal({ playerId: opponent.id, isOpponent: true })}
               />
             </div>
 
@@ -2482,6 +2535,7 @@ export function BoardLayout() {
                 pendingSpell={pendingSpell}
                 onSpellCardClick={handleSpellCardClick}
                 compactCards={isShort || isNarrow}
+                onGraveyardClick={() => me && setDiscardPileModal({ playerId, isOpponent: false })}
               />
             </div>
 
@@ -2560,6 +2614,32 @@ export function BoardLayout() {
           onConfirm={handleConfirmSpell}
           onCancel={handleCancelSpell}
           onRemoveTarget={handleRemoveTarget}
+        />
+      )}
+
+      {/* Discard pile modal */}
+      {discardPileModal && (
+        <DiscardPileModal
+          title={discardPileModal.isOpponent ? "Opponent's Discard" : 'Your Discard'}
+          discardPile={gameState.players[discardPileModal.playerId]?.discardPile ?? []}
+          allCards={gameState.allCards}
+          cardDefs={cardDefs}
+          accentColor={discardPileModal.isOpponent ? '#ef4444' : '#22c55e'}
+          onClose={() => setDiscardPileModal(null)}
+        />
+      )}
+
+      {/* Power rune selection modal for dual-domain cards */}
+      {pendingPowerRuneSelection && pendingPowerRuneSelection.powerDomains && (
+        <PowerRuneSelectionModal
+          cardName={pendingPowerRuneSelection.cardName}
+          powerCost={pendingPowerRuneSelection.powerCost ?? 0}
+          domains={pendingPowerRuneSelection.powerDomains}
+          onConfirm={handlePowerRuneConfirm}
+          onCancel={() => {
+            setPendingPowerRuneSelection(null);
+            setPendingPlayAction(null);
+          }}
         />
       )}
 

@@ -1275,11 +1275,13 @@ function choosePowerRune(
   alreadySelected: Set<string>
 ): string | null {
   const activeRuneIds = getActiveRuneIds(state, playerId).filter(runeId => !alreadySelected.has(runeId));
+  // preferredDomain must always be matched; exhausted runes are preferred over ready ones
   const passes = [
     (runeId: string) => state.allCards[runeId].exhausted && getRuneDomain(state, runeId) === preferredDomain,
     (runeId: string) => !state.allCards[runeId].exhausted && getRuneDomain(state, runeId) === preferredDomain,
-    (runeId: string) => state.allCards[runeId].exhausted,
-    (runeId: string) => !state.allCards[runeId].exhausted,
+    // Fallbacks still require the correct domain — no wildcard matching
+    (runeId: string) => state.allCards[runeId].exhausted && (preferredDomain === undefined || getRuneDomain(state, runeId) === preferredDomain),
+    (runeId: string) => !state.allCards[runeId].exhausted && (preferredDomain === undefined || getRuneDomain(state, runeId) === preferredDomain),
   ];
 
   for (const pass of passes) {
