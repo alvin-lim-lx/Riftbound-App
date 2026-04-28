@@ -33,7 +33,6 @@ export interface ActionResult {
 }
 
 export type GameSideEffect =
-  | { type: 'DrawRune'; playerId: string; runeInstanceId: string }
   | { type: 'DamageUnit'; unitInstanceId: string; damage: number }
   | { type: 'KillUnit'; unitInstanceId: string }
   | { type: 'ReadyUnit'; unitInstanceId: string }
@@ -298,8 +297,8 @@ export function createGame(
       equipment: {},
       hiddenZone: [],
       isReady: false,
-      mana: 0,
-      maxMana: 0,
+      energy: 0,
+      maxEnergy: 0,
       charges: 0,
       floatingEnergy: 0,
       legend: legendInstanceId,
@@ -364,72 +363,50 @@ export function executeAction(
   switch (action.type) {
     case 'Pass': {
       const result = handlePass(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'PlayUnit': {
       const result = handlePlayUnit(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'PlaySpell': {
       const result = handlePlaySpell(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'PlayGear': {
       const result = handlePlayGear(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'EquipGear': {
       const result = handleEquipGear(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'MoveUnit': {
       const result = handleMoveUnit(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'Attack': {
       const result = handleAttack(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'DrawRune': {
-      const result = handleDrawRune(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
-      return result;
-    }
-    case 'UseRune': {
-      const result = handleUseRune(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'HideCard': {
       const result = handleHideCard(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'ReactFromHidden': {
       const result = handleReactFromHidden(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'UseAbility': {
       const result = handleUseAbility(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'Concede': {
       const result = handleConcede(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'Mulligan': {
       const result = handleMulligan(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'Focus': {
@@ -440,14 +417,12 @@ export function executeAction(
     }
     case 'Reaction': {
       const result = handleReaction(state, action);
-      if (result.success && result.newState) result.newState.actionLog.push(action);
       return result;
     }
     case 'CloseReactionWindow': {
       const newState = closeReactionWindow(state);
       // Automatically resolve combat after window closes
       const combatResult = resolveCombat(newState);
-      if (combatResult.success && combatResult.newState) combatResult.newState.actionLog.push(action);
       return combatResult;
     }
     default:
@@ -519,8 +494,9 @@ export function startNewTurn(state: GameState): GameState {
   newState.turn = state.turn + 1;
   newState.activePlayerId = nextPlayerId;
   newState.effectStack = [];
+  const playerName = newState.players[nextPlayerId]?.name || nextPlayerId;
   newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange',
-    `Turn ${newState.turn} begins for ${nextPlayerId}`));
+    `Turn ${newState.turn} begins for ${playerName}`));
   return enterPhase(newState, 'Awaken');
 }
 
@@ -573,6 +549,7 @@ function executeMulliganPhase(state: GameState): GameState {
 
 function executeAwakenPhase(state: GameState): GameState {
   const playerId = state.activePlayerId;
+  if (!playerId || !state.players[playerId]) return state;
   const newState = deepClone(state);
   const player = newState.players[playerId];
 
@@ -594,6 +571,13 @@ function executeAwakenPhase(state: GameState): GameState {
   }
 
   syncRuneResourceCounters(newState, playerId);
+
+  const playerName = player.name || playerId;
+  newState.actionLog.push(makeLog(newState, playerId, 'System',
+    `${playerName}'s Awaken — energy: ${player.energy}`,
+    { energy: player.energy }
+  ));
+
   return newState;
 }
 
@@ -628,13 +612,25 @@ function executeChannelPhase(state: GameState): GameState {
 
   // Channel 2 Runes from Rune Deck into Rune Pool. The second player channels 3 on their first turn.
   const channelCount = state.turn === 2 && !player.hasGoneFirst ? 3 : 2;
+  const drawnRuneIds: string[] = [];
   for (let i = 0; i < channelCount; i++) {
     const runeId = player.runeDeck.shift();
     if (runeId) {
+      drawnRuneIds.push(runeId);
       // Set location to 'rune' (active rune pool visible in top bar)
       (newState.allCards[runeId] as { location: string }).location = 'rune';
       newState.allCards[runeId].exhausted = false;
     }
+  }
+
+  // Log each rune channeled — runes are fully public, both players see rune names
+  const playerName = newState.players[playerId]?.name || playerId;
+  for (const runeId of drawnRuneIds) {
+    const runeCardId = newState.allCards[runeId].cardId;
+    newState.actionLog.push(makeLog(newState, playerId, 'Channel',
+      `${playerName} channeled ${newState.cardDefinitions[runeCardId]?.name ?? 'a rune'}`,
+      { runeCardId, runeInstanceId: runeId }
+    ));
   }
 
   syncRuneResourceCounters(newState, playerId);
@@ -651,6 +647,21 @@ function executeDrawPhase(state: GameState): GameState {
   if (cardId) {
     newState.allCards[cardId].location = 'hand';
     player.hand.push(cardId);
+
+    // Log draw — two-entry pattern for hand privacy:
+    // Actor sees: full card name; Opponent sees: anonymized
+    const playerName = newState.players[playerId].name;
+    const cardDef = newState.cardDefinitions[newState.allCards[cardId].cardId];
+    // Full name for actor
+    newState.actionLog.push(makeLog(newState, playerId, 'Draw',
+      `${playerName} drew ${cardDef.name}`,
+      { cardId: cardDef.id, cardInstanceId: cardId, fromZone: 'deck', toZone: 'hand', _isSelfOnly: true }
+    ));
+    // Anonymized for opponent
+    newState.actionLog.push(makeLog(newState, playerId, 'Draw',
+      `${playerName} drew 1 card`,
+      { count: 1, fromZone: 'deck', toZone: 'hand' }
+    ));
   }
 
   syncRuneResourceCounters(newState, playerId);
@@ -1222,8 +1233,8 @@ function syncRuneResourceCounters(state: GameState, playerId: string): void {
   player.floatingEnergy = player.floatingEnergy ?? 0;
   const activeRuneIds = getActiveRuneIds(state, playerId);
   const readyRuneCount = activeRuneIds.filter(runeId => !state.allCards[runeId].exhausted).length;
-  player.mana = readyRuneCount + player.floatingEnergy;
-  player.maxMana = activeRuneIds.length + player.floatingEnergy;
+  player.energy = readyRuneCount + player.floatingEnergy;
+  player.maxEnergy = activeRuneIds.length + player.floatingEnergy;
 }
 
 function chooseEnergyRunes(
@@ -1381,9 +1392,6 @@ function handlePass(state: GameState, action: GameAction): ActionResult {
       // After stack drains: if combat not yet resolved, resolve combat
       if (!stackResult.newState!.showdown!.combatResolved) {
         const combatResult = resolveCombat(stackResult.newState!);
-        if (combatResult.success && combatResult.newState) {
-          combatResult.newState.actionLog.push(action);
-        }
         return combatResult;
       }
 
@@ -1590,7 +1598,22 @@ function handleEquipGear(
   action: GameAction
 ): ActionResult {
   // Same as PlayGear for now
-  return handlePlayGear(state, action);
+  const result = handlePlayGear(state, action);
+  if (!result.success || !result.newState) return result;
+
+  // Log equipment attachment
+  const { cardInstanceId, targetUnitId } = action.payload as { cardInstanceId: string; targetUnitId?: string };
+  const def = state.cardDefinitions[state.allCards[cardInstanceId].cardId];
+  const playerName = result.newState.players[action.playerId].name;
+  if (targetUnitId) {
+    const targetUnitDef = state.cardDefinitions[result.newState.allCards[targetUnitId].cardId];
+    result.newState.actionLog.push(makeLog(result.newState, action.playerId, 'Equip',
+      `${playerName} equipped ${def.name} to ${targetUnitDef.name}`,
+      { gearInstanceId: cardInstanceId, targetUnitId }
+    ));
+  }
+
+  return result;
 }
 
 function handleMoveUnit(
@@ -1668,6 +1691,14 @@ function handleMoveUnit(
 
     effects.push(...resolveAbilities(newState, move.unitId, 'MOVE'));
   }
+
+  const playerName = newState.players[action.playerId].name;
+  const fromBf = state.battlefields.find(b => b.id === moves[0].fromBattlefieldId)!;
+  const unitNames = moves.map(m => newState.cardDefinitions[newState.allCards[m.unitId].cardId]?.name ?? 'a unit').join(', ');
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Move',
+    `${playerName} moved ${unitNames} from ${fromBf.name} to ${newToBf.name}`,
+    { cardInstanceIds: moves.map(m => m.unitId), fromBattlefieldId: moves[0].fromBattlefieldId, toBattlefieldId }
+  ));
 
   // Check if destination BF is contested — if so, trigger Showdown for each moved unit
   const enemyUnitsAtTarget = newToBf.units.filter(id =>
@@ -1804,6 +1835,14 @@ export function resolveShowdown(
     };
   }
 
+  // Log combat resolution
+  const attackerName = newState.cardDefinitions[newState.allCards[attackerId].cardId].name;
+  const killedUnitIds = effects.filter(e => e.type === 'KillUnit').map(e => (e as { type: 'KillUnit'; unitInstanceId: string }).unitInstanceId);
+  newState.actionLog.push(makeLog(newState, attackerOwner, 'Combat',
+    `Combat resolved — ${attackerName} dealt ${totalAttackerMight} might vs ${totalDefenderMight}`,
+    { attackerId, defenderIds: defenderUnitIds, damageDealt: totalAttackerMight, unitsKilled: killedUnitIds }
+  ));
+
   const finalState = advancePhase(newState);
   return { success: true, newState: finalState, sideEffects: effects };
 }
@@ -1829,40 +1868,6 @@ function calculateMight(state: GameState, unitInstanceId: string): number {
   return total;
 }
 
-function handleDrawRune(state: GameState, action: GameAction): ActionResult {
-  const player = state.players[action.playerId];
-  const runeId = player.runeDeck.shift();
-  if (!runeId) return { success: false, error: 'No runes left.', action };
-
-  const newState = deepClone(state);
-  newState.allCards[runeId].location = 'hand';
-  newState.players[action.playerId].hand.push(runeId);
-  newState.players[action.playerId].charges += 1;
-  syncRuneResourceCounters(newState, action.playerId);
-
-  return {
-    success: true,
-    action,
-    newState,
-    sideEffects: [{ type: 'DrawRune', playerId: action.playerId, runeInstanceId: runeId }]
-  };
-}
-
-function handleUseRune(state: GameState, action: GameAction): ActionResult {
-  const player = state.players[action.playerId];
-  if (player.hand.length === 0) return { success: false, error: 'No runes in hand.', action };
-
-  const runeId = player.hand[player.hand.length - 1];
-  const newState = deepClone(state);
-  newState.allCards[runeId].location = 'runeDiscard';
-  newState.players[action.playerId].hand.pop();
-  newState.players[action.playerId].runeDiscard.push(runeId);
-  newState.players[action.playerId].mana += 1;
-  syncRuneResourceCounters(newState, action.playerId);
-
-  return { success: true, action, newState };
-}
-
 function handleHideCard(state: GameState, action: GameAction): ActionResult {
   const { cardInstanceId } = action.payload as { cardInstanceId: string };
   const card = state.allCards[cardInstanceId];
@@ -1883,6 +1888,12 @@ function handleHideCard(state: GameState, action: GameAction): ActionResult {
   newState.allCards[cardInstanceId].facing = 'down';
   newState.allCards[cardInstanceId].owner_hidden = true;
 
+  const playerName = newState.players[action.playerId].name;
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Hide',
+    `${playerName} hid ${def.name}`,
+    { cardInstanceId, cardId: def.id }
+  ));
+
   return { success: true, action, newState };
 }
 
@@ -1897,6 +1908,13 @@ function handleReactFromHidden(
   const newState = deepClone(state);
   newState.allCards[cardInstanceId].facing = 'up';
   newState.allCards[cardInstanceId].owner_hidden = false;
+
+  const playerName = newState.players[action.playerId].name;
+  const def = state.cardDefinitions[card.cardId];
+  newState.actionLog.push(makeLog(newState, action.playerId, 'ReactFromHidden',
+    `${playerName} revealed ${def.name} from hidden`,
+    { cardInstanceId, cardId: def.id }
+  ));
 
   return { success: true, action, newState };
 }
@@ -1994,6 +2012,13 @@ function handleMulligan(state: GameState, action: GameAction): ActionResult {
   // Mark current player ready
   newState.players[action.playerId].isReady = true;
   newState.players[action.playerId].mulligansComplete = true;
+
+  // Log mulligan decision
+  const playerName = newState.players[action.playerId].name;
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Mulligan',
+    `${playerName} completed mulligan — kept ${uniqueKeepIds.length}, set aside ${setAsideIds.length}`,
+    { kept: uniqueKeepIds.length, setAside: setAsideIds.length }
+  ));
 
   if (bothReady) {
     // Both players have now completed mulligan — transition to first turn
@@ -2206,7 +2231,7 @@ function getUnitOwner(state: GameState, unitInstanceId: string): string {
   return state.allCards[unitInstanceId]?.ownerId ?? '';
 }
 
-function makeLog(state: GameState, playerId: string, logType: LogEntryType, message: string): SystemLogEntry {
+function makeLog(state: GameState, playerId: string, logType: LogEntryType, message: string, detail?: Record<string, unknown>): SystemLogEntry {
   return {
     id: randomId(),
     type: logType,
@@ -2215,6 +2240,7 @@ function makeLog(state: GameState, playerId: string, logType: LogEntryType, mess
     turn: state.turn,
     phase: state.phase,
     timestamp: Date.now(),
+    detail,
   };
 }
 
@@ -2309,11 +2335,6 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
         actions.push(makeAction('Attack', playerId, { attackerId: unitId, targetBattlefieldId: bf.id }));
       }
     }
-  }
-
-  // Use runes
-  if (player.hand.some(id => state.allCards[id]?.cardId === 'Rune') && player.runeDeck.length > 0) {
-    actions.push(makeAction('UseRune', playerId, {}));
   }
 
   return actions;

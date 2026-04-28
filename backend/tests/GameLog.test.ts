@@ -125,7 +125,7 @@ describe('GameLog', () => {
         activePlayerId: P1,
         players: {
           ...state.players,
-          [P1]: { ...state.players[P1], mana: 5 },
+          [P1]: { ...state.players[P1], energy: 5 },
         },
       };
 
@@ -165,7 +165,7 @@ describe('GameLog', () => {
         activePlayerId: P1,
         players: {
           ...state.players,
-          [P1]: { ...state.players[P1], mana: 5 },
+          [P1]: { ...state.players[P1], energy: 5 },
         },
       };
 
@@ -204,64 +204,6 @@ describe('GameLog', () => {
         const loggedAction = result.newState.actionLog.find(log => log.id === action.id);
         expect(loggedAction).toBeDefined();
         expect(loggedAction!.type).toBe('Concede');
-      }
-    });
-  });
-
-  describe('DrawRune action', () => {
-    it('records DrawRune action in actionLog after successful execution', () => {
-      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
-      const playState: typeof state = {
-        ...state,
-        phase: 'Action' as const,
-        activePlayerId: P1,
-        players: {
-          ...state.players,
-          [P1]: { ...state.players[P1], mana: 5, charges: 1 },
-        },
-      };
-
-      const action = makeAction('DrawRune', P1, {});
-      const result = executeAction(playState, action);
-
-      expect(result.success).toBe(true);
-      if (result.newState) {
-        expect(result.newState.actionLog.length).toBeGreaterThan(0);
-        const loggedAction = result.newState.actionLog.find(log => log.id === action.id);
-        expect(loggedAction).toBeDefined();
-        expect(loggedAction!.type).toBe('DrawRune');
-      }
-    });
-  });
-
-  describe('UseRune action', () => {
-    it('records UseRune action in actionLog after successful execution', () => {
-      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
-      // Give player a rune in hand
-      const runeId = state.players[P1].runeDeck[0];
-      state.allCards[runeId].location = 'hand';
-      state.players[P1].hand.push(runeId);
-      state.players[P1].runeDeck.shift();
-
-      const playState: typeof state = {
-        ...state,
-        phase: 'Action' as const,
-        activePlayerId: P1,
-        players: {
-          ...state.players,
-          [P1]: { ...state.players[P1], mana: 0 },
-        },
-      };
-
-      const action = makeAction('UseRune', P1, {});
-      const result = executeAction(playState, action);
-
-      expect(result.success).toBe(true);
-      if (result.newState) {
-        expect(result.newState.actionLog.length).toBeGreaterThan(0);
-        const loggedAction = result.newState.actionLog.find(log => log.id === action.id);
-        expect(loggedAction).toBeDefined();
-        expect(loggedAction!.type).toBe('UseRune');
       }
     });
   });

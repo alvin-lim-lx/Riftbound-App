@@ -120,8 +120,8 @@ export class RulesBasedAI {
         if (def.keywords.includes('Hunt')) score += 12;
         if (def.keywords.includes('Accelerate')) score += 5;
 
-        // Mana efficiency
-        if (manaCost <= me.mana) score += 5;
+        // Energy efficiency
+        if (manaCost <= me.energy) score += 5;
 
         return { action, score, reason: `Play ${def.name} cost=${manaCost} might=${might}` };
       }
@@ -169,12 +169,6 @@ export class RulesBasedAI {
         if (def.name.includes('Jhin')) score += 10;
 
         return { action, score, reason: `Move ${def.name} to ${targetBf?.name}` };
-      }
-
-      case 'UseRune': {
-        // Spending rune for mana is always good
-        const score = 8;
-        return { action, score, reason: 'Use rune for mana' };
       }
 
       case 'Mulligan': {

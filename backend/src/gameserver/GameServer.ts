@@ -53,6 +53,7 @@ interface LiveGame {
   ais: Map<string, RulesBasedAI>;   // playerId -> AI instance
   aiTimer: NodeJS.Timeout | null;
   isRunning: boolean;
+  lastLogIndex: number;  // tracks actionLog length at last broadcast; incremental game_log events use this
 }
 
 // ============================================================
@@ -368,6 +369,8 @@ export class GameServer {
             autoAdvanceABCDPhases(game);
           }
 
+          // Broadcast incremental log entries first so clients can append
+          this.broadcastGameLog(game);
           this.broadcastGameState(game);
 
           // Handle game over
@@ -405,6 +408,7 @@ export class GameServer {
             autoAdvanceABCDPhases(game);
           }
 
+          this.broadcastGameLog(game);
           this.broadcastGameState(game);
           this.scheduleAIMove(game);
         }
@@ -509,6 +513,7 @@ export class GameServer {
       ais: new Map(),
       aiTimer: null,
       isRunning: true,
+      lastLogIndex: gameStateWithPhase.actionLog.length,
     };
 
     this.liveGames.set(gameStateWithPhase.id, liveGame);
@@ -599,6 +604,7 @@ export class GameServer {
           autoAdvanceABCDPhases(game);
         }
 
+        this.broadcastGameLog(game);
         this.broadcastGameState(game);
 
         if (game.state.phase === 'GameOver' && game.state.winner) {
@@ -624,6 +630,29 @@ export class GameServer {
       console.log(`[broadcastGameState] sending to pid=${pid} phase=${sanitized.phase}`);
       this.send(ws, { ...event, state: sanitized });
     }
+  }
+
+  /**
+   * Broadcasts incremental log entries as a separate real-time event.
+   * Called after auto-advance phases add logs, but before the full game_state_update
+   * so clients can append to their log store immediately.
+   */
+  private broadcastGameLog(game: LiveGame) {
+    const newEntries = game.state.actionLog.slice(game.lastLogIndex);
+    if (newEntries.length === 0) return;
+
+    const event = {
+      type: 'game_log',
+      gameId: game.id,
+      entries: newEntries,
+      timestamp: Date.now(),
+    };
+
+    for (const [pid, ws] of game.clients) {
+      this.send(ws, event);
+    }
+
+    game.lastLogIndex = game.state.actionLog.length;
   }
 
   private broadcastLobby(lobby: Lobby) {

@@ -97,11 +97,44 @@ export const useGameStore = create<GameStore>((set, get) => ({
   setGameState: (gameState) => {
     const { playerId } = get();
     const myTurn = gameState.activePlayerId === playerId;
+
+    // Derive gameLog strings from actionLog SystemLogEntry messages.
+    // Privacy rules:
+    //   - Entries with no playerId (PhaseChange, TurnChange, Score) → show to everyone
+    //   - _isSelfOnly entries belong to a different player → hide
+    //   - Entries for the current player → show as-is
+    //   - Entries for the opponent → show (anonymized by the backend two-entry pattern)
+    // Deduplication: entries with identical timestamp+message are collapsed (e.g. the
+    // two-entry Draw pattern produces same-timestamp pairs for the same viewer)
+    const seen = new Set<string>();
+    const logMessages = (gameState.actionLog as any[])
+      .filter((entry) => {
+        const entryPlayerId = (entry as any).playerId as string | undefined;
+        const detail = (entry as any).detail as Record<string, unknown> | undefined;
+
+        // Hide _isSelfOnly entries from the viewer entirely.
+        // The backend creates two entries per draw: one with _isSelfOnly (actor's private view
+        // with card name) and one anonymized (opponent's view with count only).
+        // We hide the private entry from everyone — the anonymized entry is sufficient for all.
+        if (detail?._isSelfOnly === true) {
+          return false;
+        }
+
+        // Deduplicate by timestamp+message
+        const key = `${(entry as any).timestamp}|${(entry as any).message}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+
+        return true;
+      })
+      .map((entry) => `${new Date((entry as any).timestamp).toLocaleTimeString()}: ${(entry as any).message}`);
+
     set({
       gameState,
       gameId: gameState.id,
       myTurn,
       phase: gameState.phase,
+      gameLog: logMessages,
     });
   },
 

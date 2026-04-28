@@ -21,8 +21,8 @@ describe('Main deck should be hidden', () => {
     discardPile: [],
     runeDeck: [],
     score: 0,
-    mana: 0,
-    maxMana: 0,
+    energy: 0,
+    maxEnergy: 0,
     xp: 0,
     charges: 0,
   });

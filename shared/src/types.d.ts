@@ -67,8 +67,8 @@ export interface PlayerState {
     equipment: Record<string, string>;
     hiddenZone: string[];
     isReady: boolean;
-    mana: number;
-    maxMana: number;
+    energy: number;
+    maxEnergy: number;
     charges: number;
     floatingEnergy: number;
 }
@@ -87,7 +87,7 @@ export interface GameState {
     createdAt: number;
     isPvP: boolean;
 }
-export type ActionType = 'PlayUnit' | 'PlaySpell' | 'PlayGear' | 'EquipGear' | 'MoveUnit' | 'Attack' | 'UseAbility' | 'Pass' | 'Mulligan' | 'DrawRune' | 'UseRune' | 'HideCard' | 'ReactFromHidden' | 'AssignBlocker' | 'Concede';
+export type ActionType = 'PlayUnit' | 'PlaySpell' | 'PlayGear' | 'EquipGear' | 'MoveUnit' | 'Attack' | 'UseAbility' | 'Pass' | 'Mulligan' | 'HideCard' | 'ReactFromHidden' | 'AssignBlocker' | 'Concede';
 export interface GameAction {
     id: string;
     type: ActionType;

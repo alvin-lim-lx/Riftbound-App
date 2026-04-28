@@ -173,8 +173,8 @@ export interface PlayerState {
   equipment: Record<string, string>;
   hiddenZone: string[];
   isReady: boolean;
-  mana: number;
-  maxMana: number;
+  energy: number;
+  maxEnergy: number;
   charges: number;
   floatingEnergy: number;
 }
@@ -207,8 +207,6 @@ export type ActionType =
   | 'UseAbility'
   | 'Pass'
   | 'Mulligan'
-  | 'DrawRune'
-  | 'UseRune'
   | 'HideCard'
   | 'ReactFromHidden'
   | 'AssignBlocker'
@@ -281,9 +279,34 @@ export interface ReactFromHiddenPayload {
 
 // --- Game Events (WebSocket) ---
 
+export type LogEntryType =
+  | 'PhaseChange' | 'TurnChange' | 'Score' | 'GameStart' | 'GameOver'
+  | 'System' | 'Showdown' | 'Combat' | 'Focus'
+  | 'Mulligan'
+  | 'Channel'
+  | 'Draw'
+  | 'Move'
+  | 'Hide'
+  | 'ReactFromHidden'
+  | 'Equip';
+
+export interface SystemLogEntry {
+  id: string;
+  type: LogEntryType;
+  playerId?: string;
+  message: string;
+  turn: number;
+  phase: Phase;
+  timestamp: number;
+  detail?: Record<string, unknown>;
+}
+
+export type GameLogEntry = GameAction | SystemLogEntry;
+
 export type GameEventType =
   | 'game_start'
   | 'game_state_update'
+  | 'game_log'
   | 'action_result'
   | 'phase_change'
   | 'turn_change'
@@ -323,6 +346,12 @@ export interface PhaseChangeEvent {
 export interface GameOverEvent {
   winnerId: string;
   reason: 'score' | 'concede' | 'timeout';
+}
+
+export interface GameLogEvent {
+  gameId: string;
+  entries: GameLogEntry[];  // incremental log entries since last broadcast
+  timestamp: number;
 }
 
 // --- Lobby / Matchmaking ---
