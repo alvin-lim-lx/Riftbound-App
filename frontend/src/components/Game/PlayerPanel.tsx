@@ -30,8 +30,6 @@ export function PlayerPanel({ player, isOpponent, cardDefs }: Props) {
     name: { fontWeight: 600, fontSize: '14px', color: '#1a1a1a' },
     score: { display: 'flex', alignItems: 'center', gap: '16px' },
     stat: { display: 'flex', alignItems: 'center', gap: '4px', fontSize: '13px' },
-    manaText: { color: '#e63946' },
-    xpText: { color: '#d4a843' },
     deckCount: { color: '#6b7280', fontSize: '12px' },
     handCount: { color: '#9ca3af', fontSize: '12px' },
     scoreVal: { fontSize: '22px', fontWeight: 700, color: '#d4a843' },
@@ -51,21 +49,13 @@ export function PlayerPanel({ player, isOpponent, cardDefs }: Props) {
             <span style={styles.scoreVal}>★ {player.score}</span>
           </div>
           {!isOpponent && (
-            <>
-              <div style={styles.stat}>
-                <span>◆ {player.energy}/{player.maxEnergy}</span>
-              </div>
-              <div style={styles.stat}>
-                <span>✦ {player.xp} XP</span>
-              </div>
-              <div style={styles.stat}>
-                <span>⚡ {player.charges} charges</span>
-              </div>
-            </>
+            <div style={styles.stat}>
+              <span>✦ {player.xp} XP</span>
+            </div>
           )}
-          <div style={styles.handCount}>
-            {isOpponent ? `Hand: ${player.hand.length} cards` : `Deck: ${player.deck.length} cards`}
-          </div>
+        </div>
+        <div style={styles.handCount}>
+          {isOpponent ? `Hand: ${player.hand.length} cards` : `Deck: ${player.deck.length} cards`}
         </div>
       </div>
     </div>
