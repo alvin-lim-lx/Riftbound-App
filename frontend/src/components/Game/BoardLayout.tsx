@@ -414,9 +414,10 @@ interface PlayerInfoBarProps {
   isPlayer: boolean;          // true = actual player (left side), false = opponent
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
+  reversed?: boolean;        // flip layout horizontally (for opponent panel)
 }
 
-function PlayerInfoBar({ player, isPlayer, allCards, cardDefs }: PlayerInfoBarProps) {
+function PlayerInfoBar({ player, isPlayer, allCards, cardDefs, reversed }: PlayerInfoBarProps) {
   if (!player) return <div style={infoBarStyles.placeholder} />;
 
   const isYou = isPlayer;
@@ -433,45 +434,46 @@ function PlayerInfoBar({ player, isPlayer, allCards, cardDefs }: PlayerInfoBarPr
       borderColor: accentColor + '44',
       background: accentColor + '0d',
     }}>
-      {/* Player name + score */}
-      <div style={infoBarStyles.nameScore}>
-        <div style={{ ...infoBarStyles.name, color: isYou ? '#e8e8e8' : '#ccc' }}>
-          {player.name}
-          {isYou && <span style={infoBarStyles.youTag}> (You)</span>}
-        </div>
-        <div style={infoBarStyles.scoreRow}>
-          <span style={infoBarStyles.star}>★</span>
-          <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843' }}>{player.score}</span>
-          <span style={{ ...infoBarStyles.sep }}>·</span>
-          <span style={infoBarStyles.mana}>◆ {player.energy}/{player.maxEnergy}</span>
-          {!isYou && <span style={infoBarStyles.sep}>·</span>}
-          {!isYou && (
-            <span style={{ fontSize: '11px', color: '#888' }}>
-              ◆{player.energy}
-            </span>
-          )}
-        </div>
+      {/* Name + XP + score — evenly spaced across the full width */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
+        {reversed ? (
+          <>
+            {/* Opponent: score left, xp center, name right */}
+            <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '4px', flex: 1 }}>
+              <span style={infoBarStyles.star}>★</span>
+              <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843', fontSize: '42px', lineHeight: 1 }}>{player.score}</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', flex: 1 }}>
+              <div style={infoBarStyles.resource}>
+                <span style={infoBarStyles.xpIcon}>✦</span>
+                <span style={infoBarStyles.xpVal}>{player.xp} XP</span>
+              </div>
+            </div>
+            <div style={{ ...infoBarStyles.name, color: '#ccc', textAlign: 'right', flex: 1 }}>{player.name}</div>
+          </>
+        ) : (
+          <>
+            {/* Player: name left, xp center, score right */}
+            <div style={{ ...infoBarStyles.name, color: '#e8e8e8', textAlign: 'left', flex: 1 }}>
+              {player.name}
+              <span style={infoBarStyles.youTag}> (You)</span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'center', flex: 1 }}>
+              <div style={infoBarStyles.resource}>
+                <span style={infoBarStyles.xpIcon}>✦</span>
+                <span style={infoBarStyles.xpVal}>{player.xp} XP</span>
+              </div>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '4px', flex: 1 }}>
+              <span style={infoBarStyles.star}>★</span>
+              <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843', fontSize: '42px', lineHeight: 1 }}>{player.score}</span>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* XP + charges for player */}
-      {isYou && (
-        <div style={infoBarStyles.resources}>
-          <div style={infoBarStyles.resource}>
-            <span style={infoBarStyles.xpIcon}>✦</span>
-            <span style={infoBarStyles.xpVal}>{player.xp} XP</span>
-          </div>
-          {player.charges > 0 && (
-            <div style={infoBarStyles.resource}>
-              <span style={infoBarStyles.chargeIcon}>⚡</span>
-              <span style={infoBarStyles.chargeVal}>{player.charges}</span>
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Active runes */}
-      <div style={infoBarStyles.runesSection}>
-        <div style={infoBarStyles.runesLabel}>RUNES</div>
+      <div style={{ ...infoBarStyles.runesSection, flexDirection: reversed ? 'row-reverse' : 'row' }}>
         <ActiveRunesDisplay
           runeIds={activeRuneIds}
           allCards={allCards}
@@ -501,11 +503,7 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     minWidth: '200px',
     maxWidth: '320px',
   },
-  nameScore: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '2px',
-  },
+
   name: {
     fontSize: '13px',
     fontWeight: 700,
@@ -518,12 +516,6 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     fontWeight: 400,
     color: '#22c55e',
   },
-  scoreRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '4px',
-    fontSize: '12px',
-  },
   star: {
     fontSize: '11px',
     color: '#d4a843',
@@ -532,15 +524,6 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     fontSize: '16px',
     fontWeight: 900,
     lineHeight: 1,
-  },
-  sep: {
-    color: '#555',
-    fontSize: '11px',
-  },
-  mana: {
-    fontSize: '12px',
-    color: '#e63946',
-    fontWeight: 700,
   },
   resources: {
     display: 'flex',
@@ -561,28 +544,11 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     color: '#d4a843',
   },
-  chargeIcon: {
-    fontSize: '9px',
-    color: '#60a5fa',
-  },
-  chargeVal: {
-    fontSize: '11px',
-    fontWeight: 700,
-    color: '#60a5fa',
-  },
   runesSection: {
     display: 'flex',
     alignItems: 'center',
     gap: '6px',
     marginTop: '2px',
-  },
-  runesLabel: {
-    fontSize: '8px',
-    textTransform: 'uppercase',
-    letterSpacing: '1px',
-    color: '#666',
-    fontWeight: 700,
-    flexShrink: 0,
   },
   floatingEnergy: {
     minWidth: '20px',
@@ -673,20 +639,14 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCard
         {cards.map((card, i) => {
           const def = cardDefs[card.cardId];
           const canDrag = canInteract && (def?.type === 'Unit' || def?.type === 'Gear');
-          const total = cards.length;
-          const center = (total - 1) / 2;
-          const offset = i - center;
-          const yShift = Math.max(Math.abs(offset) * -8, -40);
-          const rotate = offset * 2;
-          const zIndex = total - Math.abs(offset);
 
           return (
             <div
               key={card.instanceId}
               draggable={canDrag}
               style={{
-                transform: `translateY(${yShift}px) rotate(${rotate}deg)`,
-                zIndex,
+                transform: 'none',
+                zIndex: i,
                 transition: 'transform 0.2s ease',
                 flexShrink: 1,
                 position: 'relative',
@@ -702,10 +662,10 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCard
                 e.dataTransfer.setData('application/riftbound-card', card.instanceId);
               }}
               onMouseEnter={e => {
-                e.currentTarget.style.transform = `translateY(${yShift - 12}px) rotate(${rotate}deg) scale(1.04)`;
+                e.currentTarget.style.transform = 'translateY(-12px) scale(1.04)';
               }}
               onMouseLeave={e => {
-                e.currentTarget.style.transform = `translateY(${yShift}px) rotate(${rotate}deg)`;
+                e.currentTarget.style.transform = 'none';
               }}
             >
               {canDrag && <div style={handStyles.playableBadge}>Drag to play</div>}
@@ -783,12 +743,11 @@ const handStyles: Record<string, React.CSSProperties> = {
   playerCards: {
     display: 'flex',
     justifyContent: 'center',
-    alignItems: 'flex-end',
+    alignItems: 'flex-start',
     gap: '2px',
     padding: '8px 8px 0',
     flexShrink: 1,
     minHeight: 0,
-    overflow: 'hidden',
   },
   playableBadge: {
     position: 'absolute',
@@ -1755,6 +1714,7 @@ function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: T
         isPlayer={false}
         allCards={allCards}
         cardDefs={cardDefs}
+        reversed={true}
       />
     </div>
   );
