@@ -20,6 +20,8 @@ interface Props {
   onHover?: (instanceId: string | null) => void;
   /** If true, the card is always shown in ready position (no exhaustion rotation). */
   forceReady?: boolean;
+  /** CSS border string applied to the card image element. */
+  border?: string;
 }
 
 // Card art aspect ratio (width / height)
@@ -28,6 +30,7 @@ const CARD_ASPECT = 744 / 1039;
 const BF_ASPECT = 1039 / 744;
 
 const portraitSizeMap = {
+  xs: { w: 50, h: 70 },
   sm: { w: 64, h: 86 },
   md: { w: 100, h: 134 },
   lg: { w: 140, h: 188 },
@@ -62,6 +65,7 @@ export function CardArtView({
   card, cardDef, isOpponent = false,
   showStats = false, showKeywords = false,
   size = 'md', maxHeight, landscape = false, onClick, onHover, forceReady = false,
+  border,
 }: Props) {
   const [hovering, setHovering] = useState(false);
   const [enlargePos, setEnlargePos] = useState<{ w: number; h: number; left: number; top: number } | null>(null);
@@ -96,7 +100,7 @@ export function CardArtView({
     width: dims.w,
     height: dims.h,
     borderRadius: '6px',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: border ?? '1px solid rgba(255,255,255,0.12)',
     background: hidden
       ? 'linear-gradient(135deg, #2a2a4a 0%, #1a1a3a 100%)'
       : def?.imageUrl

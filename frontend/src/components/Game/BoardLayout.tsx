@@ -1239,8 +1239,175 @@ const deckAreaStyles: Record<string, React.CSSProperties> = {
 };
 
 // ─────────────────────────────────────────
-// BattlefieldPanel — renders all battlefields in the center row
-// (reused from BattlefieldZones, slightly restyled)
+// UnitZoneModal — shows all units on a side when the unit area is clicked
+// ─────────────────────────────────────────
+interface UnitZoneModalProps {
+  title: string;
+  units: CardInstance[];
+  cardDefs: Record<string, CardDefinition>;
+  accentColor: string;
+  onClose: () => void;
+}
+
+function UnitZoneModal({ title, units, cardDefs, accentColor, onClose }: UnitZoneModalProps) {
+  return (
+    <div style={unitZoneModalStyles.overlay} onClick={onClose}>
+      <div style={unitZoneModalStyles.modal} onClick={e => e.stopPropagation()}>
+        <div style={unitZoneModalStyles.header}>
+          <div style={unitZoneModalStyles.headerLeft}>
+            <span style={{ ...unitZoneModalStyles.dot, background: accentColor }} />
+            <h2 style={unitZoneModalStyles.title}>{title}</h2>
+            <span style={unitZoneModalStyles.count}>
+              {units.length} unit{units.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+          <button style={unitZoneModalStyles.closeBtn} onClick={onClose} title="Close">✕</button>
+        </div>
+        {units.length === 0 ? (
+          <div style={unitZoneModalStyles.empty}>No units.</div>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', padding: '0 2px' }}>
+              <span style={{ color: '#e63946', fontWeight: 800, fontSize: '13px' }}>
+                ⚔ {units.reduce((s, u) => s + (u.currentStats.might ?? u.stats.might ?? 0), 0)} might
+              </span>
+              <span style={{ color: '#e8e8e8', fontWeight: 800, fontSize: '13px' }}>
+                ♥ {units.reduce((s, u) => s + (u.damage ?? 0), 0)} damage
+              </span>
+            </div>
+            <div style={unitZoneModalStyles.grid}>
+              {units.map(unit => {
+                const def = cardDefs[unit.cardId];
+                const might = unit.currentStats.might ?? unit.stats.might ?? 0;
+                const damage = unit.damage ?? 0;
+                return (
+                  <div key={unit.instanceId} style={unitZoneModalStyles.cardWrapper}>
+                    <CardArtView
+                      card={unit}
+                      cardDef={def}
+                      isOpponent={false}
+                      showStats={true}
+                      showKeywords={true}
+                      size="md"
+                      forceReady={true}
+                    />
+                    <div style={unitZoneModalStyles.cardStats}>
+                      <span style={{ color: '#e63946', fontWeight: 800 }}>⚔{might}</span>
+                      <span style={{ color: '#e8e8e8', fontWeight: 800 }}>♥{damage}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const unitZoneModalStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    background: 'rgba(0,0,0,0.82)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 2000,
+    backdropFilter: 'blur(4px)',
+  },
+  modal: {
+    background: 'linear-gradient(180deg, #1e1b35 0%, #111827 100%)',
+    border: '1px solid rgba(148,163,184,0.28)',
+    borderRadius: '14px',
+    padding: '24px 28px',
+    maxWidth: '860px',
+    width: '90vw',
+    maxHeight: '85vh',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+    boxShadow: '0 24px 64px rgba(0,0,0,0.62)',
+    overflow: 'hidden',
+  },
+  header: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '16px',
+    flexShrink: 0,
+  },
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+  dot: {
+    width: '10px',
+    height: '10px',
+    borderRadius: '50%',
+    flexShrink: 0,
+  },
+  title: {
+    color: '#f8fafc',
+    fontSize: '20px',
+    fontWeight: 900,
+    margin: 0,
+  },
+  count: {
+    color: '#64748b',
+    fontSize: '13px',
+    fontWeight: 600,
+    marginLeft: '4px',
+  },
+  closeBtn: {
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid rgba(255,255,255,0.12)',
+    borderRadius: '6px',
+    color: '#94a3b8',
+    fontSize: '16px',
+    width: '32px',
+    height: '32px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    flexShrink: 0,
+    transition: 'background 0.15s',
+  },
+  empty: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '40px 0',
+    color: '#555',
+    fontSize: '14px',
+    fontStyle: 'italic',
+  },
+  grid: {
+    display: 'flex',
+    gap: '14px',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    overflowY: 'auto',
+    paddingBottom: '4px',
+  },
+  cardWrapper: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '4px',
+  },
+  cardStats: {
+    display: 'flex',
+    gap: '8px',
+    fontSize: '13px',
+  },
+};
+
+// ─────────────────────────────────────────
+// BattlefieldRow — renders all battlefields in the center row
 // ─────────────────────────────────────────
 interface BattlefieldRowProps {
   gameState: import('../../shared/types').GameState;
@@ -1257,10 +1424,21 @@ interface BattlefieldRowProps {
   onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell, onBattlefieldUnitClick, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart }: BattlefieldRowProps) {
+function BattlefieldRow({
+  gameState, playerId, myTurn,
+  canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell,
+  onBattlefieldUnitClick, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart,
+}: BattlefieldRowProps) {
   const { battlefields, allCards, cardDefinitions } = gameState;
   const rowRef = React.useRef<HTMLDivElement>(null);
   const [rowH, setRowH] = React.useState(0);
+
+  // Unit zone modal state
+  const [unitZoneModal, setUnitZoneModal] = React.useState<{
+    units: CardInstance[];
+    title: string;
+    accentColor: string;
+  } | null>(null);
 
   React.useEffect(() => {
     const el = rowRef.current;
@@ -1276,188 +1454,206 @@ function BattlefieldRow({ gameState, playerId, myTurn, canMoveUnits = false, pen
   }, []);
 
   const battlefieldCardH = fitCardHeight(rowH - 44, CARD_HEIGHTS.battlefieldMin, CARD_HEIGHTS.battlefieldMax);
-
   const centerBattlefields = battlefields.filter(bf => !isBaseBattlefieldId(bf.id));
 
   if (!centerBattlefields.length) {
+    return <div style={bfRowStyles.empty}>No battlefields</div>;
+  }
+
+  // Each unit card gets portrait orientation stacked vertically with small offsets
+  const UNIT_CARD_H = 86;  // sm CardArtView portrait height
+  const OVERLAP_Y = 24;    // vertical offset between stacked cards
+  const OVERLAP_X = 24;    // horizontal offset between stacked cards
+
+  function renderUnitColumn(units: CardInstance[], isEnemy: boolean, accentColor: string, label: string) {
+    if (units.length === 0) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
+          <div style={bfRowStyles.rowLabel}>{label}</div>
+          <div style={{ ...bfRowStyles.emptyState, fontSize: '11px' }}>—</div>
+        </div>
+      );
+    }
+
+    const totalMight = units.reduce((sum, u) => sum + (u.currentStats.might ?? u.stats.might ?? 0), 0);
+
     return (
-      <div style={bfRowStyles.empty}>
-        No battlefields
+      <div
+        style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'visible', padding: '8px', cursor: 'pointer' }}
+        onClick={() => setUnitZoneModal({ units, title: label, accentColor })}
+        title={`${label} units — click to view all`}
+      >
+        <div style={bfRowStyles.rowLabel}>{label}</div>
+        <div style={bfRowStyles.mightTotal}>
+          <span style={{ color: '#e63946', fontWeight: 900, fontSize: '13px' }}>⚔{totalMight}</span>
+        </div>
+        {/* Vertically stacked portrait cards with overlap */}
+        <div style={{
+          display: 'flex',
+          flexDirection: 'row',
+          position: 'relative',
+          height: `${UNIT_CARD_H - (units.length - 1) * OVERLAP_Y}px`,
+          minWidth: '86px',
+          overflow: 'visible',
+        }}>
+          {units.map((unit, idx) => {
+            const def = cardDefinitions[unit.cardId];
+            const isReady = unit.ready && !unit.exhausted;
+            const isExhausted = unit.exhausted;
+            const isSpellTarget = pendingSpell?.targetType === 'unit' && pendingSpell.selectedTargetIds.includes(unit.instanceId);
+            const isTargetable = pendingSpell?.targetType === 'unit';
+            const isPendingMove = pendingMoveUnitIds?.has(unit.instanceId) ?? false;
+            const canDragMove = canMoveUnits && isReady;
+
+            // CardArtView handles exhaustion rotation internally (isExhaustedUnitOrGear).
+            // Wrapper only handles stacking offset and visual state.
+            const offsetY = idx * OVERLAP_Y;
+            const highlightBorder = isSpellTarget ? '#fbbf24' : isEnemy ? '#ef4444' : '#22c55e';
+
+            return (
+              <div
+                key={unit.instanceId}
+                draggable={canDragMove}
+                onDragStart={e => {
+                  if (!canDragMove) return;
+                  e.stopPropagation();
+                  onMoveDragStart?.(unit.instanceId, e);
+                }}
+                onClick={e => {
+                  e.stopPropagation();
+                  if (isTargetable) onBattlefieldUnitClick?.(unit.instanceId);
+                }}
+                style={{
+                  position: 'absolute',
+                  left: idx * OVERLAP_X,
+                  top: offsetY,
+                  borderRadius: '6px',
+                  boxShadow: isSpellTarget
+                    ? `0 0 10px rgba(251,191,36,0.6)`
+                    : `0 1px 3px rgba(0,0,0,0.3)`,
+                  opacity: isPendingMove ? 0.72 : 1,
+                  cursor: isTargetable ? 'crosshair' : canDragMove ? 'grab' : 'pointer',
+                  outline: isSpellTarget ? '2px solid rgba(251,191,36,0.9)' : isPendingMove ? '2px solid rgba(251,191,36,0.9)' : 'none',
+                  outlineOffset: '2px',
+                  transition: 'opacity 0.15s ease',
+                  zIndex: idx,
+                }}
+                title={def?.name ?? unit.cardId}
+              >
+                <CardArtView
+                  card={unit}
+                  cardDef={def}
+                  isOpponent={false}
+                  showStats={false}
+                  showKeywords={false}
+                  size="sm"
+                  landscape={false}
+                  border={`2px solid ${highlightBorder}`}
+                  onHover={undefined}
+                />
+                {/* Ready dot */}
+                <div style={{
+                  position: 'absolute',
+                  bottom: '2px',
+                  right: '2px',
+                  width: '5px',
+                  height: '5px',
+                  borderRadius: '50%',
+                  background: isReady ? '#22c55e' : '#555',
+                }} />
+              </div>
+            );
+          })}
+        </div>
       </div>
     );
   }
 
   return (
-    <div ref={rowRef} style={bfRowStyles.container}>
-      {centerBattlefields.map(bf => {
-        const myUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId === playerId);
-        const enemyUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId !== playerId);
-        const isControlled = bf.controllerId === playerId;
-        const bfColor = BF_COLORS[bf.cardId] ?? '#374151';
-        const canAttack = myTurn && myUnits.some(u => u.ready && !u.exhausted);
+    <>
+      <div ref={rowRef} style={bfRowStyles.container}>
+        {centerBattlefields.map(bf => {
+          const myUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId === playerId);
+          const enemyUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId !== playerId);
+          const bfColor = BF_COLORS[bf.cardId] ?? '#374151';
 
-        return (
-          <div
-            key={bf.id}
-            style={{
-              ...bfRowStyles.bfPanel,
-              ...((onBattlefieldDrop || onMoveDrop) ? bfRowStyles.dropPanel : {}),
-              ...(pendingMoveDestinationId === bf.id ? bfRowStyles.pendingDropPanel : {}),
-              borderColor: bfColor + '55',
-              flexDirection: 'row',
-            }}
-            onDragOver={e => {
-              if (!onBattlefieldDrop && !onMoveDrop) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = 'move';
-            }}
-            onDrop={e => {
-              if (!onBattlefieldDrop && !onMoveDrop) return;
-              e.preventDefault();
-              const unitInstanceId = e.dataTransfer.getData('application/riftbound-unit');
-              if (unitInstanceId && onMoveDrop) {
-                onMoveDrop(unitInstanceId, bf.id);
-                return;
-              }
-              const cardInstanceId =
-                e.dataTransfer.getData('application/riftbound-card') ||
-                e.dataTransfer.getData('text/plain');
-              if (cardInstanceId) onBattlefieldDrop?.(cardInstanceId, bf.id);
-            }}
-          >
-            {/* Left: player units */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
-              <div style={bfRowStyles.rowLabel}>Your</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                {myUnits.length === 0 ? (
-                  <div style={{ ...bfRowStyles.emptyState, fontSize: '11px' }}>—</div>
+          return (
+            <div
+              key={bf.id}
+              style={{
+                ...bfRowStyles.bfPanel,
+                ...((onBattlefieldDrop || onMoveDrop) ? bfRowStyles.dropPanel : {}),
+                ...(pendingMoveDestinationId === bf.id ? bfRowStyles.pendingDropPanel : {}),
+                borderColor: bfColor + '55',
+                flexDirection: 'row',
+              }}
+              onDragOver={e => {
+                if (!onBattlefieldDrop && !onMoveDrop) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+              }}
+              onDrop={e => {
+                if (!onBattlefieldDrop && !onMoveDrop) return;
+                e.preventDefault();
+                const unitInstanceId = e.dataTransfer.getData('application/riftbound-unit');
+                if (unitInstanceId && onMoveDrop) {
+                  onMoveDrop(unitInstanceId, bf.id);
+                  return;
+                }
+                const cardInstanceId =
+                  e.dataTransfer.getData('application/riftbound-card') ||
+                  e.dataTransfer.getData('text/plain');
+                if (cardInstanceId) onBattlefieldDrop?.(cardInstanceId, bf.id);
+              }}
+            >
+              {/* Left: player units */}
+              {renderUnitColumn(myUnits, false, '#22c55e', 'Your')}
+
+              {/* Center: battlefield card art */}
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '132px', padding: '4px 8px', gap: '2px' }}>
+                <CardArtView
+                  card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
+                  cardDef={CARDS[bf.cardId] ?? cardDefinitions[bf.cardId]}
+                  isOpponent={false}
+                  showStats={false}
+                  showKeywords={false}
+                  size="lg"
+                  maxHeight={battlefieldCardH}
+                  landscape={true}
+                />
+                <span style={{ fontSize: '10px', fontWeight: 700, color: bfColor }}>{bf.name}</span>
+                {myUnits.length > 0 && enemyUnits.length === 0 ? (
+                  <span style={{ fontSize: '9px', color: '#22c55e' }}>Your territory</span>
+                ) : enemyUnits.length > 0 && myUnits.length === 0 ? (
+                  <span style={{ fontSize: '9px', color: '#ef4444' }}>Enemy territory</span>
+                ) : myUnits.length > 0 && enemyUnits.length > 0 ? (
+                  <span style={{ fontSize: '9px', color: '#d4a843' }}>Contested</span>
                 ) : (
-                  myUnits.map(unit => {
-                    const def = cardDefinitions[unit.cardId];
-                    const might = unit.currentStats.might ?? unit.stats.might ?? 0;
-                    const health = unit.currentStats.health ?? unit.stats.health ?? 1;
-                    const isReady = unit.ready && !unit.exhausted;
-                    const unitTransform = unit.exhausted ? 'rotate(90deg) scale(0.95)' : 'rotate(0deg) scale(1)';
-                    const canDragMove = canMoveUnits && isReady;
-                    const isPendingMove = pendingMoveUnitIds?.has(unit.instanceId) ?? false;
-                    const isSpellTarget = pendingSpell?.targetType === 'unit' && pendingSpell.selectedTargetIds.includes(unit.instanceId);
-                    const isTargetable = pendingSpell?.targetType === 'unit';
-                    return (
-                      <div
-                        key={unit.instanceId}
-                        draggable={canDragMove}
-                        onDragStart={e => {
-                          if (!canDragMove) return;
-                          onMoveDragStart?.(unit.instanceId, e);
-                        }}
-                        onClick={() => isTargetable && onBattlefieldUnitClick?.(unit.instanceId)}
-                        style={{
-                          ...bfRowStyles.unitChip,
-                          borderColor: isSpellTarget ? '#fbbf24' : '#22c55e',
-                          boxShadow: isSpellTarget ? '0 0 10px rgba(251,191,36,0.6)' : '0 1px 3px rgba(0,0,0,0.2)',
-                          opacity: isPendingMove ? 0.72 : isReady ? 1 : 0.6,
-                          transform: unitTransform,
-                          transformOrigin: 'center',
-                          cursor: isTargetable ? 'crosshair' : canDragMove ? 'grab' : 'default',
-                          outline: isSpellTarget ? '2px solid rgba(251,191,36,0.9)' : isPendingMove ? '2px solid rgba(251,191,36,0.9)' : 'none',
-                          outlineOffset: '2px',
-                        }}
-                        title={def?.name}
-                      >
-                        <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
-                        {isSpellTarget && <div style={bfRowStyles.targetHint}>Target</div>}
-                        <div style={bfRowStyles.unitStats}>
-                          <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
-                          <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
-                        </div>
-                        <div style={{ ...bfRowStyles.readyDot, background: isReady ? '#22c55e' : '#555' }} />
-                      </div>
-                    );
-                  })
+                  <span style={{ fontSize: '9px', color: '#888' }}>Open</span>
+                )}
+                {bf.scoringPlayerId && (
+                  <span style={{ fontSize: '9px', color: '#d4a843' }}>● Scoring</span>
                 )}
               </div>
-            </div>
 
-            {/* Center: battlefield card art */}
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '132px', padding: '4px 8px', gap: '2px' }}>
-              {canAttack && <div style={bfRowStyles.actionHint}>Can attack</div>}
-              <CardArtView
-                card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
-                cardDef={CARDS[bf.cardId] ?? cardDefinitions[bf.cardId]}
-                isOpponent={false}
-                showStats={false}
-                showKeywords={false}
-                size="lg"
-                maxHeight={battlefieldCardH}
-                landscape={true}
-              />
-              <span style={{ fontSize: '10px', fontWeight: 700, color: bfColor }}>{bf.name}</span>
-              {bf.controllerId && (
-                <span style={{ fontSize: '9px', color: bf.controllerId === playerId ? '#22c55e' : '#ef4444' }}>
-                  {bf.controllerId === playerId ? 'You' : 'Enemy'}
-                </span>
-              )}
-              {bf.scoringPlayerId && (
-                <span style={{ fontSize: '9px', color: '#d4a843' }}>● Scoring</span>
-              )}
-              {canAttack && (
-                <button style={{ ...bfRowStyles.attackBtn, fontSize: '11px', padding: '4px 12px' }}>
-                  Attack
-                </button>
-              )}
+              {/* Right: opponent units */}
+              {renderUnitColumn(enemyUnits, true, '#ef4444', 'Enemy')}
             </div>
+          );
+        })}
+      </div>
 
-            {/* Right: opponent units */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minWidth: 0, overflow: 'hidden', padding: '8px' }}>
-              <div style={bfRowStyles.rowLabel}>Enemy</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-                {enemyUnits.length === 0 ? (
-                  <div style={{ ...bfRowStyles.emptyState, fontSize: '11px' }}>—</div>
-                ) : (
-                  enemyUnits.map(unit => {
-                    const def = cardDefinitions[unit.cardId];
-                    const might = unit.currentStats.might ?? unit.stats.might ?? 0;
-                    const health = unit.currentStats.health ?? unit.stats.health ?? 1;
-                    const isReady = unit.ready && !unit.exhausted;
-                    const isSpellTarget = pendingSpell?.targetType === 'unit' && pendingSpell.selectedTargetIds.includes(unit.instanceId);
-                    const isTargetable = pendingSpell?.targetType === 'unit';
-                    const unitTransform = unit.exhausted ? 'rotate(90deg) scale(0.95)' : 'rotate(0deg) scale(1)';
-                    return (
-                      <div
-                        key={unit.instanceId}
-                        style={{
-                          ...bfRowStyles.unitChip,
-                          borderColor: isSpellTarget ? '#fbbf24' : '#ef4444',
-                          boxShadow: isSpellTarget ? '0 0 10px rgba(251,191,36,0.6)' : '0 1px 3px rgba(0,0,0,0.2)',
-                          opacity: isReady ? 1 : 0.6,
-                          transform: unitTransform,
-                          transformOrigin: 'center',
-                          cursor: isTargetable ? 'crosshair' : 'pointer',
-                        }}
-                        onClick={() => isTargetable && onBattlefieldUnitClick?.(unit.instanceId)}
-                        title={def?.name}
-                      >
-                        <div style={bfRowStyles.unitName}>{def?.name ?? '?'}</div>
-                        {isSpellTarget ? (
-                          <div style={bfRowStyles.targetHint}>Target</div>
-                        ) : isTargetable ? (
-                          <div style={bfRowStyles.targetHint}>Select target</div>
-                        ) : null}
-                        <div style={bfRowStyles.unitStats}>
-                          <span style={{ ...bfRowStyles.statNum, color: '#e63946' }}>{might}</span>
-                          <span style={{ ...bfRowStyles.statNum, color: '#e8e8e8' }}>♦{health}</span>
-                        </div>
-                        <div style={{ ...bfRowStyles.readyDot, background: isReady ? '#22c55e' : '#555' }} />
-                      </div>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
+      {/* Unit zone modal */}
+      {unitZoneModal && (
+        <UnitZoneModal
+          title={unitZoneModal.title}
+          units={unitZoneModal.units}
+          cardDefs={cardDefinitions}
+          accentColor={unitZoneModal.accentColor}
+          onClose={() => setUnitZoneModal(null)}
+        />
+      )}
+    </>
   );
 }
 
@@ -1559,6 +1755,12 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     color: '#666',
     textTransform: 'uppercase',
     letterSpacing: '1px',
+  },
+  mightTotal: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    marginBottom: '4px',
   },
   unitRowInner: {
     display: 'flex',
