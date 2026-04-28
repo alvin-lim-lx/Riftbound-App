@@ -18,6 +18,8 @@ interface Props {
   landscape?: boolean;     // if true, enlarge uses landscape shape (for battlefield cards)
   onClick?: () => void;
   onHover?: (instanceId: string | null) => void;
+  /** If true, the card is always shown in ready position (no exhaustion rotation). */
+  forceReady?: boolean;
 }
 
 // Card art aspect ratio (width / height)
@@ -59,7 +61,7 @@ function getEnlargeDims(smW: number, smH: number, isLandscape: boolean): { w: nu
 export function CardArtView({
   card, cardDef, isOpponent = false,
   showStats = false, showKeywords = false,
-  size = 'md', maxHeight, landscape = false, onClick, onHover
+  size = 'md', maxHeight, landscape = false, onClick, onHover, forceReady = false,
 }: Props) {
   const [hovering, setHovering] = useState(false);
   const [enlargePos, setEnlargePos] = useState<{ w: number; h: number; left: number; top: number } | null>(null);
@@ -72,7 +74,7 @@ export function CardArtView({
 
   const hidden = isOpponent && card.owner_hidden;
   const def = cardDef;
-  const isExhaustedUnitOrGear = card.exhausted && (def?.type === 'Unit' || def?.type === 'Gear');
+  const isExhaustedUnitOrGear = !forceReady && card.exhausted && (def?.type === 'Unit' || def?.type === 'Gear');
 
   const base = landscape ? landscapeSizeMap[size] : portraitSizeMap[size];
   const aspect = landscape ? BF_ASPECT : CARD_ASPECT;
