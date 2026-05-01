@@ -60,6 +60,9 @@ export class RulesBasedAI {
       case 'Pass':
         return { action, score: 0, reason: 'Pass turn' };
 
+      case 'AssignCombatDamage':
+        return { action, score: 10000, reason: 'Resolve pending combat damage assignment' };
+
       case 'Attack': {
         const { attackerId, targetBattlefieldId } = action.payload as any;
         const targetBf = state.battlefields.find(b => b.id === targetBattlefieldId);

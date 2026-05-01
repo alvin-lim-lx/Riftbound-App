@@ -452,6 +452,61 @@ describe('GameEngine', () => {
       expect(result.newState!.allCards[unitId!].exhausted).toBe(true);
       expect(result.newState!.battlefields.find(bf => bf.id === baseId)!.units).not.toContain(unitId);
       expect(result.newState!.battlefields.find(bf => bf.id === targetBfId)!.units).toContain(unitId);
+      const targetBf = result.newState!.battlefields.find(bf => bf.id === targetBfId)!;
+      expect(targetBf.controllerId).toBe(P1);
+      expect(targetBf.scoringPlayerId).toBe(P1);
+      expect(targetBf.scoringSince).toBe(result.newState!.turn);
+      expect(result.newState!.players[P1].score).toBe(1);
+      expect(result.newState!.scoredBattlefieldsThisTurn[P1]).toContain(targetBfId);
+    });
+
+    it('scores a held uncontested battlefield during the controller beginning phase', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      state.turn = 3;
+      const baseId = `base_${P1}`;
+      const targetBfId = state.battlefields.find(bf => bf.id !== baseId && !bf.id.startsWith('base_'))!.id;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      placeUnitAt(state, P1, unitId!, baseId, true);
+
+      const moveResult = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        fromBattlefieldId: baseId,
+        toBattlefieldId: targetBfId,
+      }));
+      expect(moveResult.success).toBe(true);
+
+      const nextBeginning = deepClone(moveResult.newState!);
+      nextBeginning.activePlayerId = P1;
+      nextBeginning.turn = 5;
+      const scoredState = enterPhase(nextBeginning, 'Beginning');
+
+      expect(scoredState.players[P1].score).toBe(1);
+      expect(scoredState.actionLog.some(entry => (entry as SystemLogEntry).type === 'Score')).toBe(true);
+    });
+
+    it('ends the game immediately when hold scoring reaches the victory score', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Beginning';
+      state.players[P1].score = state.scoreLimit - 1;
+      state.players[P2].score = state.scoreLimit - 2;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      placeUnitAt(state, P1, unitId!, targetBfId, false);
+      const bf = state.battlefields.find(battlefield => battlefield.id === targetBfId)!;
+      bf.controllerId = P1;
+      bf.scoringPlayerId = P1;
+      bf.scoringSince = state.turn - 1;
+
+      const scoredState = enterPhase(state, 'Beginning');
+
+      expect(scoredState.players[P1].score).toBe(state.scoreLimit);
+      expect(scoredState.phase).toBe('GameOver');
+      expect(scoredState.winner).toBe(P1);
     });
 
     it('moves a ready non-Ganking unit from battlefield to own base and exhausts it', () => {
@@ -653,6 +708,157 @@ describe('GameEngine', () => {
       expect(result.success).toBe(false);
       expect(result.error).toBe('Not your turn.');
     });
+
+    it('attacks using the cloned state so the broadcast state includes the attacker at the target battlefield', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      const sourceBfId = `base_${P1}`;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const unitId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(unitId).toBeDefined();
+      placeUnitAt(state, P1, unitId!, sourceBfId, true);
+
+      const result = executeAction(state, makeAction('Attack', P1, {
+        attackerId: unitId!,
+        targetBattlefieldId: targetBfId,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.phase).toBe('Showdown');
+      expect(result.newState!.allCards[unitId!].battlefieldId).toBe(targetBfId);
+      expect(result.newState!.battlefields.find(bf => bf.id === sourceBfId)!.units).not.toContain(unitId);
+      expect(result.newState!.battlefields.find(bf => bf.id === targetBfId)!.units).toContain(unitId);
+    });
+
+    it('scores immediately when a player conquers a battlefield', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.phase = 'Showdown';
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const attackerId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(attackerId).toBeDefined();
+      placeUnitAt(state, P1, attackerId!, targetBfId, false);
+      const showdownState = enterShowdown(state, attackerId!, targetBfId);
+
+      const result = resolveCombat(showdownState);
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.players[P1].score).toBe(1);
+      expect(result.newState!.scoredBattlefieldsThisTurn[P1]).toContain(targetBfId);
+    });
+
+    it('does not grant the winning point from conquer unless every battlefield was scored this turn', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.phase = 'Showdown';
+      state.players[P1].score = state.scoreLimit - 1;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const attackerId = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit');
+      expect(attackerId).toBeDefined();
+      placeUnitAt(state, P1, attackerId!, targetBfId, false);
+      const handAfterSetup = state.players[P1].hand.length;
+      const showdownState = enterShowdown(state, attackerId!, targetBfId);
+
+      const result = resolveCombat(showdownState);
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.players[P1].score).toBe(state.scoreLimit - 1);
+      expect(result.newState!.players[P1].hand.length).toBe(handAfterSetup + 1);
+      expect(result.newState!.scoredBattlefieldsThisTurn[P1]).toContain(targetBfId);
+      expect(checkWinCondition(result.newState!)).toBeNull();
+    });
+
+    it('starts combat damage assignment with all attacking units counted', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const attackerA = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      const attackerB = ensureHandCard(state, P1, id => id !== attackerA && state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      const defender = ensureHandCard(state, P2, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      placeUnitAt(state, P1, attackerA, targetBfId, false);
+      placeUnitAt(state, P1, attackerB, targetBfId, false);
+      placeUnitAt(state, P2, defender, targetBfId, false);
+      state.allCards[attackerA].currentStats.might = 2;
+      state.allCards[attackerB].currentStats.might = 2;
+      state.allCards[defender].currentStats.might = 4;
+
+      const result = resolveCombat(enterShowdown(state, attackerA, targetBfId));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.pendingCombatDamageAssignment?.availableDamage).toBe(4);
+      expect(result.newState!.showdown!.attackerIds).toEqual(expect.arrayContaining([attackerA, attackerB]));
+    });
+
+    it('lets a defender survivor establish control and score conquer', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const attacker = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      const defender = ensureHandCard(state, P2, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      placeUnitAt(state, P1, attacker, targetBfId, false);
+      placeUnitAt(state, P2, defender, targetBfId, false);
+      state.allCards[attacker].currentStats.might = 1;
+      state.allCards[defender].currentStats.might = 3;
+
+      const assigning = resolveCombat(enterShowdown(state, attacker, targetBfId)).newState!;
+      const afterAttackAssign = executeAction(assigning, makeAction('AssignCombatDamage', P1, {
+        targetOrder: [defender],
+      })).newState!;
+      const result = executeAction(afterAttackAssign, makeAction('AssignCombatDamage', P2, {
+        targetOrder: [attacker],
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.battlefields.find(bf => bf.id === targetBfId)!.controllerId).toBe(P2);
+      expect(result.newState!.players[P2].score).toBe(1);
+    });
+
+    it('deals combat damage simultaneously so both sides can die', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const attacker = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      const defender = ensureHandCard(state, P2, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      placeUnitAt(state, P1, attacker, targetBfId, false);
+      placeUnitAt(state, P2, defender, targetBfId, false);
+      state.allCards[attacker].currentStats.might = 3;
+      state.allCards[defender].currentStats.might = 3;
+
+      const assigning = resolveCombat(enterShowdown(state, attacker, targetBfId)).newState!;
+      const afterAttackAssign = executeAction(assigning, makeAction('AssignCombatDamage', P1, {
+        targetOrder: [defender],
+      })).newState!;
+      const result = executeAction(afterAttackAssign, makeAction('AssignCombatDamage', P2, {
+        targetOrder: [attacker],
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.allCards[attacker].location).toBe('discard');
+      expect(result.newState!.allCards[defender].location).toBe('discard');
+      expect(result.newState!.battlefields.find(bf => bf.id === targetBfId)!.controllerId).toBeNull();
+    });
+
+    it('rejects combat damage that skips Tank priority', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      const attacker = ensureHandCard(state, P1, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      const tank = ensureHandCard(state, P2, id => state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      const normal = ensureHandCard(state, P2, id => id !== tank && state.cardDefinitions[state.allCards[id].cardId].type === 'Unit')!;
+      placeUnitAt(state, P1, attacker, targetBfId, false);
+      placeUnitAt(state, P2, tank, targetBfId, false);
+      placeUnitAt(state, P2, normal, targetBfId, false);
+      state.allCards[attacker].currentStats.might = 4;
+      state.allCards[tank].currentStats.might = 2;
+      state.allCards[normal].currentStats.might = 2;
+      state.cardDefinitions[state.allCards[tank].cardId].keywords = [
+        ...(state.cardDefinitions[state.allCards[tank].cardId].keywords ?? []),
+        'Tank',
+      ] as any;
+
+      const assigning = resolveCombat(enterShowdown(state, attacker, targetBfId)).newState!;
+      const result = executeAction(assigning, makeAction('AssignCombatDamage', P1, {
+        targetOrder: [normal, tank],
+      }));
+
+      expect(result.success).toBe(false);
+      expect(result.error).toMatch(/Tank|Backline/);
+    });
   });
 
   describe('Win Condition', () => {
@@ -665,6 +871,16 @@ describe('GameEngine', () => {
     it('returns null when no score limit reached', () => {
       const state = createGame([P1, P2], ['Alice', 'Bob']);
       expect(checkWinCondition(state)).toBeNull();
+    });
+
+    it('requires the scoring player to have more points than each opponent', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.players[P1].score = 8;
+      state.players[P2].score = 8;
+      expect(checkWinCondition(state)).toBeNull();
+
+      state.players[P1].score = 9;
+      expect(checkWinCondition(state)).toBe(P1);
     });
   });
 
@@ -712,6 +928,53 @@ describe('GameEngine', () => {
 
       const actions = getLegalActions(highManaState, P1);
       expect(actions.some(a => a.type === 'PlayUnit')).toBe(true);
+    });
+
+    it('does not return action-phase moves during Beginning', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.phase = 'Beginning';
+      state.activePlayerId = P1;
+      const baseId = `base_${P1}`;
+      const unitId = ensureHandCard(state, P1, id =>
+        state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
+      );
+      expect(unitId).toBeDefined();
+      placeUnitAt(state, P1, unitId!, baseId, true);
+      addReadyRunes(state, P1, 10);
+
+      const actions = getLegalActions(state, P1);
+
+      expect(actions.map(action => action.type)).not.toEqual(
+        expect.arrayContaining(['PlayUnit', 'PlaySpell', 'PlayGear', 'MoveUnit', 'Attack'])
+      );
+    });
+
+    it('ends the game immediately when a move conquest scores the winning point', () => {
+      const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
+      state.phase = 'Action';
+      state.players[P1].score = state.scoreLimit - 1;
+      const baseId = `base_${P1}`;
+      const targetBfId = state.battlefields.find(bf => !bf.id.startsWith('base_'))!.id;
+      state.scoredBattlefieldsThisTurn[P1] = state.battlefields
+        .filter(bf => !bf.id.startsWith('base_') && bf.id !== targetBfId)
+        .map(bf => bf.id);
+      const unitId = ensureHandCard(state, P1, id =>
+        state.cardDefinitions[state.allCards[id].cardId].type === 'Unit'
+      );
+      expect(unitId).toBeDefined();
+      placeUnitAt(state, P1, unitId!, baseId, true);
+
+      const result = executeAction(state, makeAction('MoveUnit', P1, {
+        cardInstanceId: unitId!,
+        fromBattlefieldId: baseId,
+        toBattlefieldId: targetBfId,
+      }));
+
+      expect(result.success).toBe(true);
+      expect(result.newState!.players[P1].score).toBe(state.scoreLimit);
+      expect(result.newState!.phase).toBe('GameOver');
+      expect(result.newState!.winner).toBe(P1);
     });
   });
 

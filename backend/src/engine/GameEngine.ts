@@ -15,7 +15,7 @@ import {
   GameState, PlayerState, CardInstance, BattlefieldState,
   Phase, ActionType, GameAction, CardDefinition,
   SystemLogEntry, GameLogEntry, LogEntryType, EffectStackEntry, Domain,
-  ShowdownStackEntry
+  ShowdownStackEntry, CombatSide, OrderedCombatDamageAssignment
 } from '../../shared/src/types';
 import { CARDS } from '../../shared/src/cards';
 import { pickRandom, randomId, shuffle } from './utils';
@@ -325,6 +325,7 @@ export function createGame(
     cardDefinitions: CARDS,
     winner: null,
     scoreLimit,
+    scoredBattlefieldsThisTurn: {},
     actionLog: [
       {
         id: randomId(),
@@ -339,6 +340,7 @@ export function createGame(
     isPvP,
     effectStack: [],  // empty effect stack at game start
     showdown: null,   // no active showdown at game start
+    pendingCombatDamageAssignment: null,
   };
 }
 
@@ -352,10 +354,13 @@ export function executeAction(
 ): ActionResult {
   // In Showdown phase, any player involved (attacker or defender) may act
   const isShowdownParticipant = state.phase === 'Showdown' && state.showdown &&
-    (action.playerId === state.showdown.attackerOwnerId ||
+    (action.playerId === state.showdown.attackerPlayerId ||
+     action.playerId === state.showdown.attackerOwnerId ||
+     action.playerId === state.showdown.defenderPlayerId ||
      state.showdown.defenderIds.some(id => state.allCards[id]?.ownerId === action.playerId));
+  const isCombatAssignmentParticipant = state.pendingCombatDamageAssignment?.assigningPlayerId === action.playerId;
 
-  if (!isShowdownParticipant && action.playerId !== state.activePlayerId) {
+  if (!isShowdownParticipant && !isCombatAssignmentParticipant && action.playerId !== state.activePlayerId) {
     return { success: false, error: 'Not your turn.', action };
   }
 
@@ -417,6 +422,10 @@ export function executeAction(
     }
     case 'Reaction': {
       const result = handleReaction(state, action);
+      return result;
+    }
+    case 'AssignCombatDamage': {
+      const result = handleAssignCombatDamage(state, action);
       return result;
     }
     case 'CloseReactionWindow': {
@@ -494,6 +503,7 @@ export function startNewTurn(state: GameState): GameState {
   newState.turn = state.turn + 1;
   newState.activePlayerId = nextPlayerId;
   newState.effectStack = [];
+  newState.scoredBattlefieldsThisTurn = {};
   const playerName = newState.players[nextPlayerId]?.name || nextPlayerId;
   newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange',
     `Turn ${newState.turn} begins for ${playerName}`));
@@ -596,9 +606,17 @@ function executeBeginningPhase(state: GameState): GameState {
     if (isBaseBattlefieldId(bf.id)) continue;
     if (bf.controllerId === playerId && bf.units.length > 0 && bf.scoringSince !== null) {
       // Player has held battlefield with units all turn
-      const holder = newState.players[playerId];
-      holder.score += 1;
-        newState.actionLog.push(makeLog(newState, playerId, 'Score', `Scored 1 point from ${bf.name}`));
+      const scored = scoreBattlefield(newState, playerId, bf, 'Hold');
+      if (scored) {
+        const winner = checkWinCondition(newState);
+        if (winner) {
+          newState.phase = 'GameOver';
+          newState.winner = winner;
+          newState.showdown = null;
+          newState.pendingCombatDamageAssignment = null;
+          return newState;
+        }
+      }
     }
   }
 
@@ -717,13 +735,7 @@ export function checkScoring(state: GameState): GameState {
     if (isBaseBattlefieldId(bf.id)) continue;
     if (!bf.controllerId) continue;
     if (bf.units.length === 0) {
-      // Controller has no units — stop scoring
-      if (bf.scoringPlayerId && bf.scoringSince !== null) {
-        // Score was happening, player held it all turn
-        const holder = state.players[bf.scoringPlayerId];
-        holder.score += 1;
-        state.actionLog.push(makeLog(state, bf.scoringPlayerId, 'Score', `Scored 1 point from ${bf.name}`));
-      }
+      // Controller has no units - stop scoring.
       bf.scoringSince = null;
       bf.scoringPlayerId = null;
     }
@@ -733,7 +745,10 @@ export function checkScoring(state: GameState): GameState {
 
 export function checkWinCondition(state: GameState): string | null {
   for (const [pid, player] of Object.entries(state.players)) {
-    if (player.score >= state.scoreLimit) {
+    const hasMorePointsThanEveryOpponent = Object.entries(state.players)
+      .filter(([opponentId]) => opponentId !== pid)
+      .every(([, opponent]) => player.score > opponent.score);
+    if (player.score >= state.scoreLimit && hasMorePointsThanEveryOpponent) {
       return pid;
     }
   }
@@ -754,10 +769,15 @@ export function enterShowdown(
   const attacker = state.allCards[attackerId];
   const attackerOwner = attacker.ownerId;
 
+  const attackerIds = bf.units.filter(id =>
+    newState.allCards[id]?.ownerId === attackerOwner
+  );
+
   // Gather defender unitIds at this BF (opponents only)
   const defenderIds = bf.units.filter(id =>
     newState.allCards[id].ownerId !== attackerOwner
   );
+  const defenderPlayerId = defenderIds.length > 0 ? newState.allCards[defenderIds[0]].ownerId : null;
 
   // Determine who gets Focus:
   // - If the BF is empty → attacker gets Focus immediately (Rule 508.1)
@@ -767,18 +787,22 @@ export function enterShowdown(
 
   newState.phase = 'Showdown';
   newState.showdown = {
+    kind: defenderIds.length > 0 ? 'Combat' : 'NonCombat',
     battlefieldId: targetBattlefieldId,
-    attackerIds: [attackerId],
+    attackerIds,
     attackerOwnerId: attackerOwner,
+    attackerPlayerId: attackerOwner,
+    defenderPlayerId,
     focusPlayerId,
     defenderIds,
+    combatStep: 'Showdown',
     reactionWindowOpen: true,
     combatResolved: false,
     winner: null,
     excessDamage: 0,
     actionStack: [],
     passTracker: [false, false],
-    chainOpen: true,
+    chainOpen: false,
   };
 
   // --- Initial Chain (automatic) ---
@@ -794,6 +818,7 @@ export function enterShowdown(
         effect: ability.effect,
         resolves: false,
       });
+      newState.showdown.chainOpen = true;
     }
   }
 
@@ -812,6 +837,7 @@ export function enterShowdown(
           effect: ability.effect,
           resolves: false,
         });
+        newState.showdown.chainOpen = true;
       }
     }
   }
@@ -1079,12 +1105,417 @@ function resetDamage(state: GameState): void {
   }
 }
 
+type ScoreMethod = 'Conquer' | 'Hold';
+
+function drawCardForScoreReplacement(state: GameState, playerId: string): void {
+  const player = state.players[playerId];
+  const cardId = player.deck.shift();
+  if (!cardId) return;
+
+  state.allCards[cardId].location = 'hand';
+  player.hand.push(cardId);
+
+  const cardDef = state.cardDefinitions[state.allCards[cardId].cardId];
+  state.actionLog.push(makeLog(state, playerId, 'Draw',
+    `${player.name} drew ${cardDef?.name ?? 'a card'} instead of gaining the winning point`,
+    { cardId: cardDef?.id, cardInstanceId: cardId, fromZone: 'deck', toZone: 'hand', _isSelfOnly: true }
+  ));
+  state.actionLog.push(makeLog(state, playerId, 'Draw',
+    `${player.name} drew 1 card instead of gaining the winning point`,
+    { count: 1, fromZone: 'deck', toZone: 'hand' }
+  ));
+}
+
+function scoreBattlefield(state: GameState, playerId: string, bf: BattlefieldState, method: ScoreMethod): boolean {
+  if (isBaseBattlefieldId(bf.id)) return false;
+
+  state.scoredBattlefieldsThisTurn ??= {};
+  const scoredIds = state.scoredBattlefieldsThisTurn[playerId] ?? [];
+  if (scoredIds.includes(bf.id)) return false;
+
+  const nextScoredIds = [...scoredIds, bf.id];
+  state.scoredBattlefieldsThisTurn[playerId] = nextScoredIds;
+
+  const player = state.players[playerId];
+  const onePointFromVictory = player.score >= state.scoreLimit - 1;
+  const allBattlefieldIds = state.battlefields
+    .filter(battlefield => !isBaseBattlefieldId(battlefield.id))
+    .map(battlefield => battlefield.id);
+  const hasScoredEveryBattlefield = allBattlefieldIds.every(id => nextScoredIds.includes(id));
+
+  if (!onePointFromVictory || method === 'Hold' || hasScoredEveryBattlefield) {
+    player.score += 1;
+    state.actionLog.push(makeLog(state, playerId, 'Score',
+      `${player.name} scored 1 point from ${bf.name} (${method})`,
+      { battlefieldId: bf.id, method, score: player.score }
+    ));
+  } else {
+    drawCardForScoreReplacement(state, playerId);
+    state.actionLog.push(makeLog(state, playerId, 'Score',
+      `${player.name} conquered ${bf.name} but drew a card instead of gaining the winning point`,
+      { battlefieldId: bf.id, method, score: player.score }
+    ));
+  }
+
+  return true;
+}
+
+function updateUncontestedBattlefieldControl(state: GameState, battlefieldId: string, turn: number): void {
+  if (isBaseBattlefieldId(battlefieldId)) return;
+
+  const bf = state.battlefields.find(b => b.id === battlefieldId);
+  if (!bf) return;
+  const previousControllerId = bf.controllerId;
+
+  const unitOwnerIds = new Set(
+    bf.units
+      .map(id => state.allCards[id]?.ownerId)
+      .filter((ownerId): ownerId is string => Boolean(ownerId))
+  );
+
+  if (unitOwnerIds.size === 0) {
+    bf.controllerId = null;
+    bf.scoringSince = null;
+    bf.scoringPlayerId = null;
+    return;
+  }
+
+  if (unitOwnerIds.size === 1) {
+    const [controllerId] = Array.from(unitOwnerIds);
+    if (bf.controllerId !== controllerId || bf.scoringPlayerId !== controllerId) {
+      bf.controllerId = controllerId;
+      bf.scoringSince = turn;
+      bf.scoringPlayerId = controllerId;
+      if (previousControllerId !== controllerId) {
+        scoreBattlefield(state, controllerId, bf, 'Conquer');
+      }
+    }
+  }
+}
+
+function liveUnitsAtBattlefield(state: GameState, battlefieldId: string, playerId?: string): string[] {
+  const bf = state.battlefields.find(b => b.id === battlefieldId);
+  if (!bf) return [];
+  return bf.units.filter(id => {
+    const unit = state.allCards[id];
+    if (!unit || unit.location !== 'battlefield') return false;
+    return playerId ? unit.ownerId === playerId : true;
+  });
+}
+
+function unitHasKeyword(state: GameState, unitId: string, keyword: string): boolean {
+  const unit = state.allCards[unitId];
+  if (!unit) return false;
+  const def = state.cardDefinitions[unit.cardId];
+  return (def.keywords ?? []).includes(keyword as any) || (def.effect ?? '').includes(`[${keyword}]`);
+}
+
+function calculateCombatMight(state: GameState, unitId: string, side: CombatSide): number {
+  const unit = state.allCards[unitId];
+  if (!unit) return 0;
+  let total = calculateMight(state, unitId);
+  const def = state.cardDefinitions[unit.cardId];
+  for (const ability of def.abilities ?? []) {
+    const text = `${ability.effect} ${ability.effectCode ?? ''}`;
+    if (side === 'attacker' && text.includes('Assault')) {
+      const match = text.match(/Assault\s*(\d+)|GIVE_ASSAULT[_ ]?(\d+)|\+(\d+)/i);
+      total += match ? parseInt(match[1] ?? match[2] ?? match[3], 10) : 0;
+    }
+    if (side === 'defender' && text.includes('Shield')) {
+      const match = text.match(/Shield\s*(\d+)|GIVE_SHIELD[_ ]?(\d+)|\+(\d+)/i);
+      total += match ? parseInt(match[1] ?? match[2] ?? match[3], 10) : 0;
+    }
+  }
+  return Math.max(0, total);
+}
+
+function sumCombatMight(state: GameState, unitIds: string[], side: CombatSide): number {
+  return unitIds.reduce((sum, id) => sum + calculateCombatMight(state, id, side), 0);
+}
+
+function damagePriority(state: GameState, unitId: string): number {
+  if (unitHasKeyword(state, unitId, 'Tank')) return 0;
+  if (unitHasKeyword(state, unitId, 'Backline')) return 2;
+  return 1;
+}
+
+function normalizeAssignmentOrder(input: unknown): string[] {
+  if (Array.isArray(input)) {
+    return input
+      .map(entry => typeof entry === 'string' ? entry : String((entry as any).unitId ?? ''))
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeAssignments(input: unknown): OrderedCombatDamageAssignment[] {
+  if (Array.isArray(input)) {
+    return input
+      .map(entry => ({ unitId: String((entry as any).unitId), damage: Number((entry as any).damage) }))
+      .filter(entry => entry.unitId && Number.isFinite(entry.damage) && entry.damage > 0);
+  }
+  if (input && typeof input === 'object') {
+    return Object.entries(input as Record<string, unknown>)
+      .map(([unitId, damage]) => ({ unitId, damage: Number(damage) }))
+      .filter(entry => entry.unitId && Number.isFinite(entry.damage) && entry.damage > 0);
+  }
+  return [];
+}
+
+function buildCombatDamageFromOrder(
+  state: GameState,
+  orderedTargetIds: string[],
+  legalTargetIds: string[],
+  availableDamage: number
+): { ok: true; assignments: Record<string, number> } | { ok: false; error: string } {
+  if (availableDamage <= 0) {
+    return orderedTargetIds.length === 0 ? { ok: true, assignments: {} } : { ok: false, error: 'No combat damage is available to assign.' };
+  }
+  if (legalTargetIds.length === 0) {
+    return orderedTargetIds.length === 0 ? { ok: true, assignments: {} } : { ok: false, error: 'There are no legal combat damage targets.' };
+  }
+
+  const legal = new Set(legalTargetIds);
+  const seen = new Set<string>();
+  let remainingDamage = availableDamage;
+  const remainingTargets = new Set(legalTargetIds);
+  const out: Record<string, number> = {};
+
+  for (const unitId of orderedTargetIds) {
+    if (remainingDamage <= 0) break;
+    if (!legal.has(unitId)) return { ok: false, error: 'Combat damage was assigned to an illegal target.' };
+    if (seen.has(unitId)) return { ok: false, error: 'Combat damage targets cannot be repeated.' };
+    seen.add(unitId);
+
+    const lowestPriority = Math.min(...Array.from(remainingTargets).map(id => damagePriority(state, id)));
+    if (damagePriority(state, unitId) !== lowestPriority) {
+      return { ok: false, error: 'Combat damage must respect Tank and Backline assignment priority.' };
+    }
+
+    const lethal = Math.max(0, calculateMight(state, unitId));
+    const damage = remainingTargets.size === 1 ? remainingDamage : Math.min(remainingDamage, lethal);
+    if (damage <= 0) return { ok: false, error: 'Assigned damage must be positive.' };
+    const hasOtherTargets = Array.from(remainingTargets).some(id => id !== unitId);
+
+    if (!hasOtherTargets && damage !== remainingDamage) {
+      return { ok: false, error: 'All remaining combat damage must be assigned to the last legal target.' };
+    }
+
+    out[unitId] = damage;
+    remainingDamage -= damage;
+    remainingTargets.delete(unitId);
+  }
+
+  if (remainingDamage > 0 && remainingTargets.size > 0) {
+    return { ok: false, error: 'Choose enough units to receive all combat damage.' };
+  }
+  return { ok: true, assignments: out };
+}
+
+function validateCombatDamageAssignment(
+  state: GameState,
+  ordered: OrderedCombatDamageAssignment[],
+  legalTargetIds: string[],
+  availableDamage: number
+): { ok: true; assignments: Record<string, number> } | { ok: false; error: string } {
+  return buildCombatDamageFromOrder(state, ordered.map(entry => entry.unitId), legalTargetIds, availableDamage);
+}
+
+function buildAutomaticCombatDamageAssignment(
+  state: GameState,
+  legalTargetIds: string[],
+  availableDamage: number
+): OrderedCombatDamageAssignment[] {
+  const orderedTargets = [...legalTargetIds].sort((a, b) => {
+    const priorityDiff = damagePriority(state, a) - damagePriority(state, b);
+    return priorityDiff !== 0 ? priorityDiff : legalTargetIds.indexOf(a) - legalTargetIds.indexOf(b);
+  });
+  const assignments: OrderedCombatDamageAssignment[] = [];
+  let remaining = availableDamage;
+  for (let i = 0; i < orderedTargets.length && remaining > 0; i++) {
+    const unitId = orderedTargets[i];
+    const isLast = i === orderedTargets.length - 1;
+    const lethal = Math.max(0, calculateMight(state, unitId));
+    const damage = isLast ? remaining : Math.min(remaining, lethal);
+    if (damage > 0) assignments.push({ unitId, damage });
+    remaining -= damage;
+  }
+  return assignments;
+}
+
+function makeCombatAssignmentState(
+  state: GameState,
+  sourceSide: CombatSide,
+  completed: Partial<Record<CombatSide, Record<string, number>>> = {}
+) {
+  const showdown = state.showdown!;
+  const sourceIds = sourceSide === 'attacker'
+    ? liveUnitsAtBattlefield(state, showdown.battlefieldId, showdown.attackerPlayerId)
+    : liveUnitsAtBattlefield(state, showdown.battlefieldId, showdown.defenderPlayerId ?? '');
+  const targetIds = sourceSide === 'attacker'
+    ? liveUnitsAtBattlefield(state, showdown.battlefieldId, showdown.defenderPlayerId ?? '')
+    : liveUnitsAtBattlefield(state, showdown.battlefieldId, showdown.attackerPlayerId);
+  return {
+    battlefieldId: showdown.battlefieldId,
+    assigningPlayerId: sourceSide === 'attacker' ? showdown.attackerPlayerId : showdown.defenderPlayerId!,
+    sourceSide,
+    availableDamage: sumCombatMight(state, sourceIds, sourceSide),
+    legalTargetIds: targetIds,
+    assignments: completed,
+  };
+}
+
+function beginCombatDamageAssignment(state: GameState): ActionResult {
+  const newState = deepClone(state);
+  if (!newState.showdown) return { success: false, error: 'No combat showdown is active.', newState };
+  const attackers = liveUnitsAtBattlefield(newState, newState.showdown.battlefieldId, newState.showdown.attackerPlayerId);
+  const defenders = liveUnitsAtBattlefield(newState, newState.showdown.battlefieldId, newState.showdown.defenderPlayerId ?? '');
+  if (attackers.length === 0 || defenders.length === 0) {
+    return finishCombatResolution(newState, {});
+  }
+  newState.showdown.combatStep = 'AssignDamage';
+  newState.pendingCombatDamageAssignment = makeCombatAssignmentState(newState, 'attacker');
+  newState.actionLog.push(makeLog(newState, newState.showdown.attackerPlayerId, 'Combat',
+    `${newState.players[newState.showdown.attackerPlayerId].name} is assigning combat damage.`));
+  return { success: true, newState };
+}
+
+function applyCombatDamageAssignments(state: GameState, assignments: Partial<Record<CombatSide, Record<string, number>>>): void {
+  for (const sideAssignments of Object.values(assignments)) {
+    for (const [unitId, damage] of Object.entries(sideAssignments ?? {})) {
+      const unit = state.allCards[unitId];
+      if (!unit || unit.location !== 'battlefield') continue;
+      unit.damage = (unit.damage ?? 0) + damage;
+    }
+  }
+}
+
+function establishBattlefieldControlAfterCombat(state: GameState, battlefieldId: string): GameSideEffect[] {
+  const effects: GameSideEffect[] = [];
+  const bf = state.battlefields.find(b => b.id === battlefieldId);
+  if (!bf || isBaseBattlefieldId(bf.id)) return effects;
+  const previousControllerId = bf.controllerId;
+  const owners = Array.from(new Set(bf.units.map(id => state.allCards[id]?.ownerId).filter(Boolean))) as string[];
+  if (owners.length === 0) {
+    bf.controllerId = null;
+    bf.scoringSince = null;
+    bf.scoringPlayerId = null;
+    return effects;
+  }
+  if (owners.length === 1) {
+    const controllerId = owners[0];
+    bf.controllerId = controllerId;
+    bf.scoringSince = state.turn;
+    bf.scoringPlayerId = controllerId;
+    if (previousControllerId !== controllerId && scoreBattlefield(state, controllerId, bf, 'Conquer')) {
+      effects.push({ type: 'ConquerBattlefield', battlefieldId: bf.id, playerId: controllerId });
+    }
+  }
+  return effects;
+}
+
+function recallUnitsToBase(state: GameState, unitIds: string[], battlefieldId: string): void {
+  const bf = state.battlefields.find(b => b.id === battlefieldId);
+  if (!bf) return;
+  for (const unitId of unitIds) {
+    const unit = state.allCards[unitId];
+    if (!unit || unit.location !== 'battlefield' || unit.battlefieldId !== battlefieldId) continue;
+    const base = state.battlefields.find(b => b.id === getBaseBattlefieldId(unit.ownerId));
+    if (!base) continue;
+    bf.units = bf.units.filter(id => id !== unitId);
+    if (!base.units.includes(unitId)) base.units.push(unitId);
+    unit.battlefieldId = base.id;
+  }
+}
+
+function finishCombatResolution(state: GameState, assignments: Partial<Record<CombatSide, Record<string, number>>>): ActionResult {
+  const newState = deepClone(state);
+  const showdown = newState.showdown;
+  if (!showdown) return { success: false, error: 'No combat showdown is active.', newState };
+  const bf = newState.battlefields.find(b => b.id === showdown.battlefieldId)!;
+  newState.pendingCombatDamageAssignment = null;
+  newState.showdown = { ...showdown, combatStep: 'Resolution', combatResolved: true };
+
+  applyCombatDamageAssignments(newState, assignments);
+  for (const unitId of [...showdown.attackerIds, ...showdown.defenderIds]) {
+    checkUnitDeath(newState, unitId);
+  }
+
+  const survivingAttackers = liveUnitsAtBattlefield(newState, bf.id, showdown.attackerPlayerId);
+  const survivingDefenders = liveUnitsAtBattlefield(newState, bf.id, showdown.defenderPlayerId ?? '');
+  for (const unitId of bf.units) {
+    const unit = newState.allCards[unitId];
+    if (unit) unit.damage = 0;
+  }
+
+  let combatWinner: 'attacker' | 'defender' | 'draw' = 'draw';
+  const effects: GameSideEffect[] = [];
+  if (survivingAttackers.length > 0 && survivingDefenders.length === 0) {
+    combatWinner = 'attacker';
+    effects.push(...establishBattlefieldControlAfterCombat(newState, bf.id));
+  } else if (survivingDefenders.length > 0 && survivingAttackers.length === 0) {
+    combatWinner = 'defender';
+    effects.push(...establishBattlefieldControlAfterCombat(newState, bf.id));
+  } else if (survivingAttackers.length === 0 && survivingDefenders.length === 0) {
+    combatWinner = 'draw';
+    effects.push(...establishBattlefieldControlAfterCombat(newState, bf.id));
+  } else {
+    combatWinner = 'draw';
+    newState.actionLog.push(makeLog(newState, showdown.attackerPlayerId, 'Combat',
+      `Combat at ${bf.name} had no result. Another combat is staged.`));
+    const refreshed = enterShowdown(newState, survivingAttackers[0], bf.id);
+    refreshed.showdown!.passTracker = [false, false];
+    refreshed.pendingCombatDamageAssignment = null;
+    return { success: true, newState: refreshed, sideEffects: effects };
+  }
+
+  newState.actionLog.push(makeLog(newState, showdown.attackerPlayerId, 'Combat',
+    `Combat at ${bf.name}: ${combatWinner.toUpperCase()}`));
+
+  const winner = checkWinCondition(newState);
+  if (winner) {
+    newState.phase = 'GameOver';
+    newState.winner = winner;
+    newState.showdown = null;
+    return { success: true, newState, sideEffects: [...effects, { type: 'GameWin', playerId: winner, reason: 'score' }] };
+  }
+
+  newState.phase = 'Action';
+  newState.showdown = null;
+  return { success: true, newState, sideEffects: effects };
+}
+
+function resolveNonCombatShowdown(state: GameState): ActionResult {
+  const newState = deepClone(state);
+  if (!newState.showdown) return { success: false, error: 'No showdown is active.', newState };
+  const effects = establishBattlefieldControlAfterCombat(newState, newState.showdown.battlefieldId);
+  const winner = checkWinCondition(newState);
+  if (winner) {
+    newState.phase = 'GameOver';
+    newState.winner = winner;
+    newState.showdown = null;
+    return { success: true, newState, sideEffects: [...effects, { type: 'GameWin', playerId: winner, reason: 'score' }] };
+  }
+  newState.phase = 'Action';
+  newState.showdown = null;
+  return { success: true, newState, sideEffects: effects };
+}
+
 export function resolveCombat(state: GameState): ActionResult {
   if (state.phase !== 'Showdown' || !state.showdown) {
     return { success: false, error: 'Not in Showdown.', newState: state };
   }
   if (state.showdown.combatResolved) {
     return { success: false, error: 'Combat already resolved.', newState: state };
+  }
+
+  {
+    const newState = deepClone(state);
+    newState.showdown = { ...newState.showdown!, reactionWindowOpen: false };
+    if (newState.showdown.kind === 'NonCombat' || newState.showdown.defenderIds.length === 0) {
+      return resolveNonCombatShowdown(newState);
+    }
+    return beginCombatDamageAssignment(newState);
   }
 
   const newState = deepClone(state);
@@ -1115,6 +1546,11 @@ export function resolveCombat(state: GameState): ActionResult {
   if (defenderIds.length === 0) {
     // Empty BF — no combat, just Focus claimed
     survivingAttackers = attackerIds;
+    bf.controllerId = attackerOwnerId;
+    bf.scoringSince = newState.turn;
+    bf.scoringPlayerId = attackerOwnerId;
+    scoreBattlefield(newState, attackerOwnerId, bf, 'Conquer');
+    effects.push({ type: 'ConquerBattlefield', battlefieldId: bf.id, playerId: attackerOwnerId });
   } else {
     // Both sides present — bidirectional ordered damage assignment
     // Phase 1: Attacker distributes totalAttackerMight across defenders
@@ -1159,6 +1595,7 @@ export function resolveCombat(state: GameState): ActionResult {
       bf.controllerId = attackerOwnerId;
       bf.scoringSince = newState.turn;
       bf.scoringPlayerId = attackerOwnerId;
+      scoreBattlefield(newState, attackerOwnerId, bf, 'Conquer');
       effects.push({ type: 'ConquerBattlefield', battlefieldId: bf.id, playerId: attackerOwnerId });
     }
 
@@ -1370,6 +1807,38 @@ function canPayCardCosts(
 // Action Handlers
 // ============================================================
 
+function handleAssignCombatDamage(state: GameState, action: GameAction): ActionResult {
+  const pending = state.pendingCombatDamageAssignment;
+  if (!pending || !state.showdown) {
+    return { success: false, error: 'No combat damage assignment is pending.', action };
+  }
+  if (pending.assigningPlayerId !== action.playerId) {
+    return { success: false, error: 'You are not assigning combat damage right now.', action };
+  }
+
+  const payload = action.payload as any;
+  const orderedTargetIds = normalizeAssignmentOrder(payload.targetOrder ?? payload.order ?? payload.assignments);
+  const validation = buildCombatDamageFromOrder(state, orderedTargetIds, pending.legalTargetIds, pending.availableDamage);
+  if (validation.ok === false) return { success: false, error: validation.error, action };
+
+  const newState = deepClone(state);
+  const completed = {
+    ...(newState.pendingCombatDamageAssignment?.assignments ?? {}),
+    [pending.sourceSide]: validation.assignments,
+  };
+
+  if (pending.sourceSide === 'attacker') {
+    newState.pendingCombatDamageAssignment = makeCombatAssignmentState(newState, 'defender', completed);
+    newState.actionLog.push(makeLog(newState, action.playerId, 'Combat',
+      `${newState.players[action.playerId].name} assigned ${pending.availableDamage} combat damage.`));
+    return { success: true, action, newState };
+  }
+
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Combat',
+    `${newState.players[action.playerId].name} assigned ${pending.availableDamage} combat damage.`));
+  return finishCombatResolution(newState, completed);
+}
+
 function handlePass(state: GameState, action: GameAction): ActionResult {
   // In Showdown phase, Pass checks for consecutive passes then resolves
   if (state.phase === 'Showdown') {
@@ -1391,10 +1860,11 @@ function handlePass(state: GameState, action: GameAction): ActionResult {
       const stackResult = resolveActionStack(newState);
       if (!stackResult.success) return stackResult;
 
-      // After stack drains: if combat not yet resolved, resolve combat
+      // After stack drains: if showdown/combat not yet resolved, resolve the next step.
       if (!stackResult.newState!.showdown!.combatResolved) {
-        const combatResult = resolveCombat(stackResult.newState!);
-        return combatResult;
+        return stackResult.newState!.showdown!.kind === 'Combat'
+          ? resolveCombat(stackResult.newState!)
+          : resolveNonCombatShowdown(stackResult.newState!);
       }
 
       return { success: true, action, newState: stackResult.newState };
@@ -1694,6 +2164,22 @@ function handleMoveUnit(
     effects.push(...resolveAbilities(newState, move.unitId, 'MOVE'));
   }
 
+  for (const sourceId of new Set(moves.map(move => move.fromBattlefieldId))) {
+    updateUncontestedBattlefieldControl(newState, sourceId, newState.turn);
+  }
+  updateUncontestedBattlefieldControl(newState, toBattlefieldId, newState.turn);
+  const winner = checkWinCondition(newState);
+  if (winner) {
+    newState.phase = 'GameOver';
+    newState.winner = winner;
+    return {
+      success: true,
+      action,
+      newState,
+      sideEffects: [...effects, { type: 'GameWin', playerId: winner, reason: 'score' }]
+    };
+  }
+
   const playerName = newState.players[action.playerId].name;
   const fromBf = state.battlefields.find(b => b.id === moves[0].fromBattlefieldId)!;
   const unitNames = moves.map(m => newState.cardDefinitions[newState.allCards[m.unitId].cardId]?.name ?? 'a unit').join(', ');
@@ -1733,12 +2219,15 @@ function handleAttack(
 
   // Move attacker from its current BF to the target BF
   const newState = deepClone(state);
-  const fromBf = newState.battlefields.find(b => b.id === attacker.battlefieldId);
+  const newAttacker = newState.allCards[attackerId];
+  const fromBf = newState.battlefields.find(b => b.id === newAttacker.battlefieldId);
   if (fromBf) fromBf.units = fromBf.units.filter(id => id !== attackerId);
-  if (!bf.units.includes(attackerId)) bf.units.push(attackerId);
-  attacker.battlefieldId = targetBattlefieldId;
-  attacker.ready = false;
-  attacker.exhausted = true;
+  const targetBf = newState.battlefields.find(b => b.id === targetBattlefieldId)!;
+  if (!targetBf.units.includes(attackerId)) targetBf.units.push(attackerId);
+  newAttacker.battlefieldId = targetBattlefieldId;
+  newAttacker.ready = false;
+  newAttacker.exhausted = true;
+  updateUncontestedBattlefieldControl(newState, fromBf?.id ?? '', newState.turn);
 
   // Enter showdown state (sets phase + ShowdownState)
   const showdownState = enterShowdown(newState, attackerId, targetBattlefieldId);
@@ -1812,6 +2301,7 @@ export function resolveShowdown(
       bf.units.push(attackerId); // attacker stays
       bf.scoringSince = newState.turn;
       bf.scoringPlayerId = attackerOwner;
+      scoreBattlefield(newState, attackerOwner, bf, 'Conquer');
       effects.push({ type: 'ConquerBattlefield', battlefieldId: bf.id, playerId: attackerOwner });
     }
   } else if (totalDefenderMight > totalAttackerMight) {
@@ -2257,14 +2747,29 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
   const player = state.players[playerId];
   if (!player) return actions;
 
+  if (state.pendingCombatDamageAssignment?.assigningPlayerId === playerId) {
+    actions.push(makeAction('AssignCombatDamage', playerId, {
+      targetOrder: buildAutomaticCombatDamageAssignment(
+        state,
+        state.pendingCombatDamageAssignment.legalTargetIds,
+        state.pendingCombatDamageAssignment.availableDamage
+      ).map(entry => entry.unitId),
+    }));
+    return actions;
+  }
+
   // Mulligan is legal during Mulligan phase for the active player who hasn't completed it yet
   if (state.phase === 'Mulligan' && state.activePlayerId === playerId && !player.mulligansComplete) {
     actions.push(makeAction('Mulligan', playerId, { keepIds: [...player.hand] }));
   }
 
-  // Pass is legal during the Action phase.
-  if (state.phase === 'Action') {
+  // Pass is legal during the Action phase and for the player with Focus during Showdown.
+  if (state.phase === 'Action' || (state.phase === 'Showdown' && state.showdown?.focusPlayerId === playerId)) {
     actions.push(makeAction('Pass', playerId, {}));
+  }
+
+  if (state.phase !== 'Action') {
+    return actions;
   }
 
   // Play units from hand

@@ -35,7 +35,7 @@ import { CardArtView } from './CardArtView';
 import { SpellTargetingModal, PendingSpell } from './SpellTargetingModal';
 import { DiscardPileModal } from './DiscardPileModal';
 import { PowerRuneSelectionModal } from './PowerRuneSelectionModal';
-import type { GameAction, PlayerState, CardInstance, CardDefinition, Phase, Domain, BattlefieldState, SpellTargetType, SpellTargeting } from '../../shared/types';
+import type { GameAction, GameState, PlayerState, CardInstance, CardDefinition, Phase, Domain, BattlefieldState, SpellTargetType, SpellTargeting } from '../../shared/types';
 import { CARDS } from '../../shared/cards';
 import { randomId } from '../../utils/helpers';
 import bodyRuneIcon from '../../assets/runes/Body Rune.png';
@@ -271,6 +271,7 @@ function CardStack({ count, label, topCard, cardDef, accentColor, isPlayer, onCl
             showKeywords={false}
             size={size === 'sm' ? 'sm' : 'md'}
             maxHeight={maxHeightPx}
+            forceReady={topCard.location === 'discard'}
           />
         ) : (
           <div style={{
@@ -1126,6 +1127,7 @@ interface DeckAreaProps {
   opponentHandCount: number;
   myTurn?: boolean;
   phase?: Phase;
+  hasShowdownFocus?: boolean;
   onCardClick?: (instanceId: string) => void;
   pendingSpell?: PendingSpell | null;
   onSpellCardClick?: (instanceId: string) => void;
@@ -1133,7 +1135,7 @@ interface DeckAreaProps {
   onGraveyardClick?: () => void;
 }
 
-function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, onCardClick, pendingSpell, onSpellCardClick, compactCards = false, onGraveyardClick }: DeckAreaProps) {
+function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, hasShowdownFocus = false, onCardClick, pendingSpell, onSpellCardClick, compactCards = false, onGraveyardClick }: DeckAreaProps) {
   if (!player) return null;
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
@@ -1202,7 +1204,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
           onCardClick={onCardClick}
           pendingSpell={pendingSpell}
           onSpellCardClick={onSpellCardClick}
-          canInteract={myTurn && phase === 'Action'}
+          canInteract={(myTurn && phase === 'Action') || (phase === 'Showdown' && hasShowdownFocus)}
           maxCardHeight={handMaxH}
         />
       )}
@@ -2220,7 +2222,136 @@ function canCastSpell(
   return { allowed: true };
 }
 
-export function BoardLayout() {
+interface BoardLayoutProps {
+  onExitToLobby?: () => void;
+}
+
+interface GameOverModalProps {
+  winnerName: string;
+  isWinner: boolean;
+  onExitToLobby?: () => void;
+}
+
+function GameOverModal({ winnerName, isWinner, onExitToLobby }: GameOverModalProps) {
+  return (
+    <div style={gameOverStyles.overlay}>
+      <div style={gameOverStyles.modal}>
+        <div style={{ ...gameOverStyles.result, color: isWinner ? '#22c55e' : '#ef4444' }}>
+          {isWinner ? 'Victory' : 'Defeat'}
+        </div>
+        <div style={gameOverStyles.title}>Game Over</div>
+        <div style={gameOverStyles.message}>{winnerName} wins.</div>
+        <button
+          style={gameOverStyles.button}
+          onClick={onExitToLobby}
+        >
+          Return to Lobby
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function getDamagePriority(def?: CardDefinition): number {
+  if (!def) return 1;
+  const abilityText = (def.abilities ?? []).map(ability => ability.effect).join(' ');
+  if (def.keywords.includes('Tank') || abilityText.includes('[Tank]')) return 0;
+  if (def.keywords.includes('Backline') || abilityText.includes('[Backline]')) return 2;
+  return 1;
+}
+
+function CombatDamageAssignmentPanel({
+  gameState,
+  playerId,
+  onSubmit,
+}: {
+  gameState: GameState;
+  playerId: string;
+  onSubmit: (targetOrder: string[]) => void;
+}) {
+  const pending = gameState.pendingCombatDamageAssignment;
+  const [targetOrder, setTargetOrder] = React.useState<string[]>([]);
+  React.useEffect(() => setTargetOrder([]), [pending?.assigningPlayerId, pending?.sourceSide, pending?.availableDamage]);
+  if (!pending || pending.assigningPlayerId !== playerId || gameState.showdown?.combatStep !== 'AssignDamage') return null;
+
+  const targets = [...pending.legalTargetIds].sort((a, b) => {
+    const aDef = gameState.cardDefinitions[gameState.allCards[a]?.cardId];
+    const bDef = gameState.cardDefinitions[gameState.allCards[b]?.cardId];
+    const priorityDiff = getDamagePriority(aDef) - getDamagePriority(bDef);
+    return priorityDiff || pending.legalTargetIds.indexOf(a) - pending.legalTargetIds.indexOf(b);
+  });
+  const orderedTargets = [...targetOrder, ...targets.filter(id => !targetOrder.includes(id))];
+
+  const canSubmit = targets.length > 0 || pending.availableDamage === 0;
+  const sideLabel = pending.sourceSide === 'attacker' ? 'Attackers' : 'Defenders';
+  const move = (unitId: string, direction: -1 | 1) => {
+    setTargetOrder(prev => {
+      const current = [...prev, ...targets.filter(id => !prev.includes(id))];
+      const index = current.indexOf(unitId);
+      const nextIndex = index + direction;
+      if (index < 0 || nextIndex < 0 || nextIndex >= current.length) return current;
+      [current[index], current[nextIndex]] = [current[nextIndex], current[index]];
+      return current;
+    });
+  };
+
+  return (
+    <div style={combatAssignStyles.panel}>
+      <div style={combatAssignStyles.header}>{sideLabel} choose damage order</div>
+      <div style={combatAssignStyles.subhead}>{pending.availableDamage} damage will be assigned as lethal damage in this order.</div>
+      <div style={combatAssignStyles.targets}>
+        {orderedTargets.map((unitId, index) => {
+          const unit = gameState.allCards[unitId];
+          const def = unit ? gameState.cardDefinitions[unit.cardId] : undefined;
+          return (
+            <div key={unitId} style={combatAssignStyles.targetRow}>
+              <span style={combatAssignStyles.orderBadge}>{index + 1}</span>
+              <span style={combatAssignStyles.targetName}>{def?.name ?? unitId}</span>
+              <span style={combatAssignStyles.targetMeta}>Might {unit?.currentStats?.might ?? unit?.stats?.might ?? 0}</span>
+              <button type="button" style={combatAssignStyles.iconButton} onClick={() => move(unitId, -1)} disabled={index === 0}>↑</button>
+              <button type="button" style={combatAssignStyles.iconButton} onClick={() => move(unitId, 1)} disabled={index === orderedTargets.length - 1}>↓</button>
+            </div>
+          );
+        })}
+      </div>
+      <button
+        style={{ ...combatAssignStyles.button, opacity: canSubmit ? 1 : 0.55 }}
+        disabled={!canSubmit}
+        onClick={() => onSubmit(orderedTargets)}
+      >
+        Confirm Order
+      </button>
+    </div>
+  );
+}
+
+const combatAssignStyles: Record<string, React.CSSProperties> = {
+  panel: {
+    position: 'fixed',
+    left: '50%',
+    top: '50%',
+    transform: 'translate(-50%, -50%)',
+    zIndex: 120,
+    width: 'min(420px, calc(100vw - 32px))',
+    background: 'rgba(15,23,42,0.98)',
+    border: '1px solid rgba(251,191,36,0.42)',
+    borderRadius: '8px',
+    padding: '14px',
+    boxShadow: '0 18px 48px rgba(0,0,0,0.45)',
+    color: '#f8fafc',
+  },
+  header: { fontSize: '14px', fontWeight: 900, textTransform: 'uppercase' },
+  subhead: { marginTop: '4px', color: '#facc15', fontSize: '12px', fontWeight: 800 },
+  targets: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' },
+  targetRow: { display: 'grid', gridTemplateColumns: '28px 1fr auto 30px 30px', alignItems: 'center', gap: '8px' },
+  orderBadge: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '999px', background: '#334155', color: '#f8fafc', fontSize: '11px', fontWeight: 900 },
+  targetName: { fontSize: '12px', fontWeight: 800, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+  targetMeta: { color: '#cbd5e1', fontSize: '11px', whiteSpace: 'nowrap' },
+  iconButton: { border: '1px solid #475569', borderRadius: '6px', background: '#020617', color: '#f8fafc', width: '30px', height: '28px', cursor: 'pointer' },
+  button: { marginTop: '12px', width: '100%', border: '0', borderRadius: '8px', padding: '10px', background: '#f97316', color: 'white', fontWeight: 900, cursor: 'pointer' },
+};
+
+export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const store = useGameStore();
   const { gameState, myTurn, phase, playerId } = store;
   const { isNarrow, isShort } = useBoardViewport();
@@ -2444,6 +2575,10 @@ export function BoardLayout() {
     gameService.pass();
   }, []);
 
+  const handleAssignCombatDamage = useCallback((targetOrder: string[]) => {
+    handleAction('AssignCombatDamage', { targetOrder });
+  }, [handleAction]);
+
   const handleCardClick = useCallback((instanceId: string) => {
     store.setModalCard(instanceId);
   }, [store]);
@@ -2575,6 +2710,7 @@ export function BoardLayout() {
 
   const me = gameState.players[playerId];
   const opponent = Object.values(gameState.players).find(p => p.id !== playerId);
+  const winner = gameState.winner ? gameState.players[gameState.winner] : null;
   const myCards = gameState.allCards;
   const cardDefs = gameState.cardDefinitions;
 
@@ -2693,6 +2829,7 @@ export function BoardLayout() {
                 opponentHandCount={0}
                 myTurn={myTurn}
                 phase={phase}
+                hasShowdownFocus={gameState.showdown?.focusPlayerId === playerId}
                 onCardClick={handleCardClick}
                 pendingSpell={pendingSpell}
                 onSpellCardClick={handleSpellCardClick}
@@ -2704,7 +2841,12 @@ export function BoardLayout() {
           </div>
 
           {/* ========== BOTTOM ACTION BAR ========== */}
-          <ActionBar myTurn={myTurn} phase={phase} onPass={handlePass} />
+          <ActionBar
+            myTurn={myTurn}
+            phase={phase}
+            canPass={(myTurn && phase === 'Action') || (phase === 'Showdown' && gameState.showdown?.focusPlayerId === playerId)}
+            onPass={handlePass}
+          />
         </div>
 
         {/* Right panel: game log (top) + draggable split + chat (bottom) */}
@@ -2815,6 +2957,20 @@ export function BoardLayout() {
           isMyTurn={myTurn}
         />
       )}
+
+      <CombatDamageAssignmentPanel
+        gameState={gameState}
+        playerId={playerId}
+        onSubmit={handleAssignCombatDamage}
+      />
+
+      {gameState.phase === 'GameOver' && winner && (
+        <GameOverModal
+          winnerName={winner.name}
+          isWinner={winner.id === playerId}
+          onExitToLobby={onExitToLobby}
+        />
+      )}
     </div>
   );
 }
@@ -2822,6 +2978,60 @@ export function BoardLayout() {
 // ─────────────────────────────────────────
 // Styles
 // ─────────────────────────────────────────
+const gameOverStyles: Record<string, React.CSSProperties> = {
+  overlay: {
+    position: 'fixed',
+    inset: 0,
+    zIndex: 4000,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: 'rgba(0,0,0,0.72)',
+    backdropFilter: 'blur(6px)',
+    padding: '24px',
+  },
+  modal: {
+    width: 'min(420px, 100%)',
+    borderRadius: '8px',
+    border: '1px solid rgba(212,168,67,0.45)',
+    background: '#111827',
+    boxShadow: '0 22px 60px rgba(0,0,0,0.5)',
+    padding: '28px',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: '12px',
+  },
+  result: {
+    fontSize: '14px',
+    fontWeight: 900,
+    letterSpacing: '0.8px',
+    textTransform: 'uppercase',
+  },
+  title: {
+    fontSize: '32px',
+    lineHeight: 1,
+    fontWeight: 900,
+    color: '#f9fafb',
+  },
+  message: {
+    fontSize: '15px',
+    color: '#cbd5e1',
+    marginBottom: '10px',
+  },
+  button: {
+    width: '100%',
+    height: '42px',
+    border: 'none',
+    borderRadius: '6px',
+    background: '#d4a843',
+    color: '#111827',
+    fontSize: '14px',
+    fontWeight: 900,
+    cursor: 'pointer',
+  },
+};
+
 const styles: Record<string, React.CSSProperties> = {
   board: {
     display: 'flex',

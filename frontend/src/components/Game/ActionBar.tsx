@@ -8,11 +8,12 @@ import { getPhaseLabel, getTurnPrompt } from './PhaseIndicator';
 interface Props {
   myTurn: boolean;
   phase: Phase;
+  canPass?: boolean;
   onPass: () => void;
 }
 
-export function ActionBar({ myTurn, phase, onPass }: Props) {
-  const showPass = myTurn && phase === 'Action';
+export function ActionBar({ myTurn, phase, canPass, onPass }: Props) {
+  const showPass = canPass ?? (myTurn && phase === 'Action');
   const prompt = getTurnPrompt(phase, myTurn);
 
   return (
@@ -37,7 +38,7 @@ export function ActionBar({ myTurn, phase, onPass }: Props) {
             e.currentTarget.style.boxShadow = '0 4px 14px rgba(249,115,22,0.22)';
           }}
         >
-          Pass Turn
+          {phase === 'Showdown' ? 'Pass Focus' : 'Pass Turn'}
         </button>
       ) : (
         <div style={styles.aiState}>

@@ -37,6 +37,7 @@ export type Keyword =
   | 'Banish'
   | 'Recycle'
   | 'Tank'
+  | 'Backline'
   | 'Mighty'
   | 'Weaponmaster'
   | 'Predict';
@@ -99,6 +100,7 @@ export interface CardInstance {
   exhausted: boolean;
   stats: CardStats;
   currentStats: CardStats;
+  damage?: number;
   counters: Record<string, number>;
   attachments: string[];
   facing: 'up' | 'down';
@@ -128,9 +130,48 @@ export interface SpellTargeting {
   targetType: SpellTargetType;
 }
 
+export interface ShowdownStackEntry {
+  id: string;
+  sourceId: string;
+  ownerId: string;
+  type: 'ability' | 'spell' | 'reaction';
+  effect: string;
+  resolves: boolean;
+}
+
 export interface ShowdownState {
+  kind: 'Combat' | 'NonCombat';
+  battlefieldId: string;
+  attackerIds: string[];
+  attackerOwnerId: string;
+  attackerPlayerId: string;
+  defenderPlayerId: string | null;
   focusPlayerId: string | null;
+  defenderIds: string[];
+  combatStep: 'Showdown' | 'AssignDamage' | 'Resolution' | null;
+  reactionWindowOpen: boolean;
+  combatResolved: boolean;
+  winner: 'attacker' | 'defender' | 'draw' | null;
+  excessDamage: number;
+  actionStack: ShowdownStackEntry[];
+  passTracker: [boolean, boolean];
   chainOpen: boolean;
+}
+
+export type CombatSide = 'attacker' | 'defender';
+
+export interface OrderedCombatDamageAssignment {
+  unitId: string;
+  damage: number;
+}
+
+export interface PendingCombatDamageAssignment {
+  battlefieldId: string;
+  assigningPlayerId: string;
+  sourceSide: CombatSide;
+  availableDamage: number;
+  legalTargetIds: string[];
+  assignments: Partial<Record<CombatSide, Record<string, number>>>;
 }
 
 export interface GameState {
@@ -144,10 +185,12 @@ export interface GameState {
   cardDefinitions: Record<string, CardDefinition>;
   winner: string | null;
   scoreLimit: number;
+  scoredBattlefieldsThisTurn: Record<string, string[]>;
   actionLog: GameAction[];
   createdAt: number;
   isPvP: boolean;
   showdown?: ShowdownState;
+  pendingCombatDamageAssignment?: PendingCombatDamageAssignment | null;
 }
 
 export interface BattlefieldState {
@@ -190,6 +233,7 @@ export interface GameState {
   cardDefinitions: Record<string, CardDefinition>;
   winner: string | null;
   scoreLimit: number;
+  scoredBattlefieldsThisTurn: Record<string, string[]>;
   actionLog: GameAction[];
   createdAt: number;
   isPvP: boolean;
@@ -213,6 +257,7 @@ export type ActionType =
   | 'Concede'
   | 'Focus'
   | 'Reaction'
+  | 'AssignCombatDamage'
   | 'CloseReactionWindow';
 
 export interface GameAction {
@@ -258,6 +303,10 @@ export interface AttackPayload {
   attackerId: string;
   targetBattlefieldId: string;
   declaredBlockers?: string[];
+}
+
+export interface AssignCombatDamagePayload {
+  targetOrder: string[];
 }
 
 export interface UseAbilityPayload {
@@ -395,6 +444,17 @@ export interface DeckValidation {
   runeCount: number;
   battlefieldCount: number;
   sideboardCount: number;
+}
+
+export interface User {
+  id: string;
+  username: string;
+  createdAt: number;
+}
+
+export interface AuthResponse {
+  user: User;
+  token: string;
 }
 
 // --- API Types ---
