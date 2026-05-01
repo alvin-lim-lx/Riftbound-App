@@ -8,7 +8,11 @@ import { useGameStore } from '../../store/gameStore';
 import { gameService } from '../../services/gameService';
 import { BoardLayout } from './BoardLayout';
 
-export function GamePage() {
+interface GamePageProps {
+  onExitToLobby?: () => void;
+}
+
+export function GamePage({ onExitToLobby }: GamePageProps) {
   const store = useGameStore();
   const storeRef = React.useRef(store);
   storeRef.current = store;
@@ -53,5 +57,5 @@ export function GamePage() {
     };
   }, []);
 
-  return <BoardLayout />;
+  return <BoardLayout onExitToLobby={onExitToLobby} />;
 }

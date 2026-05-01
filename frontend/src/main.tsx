@@ -104,7 +104,10 @@ function AppInner() {
         />
       )}
       {connected && view === 'game' && (
-        <GamePage />
+        <GamePage onExitToLobby={() => {
+          useGameStore.getState().reset();
+          setView('lobby');
+        }} />
       )}
     </div>
   );

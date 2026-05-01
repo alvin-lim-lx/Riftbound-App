@@ -106,7 +106,7 @@ export function LobbyPage({ playerId, playerName, onGameStart, onDeckBuilder }: 
     }
     const confirmedDeckId = useGameStore.getState().selectedDeckId;
     console.log('[DEBUG] handlePlayAI selectedDeckId from store:', confirmedDeckId);
-    gameService.startVsAI(confirmedDeckId);
+    gameService.startVsAI(confirmedDeckId ?? undefined);
     setMode('create');
   };
 

@@ -162,6 +162,32 @@ export class GameServer {
       if (!game) return res.status(404).json({ error: 'Game not found' });
 
       const result = executeAction(game.state, action);
+      if (!result.success || !result.newState) {
+        console.warn(`[AI] Action failed: ${action.type} phase=${game.state.phase} error=${result.error ?? 'unknown error'}`);
+        const fallbackAction: GameAction = {
+          id: randomId(),
+          type: 'Pass',
+          playerId: game.state.activePlayerId,
+          payload: {},
+          turn: game.state.turn,
+          phase: game.state.phase,
+          timestamp: Date.now(),
+        };
+        const fallbackResult = executeAction(game.state, fallbackAction);
+        if (fallbackResult.success && fallbackResult.newState) {
+          game.state = fallbackResult.newState;
+          if (game.state.phase !== 'GameOver') {
+            autoAdvanceABCDPhases(game);
+          }
+          this.broadcastGameLog(game);
+          this.broadcastGameState(game);
+        }
+        if (game.state.phase !== 'GameOver') {
+          this.scheduleAIMove(game);
+        }
+        return;
+      }
+
       if (result.success && result.newState) {
         game.state = result.newState;
         this.broadcastGameState(game);
@@ -577,7 +603,16 @@ export class GameServer {
   private scheduleAIMove(game: LiveGame) {
     if (game.aiTimer) clearTimeout(game.aiTimer);
 
-    const isAITurn = game.state.activePlayerId.startsWith('ai_');
+    const resolveAIActorId = () => {
+      const pendingAssignmentPlayerId = game.state.pendingCombatDamageAssignment?.assigningPlayerId;
+      if (pendingAssignmentPlayerId) return pendingAssignmentPlayerId.startsWith('ai_') ? pendingAssignmentPlayerId : null;
+      const focusPlayerId = game.state.phase === 'Showdown' ? game.state.showdown?.focusPlayerId : null;
+      if (focusPlayerId) return focusPlayerId.startsWith('ai_') ? focusPlayerId : null;
+      return game.state.activePlayerId.startsWith('ai_') ? game.state.activePlayerId : null;
+    };
+
+    const aiActorId = resolveAIActorId();
+    const isAITurn = Boolean(aiActorId);
     if (!isAITurn || !game.isRunning) return;
 
     // Don't auto-schedule AI moves during A-B-C-D phases — those should
@@ -586,7 +621,10 @@ export class GameServer {
     if (canAutoAdvancePhase(game.state)) return;
 
     game.aiTimer = setTimeout(() => {
-      const ai = game.ais.get(game.state.activePlayerId);
+      const currentAIActorId = resolveAIActorId();
+      if (!currentAIActorId) return;
+
+      const ai = game.ais.get(currentAIActorId);
       if (!ai) return;
 
       const action = ai.decide(game.state);

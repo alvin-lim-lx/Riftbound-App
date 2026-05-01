@@ -39,6 +39,7 @@ export type Keyword =
   | 'Banish'
   | 'Recycle'
   | 'Tank'
+  | 'Backline'
   | 'Mighty'
   | 'Weaponmaster'
   | 'Predict';
@@ -133,11 +134,15 @@ export interface ShowdownStackEntry {
 }
 
 export interface ShowdownState {
+  kind: 'Combat' | 'NonCombat';
   battlefieldId: string;         // Which BF is contested
   attackerIds: string[];         // Unit instanceIds that triggered the showdown
   attackerOwnerId: string;       // PlayerId who initiated the attack/move
+  attackerPlayerId: string;
+  defenderPlayerId: string | null;
   focusPlayerId: string | null;  // Player with Focus — null if unclaimed
   defenderIds: string[];         // Defender unit instanceIds at the BF
+  combatStep: 'Showdown' | 'AssignDamage' | 'Resolution' | null;
   reactionWindowOpen: boolean;    // true = players may play REACTION cards
   combatResolved: boolean;       // true = combat chain has resolved
   winner: 'attacker' | 'defender' | 'draw' | null;
@@ -145,6 +150,22 @@ export interface ShowdownState {
   actionStack: ShowdownStackEntry[]; // abilities/spells to resolve LIFO
   passTracker: [boolean, boolean];   // [attackerPassed, defenderPassed]
   chainOpen: boolean;                // true = chain accepting reactions
+}
+
+export type CombatSide = 'attacker' | 'defender';
+
+export interface OrderedCombatDamageAssignment {
+  unitId: string;
+  damage: number;
+}
+
+export interface PendingCombatDamageAssignment {
+  battlefieldId: string;
+  assigningPlayerId: string;
+  sourceSide: CombatSide;
+  availableDamage: number;
+  legalTargetIds: string[];
+  assignments: Partial<Record<CombatSide, Record<string, number>>>;
 }
 
 export interface BattlefieldState {
@@ -192,11 +213,13 @@ export interface GameState {
   cardDefinitions: Record<string, CardDefinition>;  // cached card data
   winner: string | null;
   scoreLimit: number;
+  scoredBattlefieldsThisTurn: Record<string, string[]>;
   actionLog: GameLogEntry[];
   createdAt: number;
   isPvP: boolean;
   effectStack: EffectStackEntry[];  // pending effects that require resolution (start of turn, etc.)
   showdown: ShowdownState | null;  // active showdown, null when not in a showdown
+  pendingCombatDamageAssignment: PendingCombatDamageAssignment | null;
 }
 
 // --- Action Types ---
@@ -219,6 +242,7 @@ export type ActionType =
   | 'TurnChange'
   | 'Focus'
   | 'Reaction'
+  | 'AssignCombatDamage'
   | 'CloseReactionWindow';
 
 export interface GameAction {
@@ -291,6 +315,10 @@ export interface AttackPayload {
   attackerId: string;
   targetBattlefieldId: string;
   declaredBlockers?: string[];  // defender's unit instanceIds
+}
+
+export interface AssignCombatDamagePayload {
+  targetOrder: string[];
 }
 
 export interface UseAbilityPayload {
