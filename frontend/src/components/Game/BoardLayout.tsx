@@ -120,6 +120,10 @@ function runeDomain(def: CardDefinition | undefined): Domain | undefined {
   return def?.domains?.find(domain => RUNE_ICONS[domain]);
 }
 
+function cardHasKeyword(def: CardDefinition | undefined, keyword: string): boolean {
+  return (def?.keywords ?? []).some(kw => kw.toLowerCase() === keyword.toLowerCase());
+}
+
 // ─────────────────────────────────────────
 // Helpers
 // ─────────────────────────────────────────
@@ -147,6 +151,17 @@ function getAvailableRunes(player: PlayerState | undefined, allCards: Record<str
     card.ownerId === player.id && card.location === 'rune' && !card.exhausted
   ).length;
   return readyRunes + (player.floatingEnergy ?? 0);
+}
+
+function getActiveRuneDomains(player: PlayerState | undefined, allCards: Record<string, CardInstance>, cardDefs: Record<string, CardDefinition>): Domain[] {
+  if (!player) return [];
+  const domains = new Set<Domain>();
+  for (const card of Object.values(allCards)) {
+    if (card.ownerId !== player.id || card.location !== 'rune') continue;
+    const domain = runeDomain(cardDefs[card.cardId]);
+    if (domain) domains.add(domain);
+  }
+  return Array.from(domains);
 }
 
 interface PendingPlayAction {
@@ -422,6 +437,12 @@ interface PlayerInfoBarProps {
   compact?: boolean;
 }
 
+interface PendingHideRuneSelection {
+  cardInstanceId: string;
+  battlefieldId: string;
+  cardName: string;
+}
+
 function PlayerInfoBar({ player, isPlayer, allCards, cardDefs, reversed, compact = false }: PlayerInfoBarProps) {
   if (!player) return <div style={infoBarStyles.placeholder} />;
 
@@ -614,11 +635,13 @@ interface PlayerHandRowProps {
   onCardClick?: (instanceId: string) => void;
   pendingSpell?: PendingSpell | null;
   onSpellCardClick?: (instanceId: string) => void;
+  pendingHideCardId?: string | null;
+  onHideCardClick?: (instanceId: string) => void;
   canInteract?: boolean;
   maxCardHeight?: number;
 }
 
-function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCardClick, canInteract = false, maxCardHeight = CARD_HEIGHTS.handMax }: PlayerHandRowProps) {
+function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCardClick, pendingHideCardId, onHideCardClick, canInteract = false, maxCardHeight = CARD_HEIGHTS.handMax }: PlayerHandRowProps) {
   const handleClick = (instanceId: string) => {
     const card = cards.find(c => c.instanceId === instanceId);
     const def = card ? cardDefs[card.cardId] : undefined;
@@ -653,6 +676,8 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCard
         {cards.map((card, i) => {
           const def = cardDefs[card.cardId];
           const canDrag = canInteract && (def?.type === 'Unit' || def?.type === 'Gear');
+          const canHide = canInteract && cardHasKeyword(def, 'Hidden');
+          const isPendingHide = pendingHideCardId === card.instanceId;
 
           return (
             <div
@@ -665,6 +690,8 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCard
                 flexShrink: 1,
                 position: 'relative',
                 cursor: canDrag ? 'grab' : 'default',
+                outline: isPendingHide ? '2px solid rgba(251,191,36,0.95)' : 'none',
+                outlineOffset: '3px',
               }}
               onDragStart={e => {
                 if (!canDrag) {
@@ -683,6 +710,22 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCard
               }}
             >
               {canDrag && <div style={handStyles.playableBadge}>Drag to play</div>}
+              {canHide && (
+                <button
+                  type="button"
+                  style={{
+                    ...handStyles.hideButton,
+                    ...(isPendingHide ? handStyles.hideButtonActive : {}),
+                  }}
+                  onClick={e => {
+                    e.stopPropagation();
+                    onHideCardClick?.(card.instanceId);
+                  }}
+                  title={isPendingHide ? 'Cancel hide selection' : 'Hide this card'}
+                >
+                  {isPendingHide ? 'Hiding' : 'Hide'}
+                </button>
+              )}
               <CardArtView
                 card={card}
                 cardDef={def}
@@ -778,6 +821,26 @@ const handStyles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase',
     whiteSpace: 'nowrap',
     pointerEvents: 'none',
+  },
+  hideButton: {
+    position: 'absolute',
+    right: '4px',
+    bottom: '4px',
+    zIndex: 21,
+    border: '1px solid rgba(251,191,36,0.55)',
+    borderRadius: '6px',
+    background: 'rgba(15,23,42,0.92)',
+    color: '#fde68a',
+    fontSize: '10px',
+    fontWeight: 900,
+    padding: '4px 7px',
+    cursor: 'pointer',
+    boxShadow: '0 4px 10px rgba(0,0,0,0.24)',
+  },
+  hideButtonActive: {
+    background: '#f59e0b',
+    color: '#111827',
+    borderColor: '#fbbf24',
   },
   countBadge: {
     fontSize: '12px',
@@ -1169,11 +1232,13 @@ interface DeckAreaProps {
   onCardClick?: (instanceId: string) => void;
   pendingSpell?: PendingSpell | null;
   onSpellCardClick?: (instanceId: string) => void;
+  pendingHideCardId?: string | null;
+  onHideCardClick?: (instanceId: string) => void;
   compactCards?: boolean;
   onGraveyardClick?: () => void;
 }
 
-function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, hasShowdownFocus = false, onCardClick, pendingSpell, onSpellCardClick, compactCards = false, onGraveyardClick }: DeckAreaProps) {
+function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, hasShowdownFocus = false, onCardClick, pendingSpell, onSpellCardClick, pendingHideCardId, onHideCardClick, compactCards = false, onGraveyardClick }: DeckAreaProps) {
   if (!player) return null;
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
@@ -1242,6 +1307,8 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
           onCardClick={onCardClick}
           pendingSpell={pendingSpell}
           onSpellCardClick={onSpellCardClick}
+          pendingHideCardId={pendingHideCardId}
+          onHideCardClick={onHideCardClick}
           canInteract={(myTurn && phase === 'Action') || (phase === 'Showdown' && hasShowdownFocus)}
           maxCardHeight={handMaxH}
         />
@@ -1461,6 +1528,7 @@ interface BattlefieldRowProps {
   pendingMoveUnitIds?: Set<string>;
   pendingMoveDestinationId?: string | null;
   pendingSpell?: PendingSpell | null;
+  pendingHideCardId?: string | null;
   highlightedUnitId?: string | null;
   isNarrow?: boolean;
   onBattlefieldUnitClick?: (unitInstanceId: string) => void;
@@ -1468,12 +1536,14 @@ interface BattlefieldRowProps {
   onBattlefieldDrop?: (cardInstanceId: string, battlefieldId: string) => void;
   onMoveDrop?: (cardInstanceId: string, destinationBattlefieldId: string) => void;
   onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
+  onHideBattlefield?: (battlefieldId: string) => void;
+  onPlayHiddenCard?: (cardInstanceId: string) => void;
 }
 
 function BattlefieldRow({
   gameState, playerId, myTurn,
-  canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell, highlightedUnitId, isNarrow = false,
-  onBattlefieldUnitClick, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart,
+  canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell, pendingHideCardId, highlightedUnitId, isNarrow = false,
+  onBattlefieldUnitClick, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart, onHideBattlefield, onPlayHiddenCard,
 }: BattlefieldRowProps) {
   const { battlefields, allCards, cardDefinitions } = gameState;
   const rowRef = React.useRef<HTMLDivElement>(null);
@@ -1631,6 +1701,15 @@ function BattlefieldRow({
           const controlledByMe = myUnits.length > 0 && enemyUnits.length === 0;
           const controlledByEnemy = enemyUnits.length > 0 && myUnits.length === 0;
           const contested = myUnits.length > 0 && enemyUnits.length > 0;
+          const myHiddenHere = Object.values(allCards).filter(card =>
+            card.ownerId === playerId && card.location === 'hidden' && card.hiddenBattlefieldId === bf.id
+          );
+          const enemyHiddenHere = Object.values(allCards).filter(card =>
+            card.ownerId !== playerId && card.location === 'hidden' && card.hiddenBattlefieldId === bf.id
+          );
+          const canHideHere = Boolean(pendingHideCardId)
+            && bf.controllerId === playerId
+            && myHiddenHere.length === 0;
           const territoryStyle = contested
             ? bfRowStyles.contestedPanel
             : controlledByMe
@@ -1648,7 +1727,13 @@ function BattlefieldRow({
                 ...(pendingMoveDestinationId === bf.id ? bfRowStyles.pendingDropPanel : {}),
                 borderColor: bfColor + '55',
                 ...territoryStyle,
+                ...(pendingHideCardId ? bfRowStyles.hideTargetPanel : {}),
+                ...(canHideHere ? bfRowStyles.hideLegalPanel : {}),
                 flexDirection: 'row',
+                cursor: canHideHere ? 'pointer' : undefined,
+              }}
+              onClick={() => {
+                if (canHideHere) onHideBattlefield?.(bf.id);
               }}
               onDragOver={e => {
                 if (!onBattlefieldDrop && !onMoveDrop) return;
@@ -1685,6 +1770,36 @@ function BattlefieldRow({
                   landscape={true}
                 />
                 <span style={{ fontSize: '10px', fontWeight: 700, color: bfColor }}>{bf.name}</span>
+                {(myHiddenHere.length > 0 || enemyHiddenHere.length > 0) && (
+                  <div style={bfRowStyles.hiddenRow}>
+                    {myHiddenHere.map(hiddenCard => {
+                      const hiddenDef = cardDefinitions[hiddenCard.cardId];
+                      return (
+                        <button
+                          key={hiddenCard.instanceId}
+                          type="button"
+                          style={bfRowStyles.hiddenButton}
+                          onClick={e => {
+                            e.stopPropagation();
+                            onPlayHiddenCard?.(hiddenCard.instanceId);
+                          }}
+                          title={`Play ${hiddenDef?.name ?? 'hidden card'}`}
+                        >
+                          <span style={bfRowStyles.hiddenIcon}>?</span>
+                          <span style={bfRowStyles.hiddenName}>{hiddenDef?.name ?? 'Hidden'}</span>
+                          <span style={bfRowStyles.hiddenPlayText}>Play</span>
+                        </button>
+                      );
+                    })}
+                    {enemyHiddenHere.length > 0 && (
+                      <span style={bfRowStyles.enemyHiddenPill}>
+                        <span style={bfRowStyles.hiddenIcon}>?</span>
+                        Enemy hidden x{enemyHiddenHere.length}
+                      </span>
+                    )}
+                  </div>
+                )}
+                {canHideHere && <span style={bfRowStyles.hidePrompt}>Click to hide here</span>}
               </div>
 
               {/* Right: opponent units */}
@@ -1766,6 +1881,85 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
   pendingDropPanel: {
     boxShadow: 'inset 0 0 0 2px rgba(251,191,36,0.48), 0 2px 8px rgba(0,0,0,0.2)',
     background: 'rgba(251,191,36,0.08)',
+  },
+  hideTargetPanel: {
+    filter: 'saturate(0.82)',
+  },
+  hideLegalPanel: {
+    borderColor: 'rgba(251,191,36,0.92)',
+    boxShadow: 'inset 0 0 0 2px rgba(251,191,36,0.52), 0 0 20px rgba(251,191,36,0.16)',
+    background: 'rgba(251,191,36,0.08)',
+    filter: 'none',
+  },
+  hiddenRow: {
+    display: 'flex',
+    gap: '4px',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    maxWidth: '154px',
+  },
+  hiddenButton: {
+    display: 'grid',
+    gridTemplateColumns: '18px minmax(0, 1fr) auto',
+    alignItems: 'center',
+    gap: '5px',
+    border: '1px solid rgba(251,191,36,0.75)',
+    borderRadius: '8px',
+    padding: '4px 6px',
+    background: 'linear-gradient(135deg, rgba(120,53,15,0.96), rgba(15,23,42,0.94))',
+    color: '#fde68a',
+    fontSize: '10px',
+    fontWeight: 900,
+    width: '148px',
+    cursor: 'pointer',
+    boxShadow: '0 0 14px rgba(251,191,36,0.24)',
+  },
+  hiddenIcon: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '18px',
+    height: '22px',
+    borderRadius: '4px',
+    background: 'linear-gradient(135deg, #111827, #451a03)',
+    border: '1px solid rgba(251,191,36,0.55)',
+    color: '#fbbf24',
+    fontSize: '12px',
+    fontWeight: 900,
+  },
+  hiddenName: {
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    textAlign: 'left',
+  },
+  hiddenPlayText: {
+    color: '#fef3c7',
+    fontSize: '9px',
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
+  },
+  enemyHiddenPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '5px',
+    border: '1px solid rgba(148,163,184,0.45)',
+    borderRadius: '8px',
+    padding: '4px 6px',
+    background: 'linear-gradient(135deg, rgba(30,41,59,0.96), rgba(15,23,42,0.94))',
+    color: '#cbd5e1',
+    fontSize: '10px',
+    fontWeight: 900,
+    whiteSpace: 'nowrap',
+    boxShadow: '0 0 12px rgba(148,163,184,0.16)',
+  },
+  hidePrompt: {
+    color: '#fbbf24',
+    fontSize: '10px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    letterSpacing: '0.4px',
   },
   bfHeader: {
     height: '44px',
@@ -2422,6 +2616,8 @@ function MobileBottomPanel({
   pendingSpell,
   onCardClick,
   onSpellCardClick,
+  pendingHideCardId,
+  onHideCardClick,
 }: {
   activeTab: 'hand' | 'log' | 'chat';
   onTabChange: (tab: 'hand' | 'log' | 'chat') => void;
@@ -2433,6 +2629,8 @@ function MobileBottomPanel({
   pendingSpell: PendingSpell | null;
   onCardClick: (instanceId: string) => void;
   onSpellCardClick: (instanceId: string) => void;
+  pendingHideCardId?: string | null;
+  onHideCardClick?: (instanceId: string) => void;
 }) {
   const tabs: Array<{ id: 'hand' | 'log' | 'chat'; label: string }> = [
     { id: 'hand', label: 'Hand' },
@@ -2465,6 +2663,8 @@ function MobileBottomPanel({
             onCardClick={onCardClick}
             pendingSpell={pendingSpell}
             onSpellCardClick={onSpellCardClick}
+            pendingHideCardId={pendingHideCardId}
+            onHideCardClick={onHideCardClick}
             canInteract={true}
             maxCardHeight={104}
           />
@@ -2703,6 +2903,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const [pendingPlayAction, setPendingPlayAction] = React.useState<PendingPlayAction | null>(null);
   const [pendingMoveAction, setPendingMoveAction] = React.useState<PendingMoveAction | null>(null);
   const [pendingSpell, setPendingSpell] = React.useState<PendingSpell | null>(null);
+  const [pendingHideCardId, setPendingHideCardId] = React.useState<string | null>(null);
+  const [pendingHideRuneSelection, setPendingHideRuneSelection] = React.useState<PendingHideRuneSelection | null>(null);
   const [discardPileModal, setDiscardPileModal] = React.useState<{ playerId: string; isOpponent: boolean } | null>(null);
   const [pendingPowerRuneSelection, setPendingPowerRuneSelection] = React.useState<PendingPlayAction | null>(null);
   const [mobilePanelTab, setMobilePanelTab] = React.useState<'hand' | 'log' | 'chat'>('log');
@@ -2791,6 +2993,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
 
     if (def.type === 'Unit') {
       setPendingMoveAction(null);
+      setPendingHideCardId(null);
       setPendingPlayAction({
         actionType: 'PlayUnit',
         payload: { cardInstanceId, battlefieldId, hidden: false, accelerate: false },
@@ -2810,6 +3013,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
         return reject('Invalid play: gear must be dropped on your Base unless the card says otherwise.');
       }
       setPendingMoveAction(null);
+      setPendingHideCardId(null);
       setPendingPlayAction({
         actionType: 'PlayGear',
         payload: { cardInstanceId, targetBattlefieldId: battlefieldId },
@@ -2863,6 +3067,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     const destinationLabel = getBattlefieldLabel(destination, playerId);
 
     setPendingPlayAction(null);
+    setPendingHideCardId(null);
     setPendingMoveAction(current => {
       if (!current || current.destinationBattlefieldId !== destinationBattlefieldId) {
         return { destinationBattlefieldId, destinationLabel, units: [moveUnit] };
@@ -2893,9 +3098,12 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
 
   const handlePowerRuneConfirm = useCallback((selectedDomains: Domain[]) => {
     if (!pendingPowerRuneSelection) return;
+    const payload = { ...pendingPowerRuneSelection.payload, powerRuneDomains: selectedDomains };
+    if (pendingPowerRuneSelection.selectedTargetIds?.length) {
+      payload.targetId = pendingPowerRuneSelection.selectedTargetIds[0];
+    }
     handleAction(pendingPowerRuneSelection.actionType, {
-      ...pendingPowerRuneSelection.payload,
-      powerRuneDomains: selectedDomains,
+      ...payload,
     });
     setPendingPowerRuneSelection(null);
     setPendingPlayAction(null);
@@ -2925,6 +3133,100 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const handleCardClick = useCallback((instanceId: string) => {
     store.setModalCard(instanceId);
   }, [store]);
+
+  const handleHideCardClick = useCallback((cardInstanceId: string) => {
+    if (!gameState) return;
+    const card = gameState.allCards[cardInstanceId];
+    const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
+    if (!card || !def) return;
+    if (!myTurn || phase !== 'Action') {
+      store.addWarning('You can only hide cards during your Action phase.');
+      return;
+    }
+    if (card.location !== 'hand' || card.ownerId !== playerId) {
+      store.addWarning('Only cards in your hand can be hidden.');
+      return;
+    }
+    if (!cardHasKeyword(def, 'Hidden')) {
+      store.addWarning(`${def.name} does not have Hidden.`);
+      return;
+    }
+    setPendingPlayAction(null);
+    setPendingMoveAction(null);
+    setPendingSpell(null);
+    setPendingHideCardId(current => {
+      const next = current === cardInstanceId ? null : cardInstanceId;
+      if (next) store.addWarning(`Choose a battlefield you control to hide ${def.name}.`);
+      return next;
+    });
+  }, [gameState, myTurn, phase, playerId, store]);
+
+  const handleHideBattlefield = useCallback((battlefieldId: string) => {
+    if (!gameState || !pendingHideCardId) return;
+    const card = gameState.allCards[pendingHideCardId];
+    const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
+    const bf = gameState.battlefields.find(battlefield => battlefield.id === battlefieldId);
+    if (!card || !def || !bf) return;
+    if (bf.controllerId !== playerId) {
+      store.addWarning('Choose a battlefield you control.');
+      return;
+    }
+    const alreadyHidden = Object.values(gameState.allCards).some(hiddenCard =>
+      hiddenCard.ownerId === playerId
+      && hiddenCard.location === 'hidden'
+      && hiddenCard.hiddenBattlefieldId === battlefieldId
+    );
+    if (alreadyHidden) {
+      store.addWarning('You already have a hidden card at that battlefield.');
+      return;
+    }
+    const availableDomains = getActiveRuneDomains(gameState.players[playerId], gameState.allCards, gameState.cardDefinitions);
+    if (availableDomains.length === 0) {
+      store.addWarning('You need an active rune to recycle before hiding a card.');
+      return;
+    }
+    setPendingHideRuneSelection({ cardInstanceId: pendingHideCardId, battlefieldId, cardName: def.name });
+  }, [gameState, pendingHideCardId, playerId, store]);
+
+  const handleHideRuneConfirm = useCallback((selectedDomains: Domain[]) => {
+    if (!pendingHideRuneSelection) return;
+    const hideRuneDomain = selectedDomains[0];
+    handleAction('HideCard', {
+      cardInstanceId: pendingHideRuneSelection.cardInstanceId,
+      battlefieldId: pendingHideRuneSelection.battlefieldId,
+      hideRuneDomain,
+    });
+    store.addWarning(`Hid ${pendingHideRuneSelection.cardName}.`);
+    setPendingHideRuneSelection(null);
+    setPendingHideCardId(null);
+  }, [handleAction, pendingHideRuneSelection, store]);
+
+  const handlePlayHiddenCard = useCallback((cardInstanceId: string) => {
+    if (!gameState) return;
+    const card = gameState.allCards[cardInstanceId];
+    const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
+    if (!card || !def || card.location !== 'hidden' || card.ownerId !== playerId) return;
+    if ((card.hiddenSinceTurn ?? Infinity) >= gameState.turn) {
+      store.addWarning(`${def.name} cannot be played until a later turn.`);
+      return;
+    }
+    const battlefieldId = card.hiddenBattlefieldId;
+    if (!battlefieldId) return;
+    if (def.type === 'Unit') {
+      handleAction('PlayUnit', { cardInstanceId, battlefieldId, fromHidden: true, hidden: false, accelerate: false });
+      return;
+    }
+    if (def.type === 'Spell') {
+      const targeting = getSpellTargeting(def);
+      setPendingHideCardId(null);
+      setPendingSpell({ cardInstanceId, targetType: targeting.targetType, selectedTargetIds: [], fromHidden: true, hiddenBattlefieldId: battlefieldId, needsTarget: targeting.needsTarget });
+      store.addWarning(targeting.needsTarget ? `Select targets for ${def.name}.` : `Cast ${def.name}?`);
+      return;
+    }
+    if (def.type === 'Gear') {
+      handleAction('PlayGear', { cardInstanceId, targetBattlefieldId: battlefieldId, fromHidden: true });
+    }
+  }, [gameState, playerId, handleAction, store]);
 
   // ─── Spell targeting handlers ─────────────────────────────────────────────────
 
@@ -2959,7 +3261,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     }
 
     const targeting = getSpellTargeting(def);
-    setPendingSpell({ cardInstanceId, targetType: targeting.targetType, selectedTargetIds: [] });
+    setPendingHideCardId(null);
+    setPendingSpell({ cardInstanceId, targetType: targeting.targetType, selectedTargetIds: [], needsTarget: targeting.needsTarget });
     store.addWarning(targeting.needsTarget
       ? `Select targets for ${def.name}.`
       : `Cast ${def.name}?`
@@ -2976,7 +3279,10 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     if (powerDomains.length === 2 && powerCost > 0) {
       setPendingPowerRuneSelection({
         actionType: 'PlaySpell',
-        payload: { cardInstanceId: pendingSpell.cardInstanceId },
+        payload: {
+          cardInstanceId: pendingSpell.cardInstanceId,
+          fromHidden: pendingSpell.fromHidden,
+        },
         cardName: def?.name ?? 'spell',
         cardType: def?.type ?? 'Spell',
         powerCost,
@@ -2988,6 +3294,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     }
 
     const payload: Record<string, unknown> = { cardInstanceId: pendingSpell.cardInstanceId };
+    if (pendingSpell.fromHidden) payload.fromHidden = true;
     if (pendingSpell.selectedTargetIds.length > 0) {
       payload.targetId = pendingSpell.selectedTargetIds[0];
     }
@@ -3149,9 +3456,12 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 pendingMoveUnitIds={pendingMoveUnitIds}
                 pendingMoveDestinationId={pendingMoveDestinationId}
                 pendingSpell={pendingSpell}
+                pendingHideCardId={pendingHideCardId}
                 highlightedUnitId={highlightedDamageUnitId}
                 isNarrow={isNarrow}
                 onBattlefieldUnitClick={handleTargetSelect}
+                onHideBattlefield={handleHideBattlefield}
+                onPlayHiddenCard={handlePlayHiddenCard}
                 handleAction={handleAction}
                 onBattlefieldDrop={(cardInstanceId, battlefieldId) => queuePlayFromDrop(cardInstanceId, battlefieldId, 'battlefield')}
                 onMoveDrop={queueMoveFromDrop}
@@ -3194,6 +3504,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 onCardClick={handleCardClick}
                 pendingSpell={pendingSpell}
                 onSpellCardClick={handleSpellCardClick}
+                pendingHideCardId={pendingHideCardId}
+                onHideCardClick={handleHideCardClick}
                 compactCards={isShort || isNarrow}
                 onGraveyardClick={() => me && setDiscardPileModal({ playerId, isOpponent: false })}
               />
@@ -3258,6 +3570,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
           pendingSpell={pendingSpell}
           onCardClick={handleCardClick}
           onSpellCardClick={handleSpellCardClick}
+          pendingHideCardId={pendingHideCardId}
+          onHideCardClick={handleHideCardClick}
         />
       )}
 
@@ -3321,6 +3635,16 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
             setPendingPowerRuneSelection(null);
             setPendingPlayAction(null);
           }}
+        />
+      )}
+
+      {pendingHideRuneSelection && (
+        <PowerRuneSelectionModal
+          cardName={`hide ${pendingHideRuneSelection.cardName}`}
+          powerCost={1}
+          domains={getActiveRuneDomains(me, myCards, cardDefs)}
+          onConfirm={handleHideRuneConfirm}
+          onCancel={() => setPendingHideRuneSelection(null)}
         />
       )}
 

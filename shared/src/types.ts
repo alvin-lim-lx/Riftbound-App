@@ -16,38 +16,65 @@ export type Domain =
 export type Keyword =
   | 'Ambush'
   | 'Assault'
+  | 'Backline'
+  | 'Banish'
+  | 'Buff'
+  | 'Deathknell'
   | 'Deflect'
+  | 'Equip'
   | 'Ganking'
   | 'Hidden'
   | 'Hunt'
   | 'Accelerate'
   | 'Temporary'
+  | 'Legion'
   | 'Legions'
+  | 'Level'
   | 'Lifesteal'
   | 'SpellShield'
   | 'Quick'
+  | 'Quick-Draw'
   | 'Fearsome'
   | 'Elusive'
   | 'Repeat'
   | 'Action'
   | 'Reaction'
-  | 'Equip'
   | 'Recall'
   | 'Shield'
-  | 'Buff'
   | 'Stun'
-  | 'Banish'
   | 'Recycle'
   | 'Tank'
-  | 'Backline'
   | 'Mighty'
+  | 'Unique'
+  | 'Vision'
   | 'Weaponmaster'
   | 'Predict';
+
+export interface KeywordModifier {
+  id: string;
+  cardInstanceId: string;
+  keyword: Keyword;
+  value?: number;
+  cost?: CardCost;
+  dependentText?: string;
+  sourceCardInstanceId?: string;
+  duration: 'turn' | 'while_attacking' | 'while_defending' | 'permanent';
+  expiresTurn?: number;
+  visibleTo?: 'all' | 'owner';
+}
+
+export interface PendingKeywordChoice {
+  id: string;
+  playerId: string;
+  sourceId: string;
+  keyword: Keyword;
+  choices: Record<string, unknown>;
+}
 
 export interface CardCost {
   rune: number;    // Rune resource (C)
   power?: number;   // Charge resource (A) for reactions/special costs
-  charges?: number; // Charge cost for Hidden reactions
+  charges?: number; // Legacy field; current rules do not require charge payments
 }
 
 export interface CardStats {
@@ -111,7 +138,7 @@ export interface CardInstance {
   instanceId: string;  // Unique per-card instance ID
   cardId: string;       // References CardDefinition.id
   ownerId: string;
-  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'rune' | 'hidden' | 'equipment' | 'legend' | 'championZone';
+  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'banishment' | 'runeDeck' | 'runeDiscard' | 'rune' | 'hidden' | 'equipment' | 'legend' | 'championZone';
   battlefieldId?: string;
   ready: boolean;
   exhausted: boolean;   // Tapped / used this turn
@@ -122,6 +149,9 @@ export interface CardInstance {
   attachments: string[]; // Gear instanceIds attached
   facing: 'up' | 'down'; // Hidden cards
   owner_hidden: boolean; // Opponent can't see this card
+  hiddenBattlefieldId?: string;
+  hiddenSinceTurn?: number;
+  playedTurn?: number;
 }
 
 export interface ShowdownStackEntry {
@@ -190,16 +220,18 @@ export interface PlayerState {
   xp: number;
   equipment: Record<string, string>; // gearInstanceId → unitInstanceId
   hiddenZone: string[];  // Hidden cards instanceIds
+  banishment: string[];
   isReady: boolean;
   energy: number;    // Current energy available
   maxEnergy: number; // Max energy this turn
-  charges: number;  // Current charge resource
+  charges: number;  // Legacy field; current rules do not require charge payments
   floatingEnergy: number; // Temporary generic energy from recycling ready runes
   legend: string | null;        // CardInstance.instanceId of Champion Legend (Legend Zone)
   chosenChampion: string | null; // CardInstance.instanceId of Chosen Champion (Champion Zone)
   hasGoneFirst: boolean;         // Tracks who went first (for first-turn asymmetry)
   mulligansComplete: boolean;    // Both players done with mulligan
   baseZone: string[];           // CardInstance.instanceIds in the base zone
+  cardsPlayedThisTurn: string[];
 }
 
 export interface GameState {
@@ -220,6 +252,8 @@ export interface GameState {
   effectStack: EffectStackEntry[];  // pending effects that require resolution (start of turn, etc.)
   showdown: ShowdownState | null;  // active showdown, null when not in a showdown
   pendingCombatDamageAssignment: PendingCombatDamageAssignment | null;
+  keywordModifiers: KeywordModifier[];
+  pendingKeywordChoices: PendingKeywordChoice[];
 }
 
 // --- Action Types ---
@@ -296,6 +330,12 @@ export interface PlayUnitPayload {
   battlefieldId: string;
   hidden: boolean;
   accelerate: boolean;
+  fromHidden?: boolean;
+  repeatCount?: number;
+  repeatTargets?: string[];
+  hiddenBattlefieldId?: string;
+  equipTargetId?: string;
+  predictChoice?: 'keep' | 'recycle';
   powerRuneDomains?: Domain[];
 }
 
@@ -303,6 +343,12 @@ export interface PlaySpellPayload {
   cardInstanceId: string;
   targetId?: string;
   targetBattlefieldId?: string;
+  fromHidden?: boolean;
+  repeatCount?: number;
+  repeatTargets?: string[];
+  hiddenBattlefieldId?: string;
+  equipTargetId?: string;
+  predictChoice?: 'keep' | 'recycle';
   powerRuneDomains?: Domain[];
 }
 
@@ -310,6 +356,12 @@ export interface PlayGearPayload {
   cardInstanceId: string;
   targetUnitId?: string;
   targetBattlefieldId?: string;
+  fromHidden?: boolean;
+  repeatCount?: number;
+  repeatTargets?: string[];
+  hiddenBattlefieldId?: string;
+  equipTargetId?: string;
+  predictChoice?: 'keep' | 'recycle';
   powerRuneDomains?: Domain[];
 }
 
@@ -339,7 +391,9 @@ export interface UseAbilityPayload {
 
 export interface HideCardPayload {
   cardInstanceId: string;
-  costPaid: number; // charges spent
+  battlefieldId?: string;
+  hideRuneDomain?: Domain;
+  costPaid?: number;
 }
 
 export interface ReactFromHiddenPayload {

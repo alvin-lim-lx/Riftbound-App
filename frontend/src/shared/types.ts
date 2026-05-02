@@ -14,31 +14,37 @@ export type Domain =
 export type Keyword =
   | 'Ambush'
   | 'Assault'
+  | 'Backline'
+  | 'Banish'
+  | 'Buff'
+  | 'Deathknell'
   | 'Deflect'
+  | 'Equip'
   | 'Ganking'
   | 'Hidden'
   | 'Hunt'
   | 'Accelerate'
   | 'Temporary'
+  | 'Legion'
   | 'Legions'
+  | 'Level'
   | 'Lifesteal'
   | 'SpellShield'
   | 'Quick'
+  | 'Quick-Draw'
   | 'Fearsome'
   | 'Elusive'
   | 'Repeat'
   | 'Action'
   | 'Reaction'
-  | 'Equip'
   | 'Recall'
   | 'Shield'
-  | 'Buff'
   | 'Stun'
-  | 'Banish'
   | 'Recycle'
   | 'Tank'
-  | 'Backline'
   | 'Mighty'
+  | 'Unique'
+  | 'Vision'
   | 'Weaponmaster'
   | 'Predict';
 
@@ -94,7 +100,7 @@ export interface CardInstance {
   instanceId: string;
   cardId: string;
   ownerId: string;
-  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'runeDeck' | 'runeDiscard' | 'rune' | 'hidden' | 'equipment' | 'legend' | 'championZone';
+  location: 'hand' | 'deck' | 'battlefield' | 'discard' | 'banishment' | 'runeDeck' | 'runeDiscard' | 'rune' | 'hidden' | 'equipment' | 'legend' | 'championZone';
   battlefieldId?: string;
   ready: boolean;
   exhausted: boolean;
@@ -105,6 +111,30 @@ export interface CardInstance {
   attachments: string[];
   facing: 'up' | 'down';
   owner_hidden: boolean;
+  hiddenBattlefieldId?: string;
+  hiddenSinceTurn?: number;
+  playedTurn?: number;
+}
+
+export interface KeywordModifier {
+  id: string;
+  cardInstanceId: string;
+  keyword: Keyword;
+  value?: number;
+  cost?: CardCost;
+  dependentText?: string;
+  sourceCardInstanceId?: string;
+  duration: 'turn' | 'while_attacking' | 'while_defending' | 'permanent';
+  expiresTurn?: number;
+  visibleTo?: 'all' | 'owner';
+}
+
+export interface PendingKeywordChoice {
+  id: string;
+  playerId: string;
+  sourceId: string;
+  keyword: Keyword;
+  choices: Record<string, unknown>;
 }
 
 export interface EffectStackEntry {
@@ -191,6 +221,8 @@ export interface GameState {
   isPvP: boolean;
   showdown?: ShowdownState;
   pendingCombatDamageAssignment?: PendingCombatDamageAssignment | null;
+  keywordModifiers?: KeywordModifier[];
+  pendingKeywordChoices?: PendingKeywordChoice[];
 }
 
 export interface BattlefieldState {
@@ -215,11 +247,13 @@ export interface PlayerState {
   xp: number;
   equipment: Record<string, string>;
   hiddenZone: string[];
+  banishment?: string[];
   isReady: boolean;
   energy: number;
   maxEnergy: number;
   charges: number;
   floatingEnergy: number;
+  cardsPlayedThisTurn?: string[];
 }
 
 export interface GameState {
@@ -237,6 +271,10 @@ export interface GameState {
   actionLog: GameAction[];
   createdAt: number;
   isPvP: boolean;
+  showdown?: ShowdownState;
+  pendingCombatDamageAssignment?: PendingCombatDamageAssignment | null;
+  keywordModifiers?: KeywordModifier[];
+  pendingKeywordChoices?: PendingKeywordChoice[];
 }
 
 // --- Action Types ---
@@ -275,6 +313,12 @@ export interface PlayUnitPayload {
   battlefieldId: string;
   hidden: boolean;
   accelerate: boolean;
+  fromHidden?: boolean;
+  repeatCount?: number;
+  repeatTargets?: string[];
+  hiddenBattlefieldId?: string;
+  equipTargetId?: string;
+  predictChoice?: 'keep' | 'recycle';
   powerRuneDomains?: Domain[];
 }
 
@@ -282,6 +326,12 @@ export interface PlaySpellPayload {
   cardInstanceId: string;
   targetId?: string;
   targetBattlefieldId?: string;
+  fromHidden?: boolean;
+  repeatCount?: number;
+  repeatTargets?: string[];
+  hiddenBattlefieldId?: string;
+  equipTargetId?: string;
+  predictChoice?: 'keep' | 'recycle';
   powerRuneDomains?: Domain[];
 }
 
@@ -289,6 +339,12 @@ export interface PlayGearPayload {
   cardInstanceId: string;
   targetUnitId?: string;
   targetBattlefieldId?: string;
+  fromHidden?: boolean;
+  repeatCount?: number;
+  repeatTargets?: string[];
+  hiddenBattlefieldId?: string;
+  equipTargetId?: string;
+  predictChoice?: 'keep' | 'recycle';
   powerRuneDomains?: Domain[];
 }
 
@@ -318,7 +374,9 @@ export interface UseAbilityPayload {
 
 export interface HideCardPayload {
   cardInstanceId: string;
-  costPaid: number;
+  battlefieldId?: string;
+  hideRuneDomain?: Domain;
+  costPaid?: number;
 }
 
 export interface ReactFromHiddenPayload {

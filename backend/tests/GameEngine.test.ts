@@ -846,6 +846,15 @@ describe('GameEngine', () => {
       state.allCards[attacker].currentStats.might = 4;
       state.allCards[tank].currentStats.might = 2;
       state.allCards[normal].currentStats.might = 2;
+      const normalDef = state.cardDefinitions[state.allCards[normal].cardId];
+      const normalTestCardId = `${normalDef.id}_test_normal`;
+      state.cardDefinitions[normalTestCardId] = {
+        ...normalDef,
+        id: normalTestCardId,
+        keywords: [],
+        abilities: normalDef.abilities.map(ability => ({ ...ability, effect: '', effectCode: '' })),
+      };
+      state.allCards[normal].cardId = normalTestCardId;
       state.cardDefinitions[state.allCards[tank].cardId].keywords = [
         ...(state.cardDefinitions[state.allCards[tank].cardId].keywords ?? []),
         'Tank',

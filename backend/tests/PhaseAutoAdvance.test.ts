@@ -225,6 +225,7 @@ describe('Phase Auto-Advance (Issue #12)', () => {
   describe('executeAwakenPhase', () => {
     it('ready all units at battlefields', () => {
       const state = deepClone(createGame([P1, P2], ['Alice', 'Bob']));
+      state.activePlayerId = P1;
       const bf = state.battlefields[0];
 
       // Put a unit on the battlefield
