@@ -73,10 +73,17 @@ export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
   const keepCount = selected.size;
   const replaceCount = hand.length - keepCount;
   const canSubmit = isMyTurn && !isSubmitting && replaceCount <= 2;
+  const [isMobile, setIsMobile] = useState(() => typeof window !== 'undefined' && window.innerWidth < 900);
+
+  useEffect(() => {
+    const handleResize = () => setIsMobile(window.innerWidth < 900);
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
 
   return (
     <div style={styles.overlay}>
-      <div style={styles.modal}>
+      <div style={{ ...styles.modal, ...(isMobile ? styles.modalMobile : {}) }}>
         <div style={styles.header}>
           <div>
             <h2 style={styles.title}>Mulligan</h2>
@@ -88,7 +95,7 @@ export function MulliganOverlay({ playerId, hand, cardDefs, isMyTurn }: Props) {
           </div>
         </div>
 
-        <div style={styles.cardGrid}>
+        <div style={{ ...styles.cardGrid, ...(isMobile ? styles.cardGridMobile : {}) }}>
           {hand.map(card => {
             const def = cardDefs[card.cardId];
             const isSelected = selected.has(card.instanceId);
@@ -156,6 +163,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     zIndex: 1000,
     backdropFilter: 'blur(3px)',
+    padding: '16px',
   },
   modal: {
     background: 'linear-gradient(180deg, #1e1b35 0%, #111827 100%)',
@@ -164,7 +172,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '28px 32px',
     maxWidth: '760px',
     width: '90vw',
+    maxHeight: 'calc(100dvh - 32px)',
     boxShadow: '0 24px 64px rgba(0,0,0,0.62)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+  modalMobile: {
+    width: 'calc(100vw - 24px)',
+    height: 'calc(100dvh - 24px)',
+    padding: '18px',
   },
   header: {
     display: 'flex',
@@ -172,6 +189,7 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '24px',
     alignItems: 'flex-start',
     marginBottom: '22px',
+    flexShrink: 0,
   },
   title: {
     color: '#f8fafc',
@@ -211,6 +229,14 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     flexWrap: 'wrap',
     marginBottom: '24px',
+    overflowY: 'auto',
+    minHeight: 0,
+    paddingBottom: '4px',
+  },
+  cardGridMobile: {
+    justifyContent: 'center',
+    alignContent: 'flex-start',
+    flex: 1,
   },
   cardWrapper: {
     display: 'flex',
@@ -236,6 +262,9 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: '16px',
+    flexShrink: 0,
+    paddingTop: '12px',
+    borderTop: '1px solid rgba(148,163,184,0.14)',
   },
   count: {
     color: '#cbd5e1',

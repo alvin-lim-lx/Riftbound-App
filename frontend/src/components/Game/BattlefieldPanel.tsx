@@ -36,8 +36,10 @@ export function BattlefieldPanel({
     .map(id => allCards[id])
     .filter(c => c && c.ownerId !== currentPlayerId);
 
-  const isControlled = battlefield.controllerId === currentPlayerId;
   const bfColor = BF_COLORS[battlefield.cardId] ?? '#374151';
+  const controlledByMe = myUnits.length > 0 && enemyUnits.length === 0;
+  const controlledByEnemy = enemyUnits.length > 0 && myUnits.length === 0;
+  const contested = myUnits.length > 0 && enemyUnits.length > 0;
 
   const styles: Record<string, React.CSSProperties> = {
     panel: {
@@ -47,9 +49,23 @@ export function BattlefieldPanel({
       flexDirection: 'column',
       background: '#ffffff',
       borderRadius: '8px',
-      border: '1px solid #e5e5e5',
+      border: `2px solid ${
+        contested
+          ? 'rgba(212,168,67,0.74)'
+          : controlledByMe
+            ? 'rgba(34,197,94,0.72)'
+            : controlledByEnemy
+              ? 'rgba(239,68,68,0.72)'
+              : `${bfColor}55`
+      }`,
       overflow: 'hidden',
-      boxShadow: '0 2px 4px rgba(0,0,0,0.06)',
+      boxShadow: contested
+        ? 'inset 0 0 0 1px rgba(212,168,67,0.24), 0 0 18px rgba(212,168,67,0.12)'
+        : controlledByMe
+          ? 'inset 0 0 0 1px rgba(34,197,94,0.22), 0 0 18px rgba(34,197,94,0.12)'
+          : controlledByEnemy
+            ? 'inset 0 0 0 1px rgba(239,68,68,0.22), 0 0 18px rgba(239,68,68,0.12)'
+            : '0 2px 4px rgba(0,0,0,0.06)',
     },
     header: {
       padding: '8px 12px',
@@ -63,15 +79,6 @@ export function BattlefieldPanel({
       fontWeight: 700,
       fontSize: '13px',
       color: '#1a1a1a',
-    },
-    controller: {
-      fontSize: '11px',
-      color: isControlled ? '#e63946' : battlefield.controllerId ? '#6b7280' : '#9ca3af',
-    },
-    scoring: {
-      fontSize: '10px',
-      color: '#d4a843',
-      marginLeft: '6px',
     },
     unitArea: {
       flex: 1,
@@ -116,26 +123,11 @@ export function BattlefieldPanel({
     <div style={styles.panel}>
       <div style={styles.header}>
         <span style={styles.bfName}>{battlefield.name}</span>
-        <div>
-          {battlefield.controllerId && (
-            <span style={styles.controller}>
-              {battlefield.controllerId === currentPlayerId ? 'You' : 'Enemy'}
-            </span>
-          )}
-          {battlefield.scoringPlayerId && (
-            <span style={styles.scoring}>● Scoring</span>
-          )}
-        </div>
       </div>
 
       <div style={styles.unitArea}>
         {battlefield.units.length === 0 ? (
-          <div style={styles.emptyState}>
-            {battlefield.controllerId
-              ? `${battlefield.controllerId === currentPlayerId ? 'Your' : 'Enemy'} territory`
-              : 'Unconquered'
-            }
-          </div>
+          <div style={styles.emptyState}>No units</div>
         ) : (
           <>
             {enemyUnits.length > 0 && (

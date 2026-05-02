@@ -32,17 +32,19 @@ export function SpellTargetingModal({
       transform: 'translateX(-50%)',
       zIndex: 1000,
       pointerEvents: 'auto',
+      width: 'min(480px, calc(100vw - 24px))',
     }}>
       <div style={{
         background: '#1a1a2e',
         border: '2px solid #fbbf24',
         borderRadius: '12px',
         padding: '16px 20px',
-        minWidth: '320px',
-        maxWidth: '480px',
+        width: '100%',
+        maxHeight: 'calc(100dvh - 160px)',
         display: 'flex',
         alignItems: 'center',
         gap: '12px',
+        overflowY: 'auto',
       }}>
         {/* Selected targets */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>

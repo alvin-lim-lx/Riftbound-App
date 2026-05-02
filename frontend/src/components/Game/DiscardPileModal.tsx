@@ -92,6 +92,7 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     zIndex: 2000,
     backdropFilter: 'blur(4px)',
+    padding: '16px',
   },
   modal: {
     background: 'linear-gradient(180deg, #1e1b35 0%, #111827 100%)',
@@ -99,8 +100,8 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '14px',
     padding: '24px 28px',
     maxWidth: '860px',
-    width: '90vw',
-    maxHeight: '85vh',
+    width: 'min(860px, calc(100vw - 24px))',
+    maxHeight: 'calc(100dvh - 32px)',
     display: 'flex',
     flexDirection: 'column',
     gap: '20px',
@@ -113,6 +114,9 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     gap: '16px',
     flexShrink: 0,
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
   },
   headerLeft: {
     display: 'flex',

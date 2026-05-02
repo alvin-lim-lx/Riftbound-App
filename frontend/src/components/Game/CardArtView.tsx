@@ -42,22 +42,25 @@ const landscapeSizeMap = {
   lg: { w: 168, h: 120 },
 };
 
-const ENLARGE_W = 300;
-const ENLARGE_H = 300;
+const ENLARGE_W = 220;
+const ENLARGE_H = 220;
+const HOVER_MARGIN = 16;
+const RESERVED_BOTTOM_UI = 96;
 
 function getEnlargeDims(smW: number, smH: number, isLandscape: boolean): { w: number; h: number; left: number; top: number } {
   if (isLandscape) {
     // Landscape: constrain by height, compute width maintaining landscape aspect
-    const maxH = window.innerHeight - 32;
+    const maxH = Math.max(140, window.innerHeight - RESERVED_BOTTOM_UI - HOVER_MARGIN);
     const h = Math.min(ENLARGE_H, maxH);
-    const w = Math.round(h * BF_ASPECT);
+    const maxW = Math.max(220, window.innerWidth - HOVER_MARGIN * 2);
+    const w = Math.min(Math.round(h * BF_ASPECT), maxW);
     return { w, h, left: 0, top: 0 };
   }
   const scale = ENLARGE_W / smW;
   const h = Math.round(smH * scale);
-  const maxH = window.innerHeight - 32;
+  const maxH = Math.max(190, window.innerHeight - RESERVED_BOTTOM_UI - HOVER_MARGIN);
   const actualH = Math.min(h, maxH);
-  const actualW = Math.round(actualH * CARD_ASPECT);
+  const actualW = Math.min(Math.round(actualH * CARD_ASPECT), Math.max(180, window.innerWidth - HOVER_MARGIN * 2));
   return { w: actualW, h: actualH, left: 0, top: 0 };
 }
 
@@ -122,24 +125,29 @@ export function CardArtView({
 
   const handleMouseEnter = () => {
     setHovering(true);
+    if (window.innerWidth < 900) return;
     if (ref.current && def?.imageUrl) {
       const rect = ref.current.getBoundingClientRect();
       const isLandscape = landscape;
       const { w, h } = getEnlargeDims(dims.w, dims.h, isLandscape);
       // Flip to left if not enough space on right
+      const rightReserved = window.innerWidth >= 900 ? 320 : HOVER_MARGIN;
+      const rightBoundary = window.innerWidth - rightReserved;
       const leftSpace = rect.left;
-      const rightSpace = window.innerWidth - rect.right;
+      const rightSpace = rightBoundary - rect.right;
       let left: number;
-      if (rightSpace >= w + 16) {
-        left = rect.right + 16;
-      } else if (leftSpace >= w + 16) {
-        left = rect.left - w - 16;
+      if (rightSpace >= w + HOVER_MARGIN) {
+        left = rect.right + HOVER_MARGIN;
+      } else if (leftSpace >= w + HOVER_MARGIN) {
+        left = rect.left - w - HOVER_MARGIN;
       } else {
         // Center horizontally
-        left = Math.max(16, (window.innerWidth - w) / 2);
+        left = Math.max(HOVER_MARGIN, (window.innerWidth - w) / 2);
       }
-      // Vertical: try to align with card top, clamp to viewport
-      let top = Math.max(16, Math.min(rect.top, window.innerHeight - h - 16));
+      left = Math.min(Math.max(HOVER_MARGIN, left), Math.max(HOVER_MARGIN, rightBoundary - w));
+      // Vertical: try to align with card top, clamp above the action bar / mobile controls.
+      const safeBottom = window.innerHeight - RESERVED_BOTTOM_UI;
+      let top = Math.max(HOVER_MARGIN, Math.min(rect.top, safeBottom - h));
       setEnlargePos({ w, h, left, top });
     }
   };

@@ -9,12 +9,24 @@ interface Props {
 
 export function GameLog({ messages }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const wasNearBottom = useRef(true);
 
   useEffect(() => {
-    if (ref.current) {
+    if (ref.current && wasNearBottom.current) {
       ref.current.scrollTop = ref.current.scrollHeight;
     }
   }, [messages]);
+
+  const handleScroll = () => {
+    if (!ref.current) return;
+    const distance = ref.current.scrollHeight - ref.current.scrollTop - ref.current.clientHeight;
+    wasNearBottom.current = distance < 32;
+  };
+
+  const splitMessage = (msg: string) => {
+    const match = msg.match(/^([^:]+:[^:]+:[^ ]+\s?[AP]M):\s*(.*)$/);
+    return match ? { time: match[1], text: match[2] } : { time: '', text: msg };
+  };
 
   return (
     <div style={styles.container}>
@@ -22,12 +34,16 @@ export function GameLog({ messages }: Props) {
         <span>Game Log</span>
         <span style={styles.count}>{messages.length}</span>
       </div>
-      <div ref={ref} style={styles.messages}>
-        {messages.map((msg, i) => (
-          <div key={i} style={styles.message}>
-            {msg}
-          </div>
-        ))}
+      <div ref={ref} style={styles.messages} onScroll={handleScroll}>
+        {messages.map((msg, i) => {
+          const entry = splitMessage(msg);
+          return (
+            <div key={i} style={styles.message}>
+              {entry.time && <div style={styles.timestamp}>{entry.time}</div>}
+              <div style={styles.messageText}>{entry.text}</div>
+            </div>
+          );
+        })}
         {messages.length === 0 && (
           <div style={styles.empty}>
             Game events and AI actions will appear here.
@@ -77,13 +93,24 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 0,
   },
   message: {
-    fontSize: '11px',
     color: '#e2e8f0',
-    lineHeight: 1.35,
     padding: '6px 7px',
     background: 'rgba(15,23,42,0.86)',
     border: '1px solid rgba(148,163,184,0.1)',
     borderRadius: '6px',
+  },
+  timestamp: {
+    color: '#94a3b8',
+    fontSize: '9px',
+    fontWeight: 800,
+    lineHeight: 1.2,
+    marginBottom: '2px',
+  },
+  messageText: {
+    color: '#e2e8f0',
+    fontSize: '11px',
+    lineHeight: 1.35,
+    fontWeight: 700,
   },
   empty: {
     color: '#64748b',
