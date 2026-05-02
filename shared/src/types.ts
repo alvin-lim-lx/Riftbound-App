@@ -281,6 +281,15 @@ export interface SystemLogEntry {
 
 export type GameLogEntry = GameAction | SystemLogEntry;
 
+export interface PublicGameLogEntry {
+  id: string;
+  type: LogEntryType | ActionType;
+  message: string;
+  turn: number;
+  phase: Phase;
+  timestamp: number;
+}
+
 // Specific action payloads
 export interface PlayUnitPayload {
   cardInstanceId: string;
@@ -378,6 +387,7 @@ export interface GameStartEvent {
   playerId: string;
   opponentId: string;
   initialState: GameState;
+  initialLog?: PublicGameLogEntry[];
   yourTurn: boolean;
 }
 
@@ -401,7 +411,7 @@ export interface GameOverEvent {
 
 export interface GameLogEvent {
   gameId: string;
-  entries: GameLogEntry[];  // incremental human-readable log entries since last broadcast
+  entries: PublicGameLogEntry[];  // incremental viewer-safe log entries since last broadcast
   timestamp: number;
 }
 

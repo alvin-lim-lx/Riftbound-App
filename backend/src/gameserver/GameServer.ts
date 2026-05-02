@@ -11,7 +11,8 @@ import cors from 'cors';
 import { v4 as uuidv4 } from 'uuid';
 import type {
   GameState, GameAction, Lobby, GameEvent,
-  GameStartEvent, ActionResultEvent, PhaseChangeEvent, GameOverEvent
+  GameStartEvent, ActionResultEvent, PhaseChangeEvent, GameOverEvent,
+  GameLogEntry, PublicGameLogEntry, SystemLogEntry
 } from '../../shared/src/types';
 import {
   createGame, executeAction,
@@ -38,6 +39,7 @@ import { createDeckRouter } from '../deck/DeckRoutes';
 import { DeckManager } from '../deck/DeckManager';
 import { createAuthRouter } from '../routes/auth';
 import '../db/database'; // initializes SQLite schema on startup
+import { GameDebugLogger } from './GameDebugLogger';
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -67,6 +69,7 @@ export class GameServer {
   private clients: Map<WebSocket, ConnectedClient> = new Map();
   private lobbies: Map<string, Lobby> = new Map();
   private liveGames: Map<string, LiveGame> = new Map();
+  private debugLogger = new GameDebugLogger();
 
   constructor(port: number = 3001) {
     this.app = express();
@@ -161,6 +164,8 @@ export class GameServer {
       const game = this.liveGames.get(req.params.id);
       if (!game) return res.status(404).json({ error: 'Game not found' });
 
+      const stateBefore = game.state;
+      const logIndexBefore = game.state.actionLog.length;
       const result = executeAction(game.state, action);
       if (!result.success || !result.newState) {
         console.warn(`[AI] Action failed: ${action.type} phase=${game.state.phase} error=${result.error ?? 'unknown error'}`);
@@ -177,8 +182,31 @@ export class GameServer {
         if (fallbackResult.success && fallbackResult.newState) {
           game.state = fallbackResult.newState;
           if (game.state.phase !== 'GameOver') {
+            const beforeAutoAdvance = game.state;
             autoAdvanceABCDPhases(game);
+            if (beforeAutoAdvance !== game.state) {
+              this.debugLogger.log({
+                event: 'auto_advance',
+                gameId: game.id,
+                actorPlayerId: action.playerId,
+                action,
+                publicLogEntries: game.state.actionLog.slice(beforeAutoAdvance.actionLog.length),
+                stateBefore: beforeAutoAdvance,
+                stateAfter: game.state,
+              });
+            }
           }
+
+          this.debugLogger.log({
+            event: 'action_accepted',
+            gameId: game.id,
+            actorPlayerId: action.playerId,
+            action,
+            result: { success: true, sideEffects: fallbackResult.sideEffects },
+            publicLogEntries: game.state.actionLog.slice(logIndexBefore),
+            stateBefore,
+            stateAfter: game.state,
+          });
           this.broadcastGameLog(game);
           this.broadcastGameState(game);
         }
@@ -224,6 +252,14 @@ export class GameServer {
         const client = this.clients.get(ws);
         if (client) {
           console.log(`[WS] Player ${client.playerId} disconnected`);
+          if (client.gameId) {
+            this.debugLogger.log({
+              event: 'player_disconnected',
+              gameId: client.gameId,
+              actorPlayerId: client.playerId,
+              stateAfter: this.liveGames.get(client.gameId)?.state,
+            });
+          }
           this.clients.delete(ws);
         }
       });
@@ -267,6 +303,12 @@ export class GameServer {
         this.clients.set(ws, updatedClient);
 
         console.log(`[reassociate] playerId=${client.playerId} re-associated with game=${gameId}`);
+        this.debugLogger.log({
+          event: 'player_reassociated',
+          gameId: liveGame.id,
+          actorPlayerId: client.playerId,
+          stateAfter: liveGame.state,
+        });
 
         // Send the current game state to the reconnected client
         const sanitized = this.sanitizeState(liveGame.state, client.playerId);
@@ -274,6 +316,12 @@ export class GameServer {
           type: 'game_state_update',
           gameId: liveGame.id,
           state: sanitized,
+          timestamp: Date.now(),
+        });
+        this.send(ws, {
+          type: 'game_log',
+          gameId: liveGame.id,
+          entries: this.getPublicLogEntriesForViewer(liveGame.state.actionLog, liveGame.state, client.playerId),
           timestamp: Date.now(),
         });
         break;
@@ -376,12 +424,38 @@ export class GameServer {
         console.log(`[submit_action] game.state.phase=${game.state.phase} game.state.activePlayerId=${game.state.activePlayerId}`);
 
         if (action.playerId !== client.playerId) {
+          this.debugLogger.log({
+            event: 'action_rejected',
+            gameId: game.id,
+            actorPlayerId: client.playerId,
+            action,
+            result: { success: false, error: 'Not your action' },
+            stateBefore: game.state,
+          });
           return this.sendError(ws, 'Not your action');
         }
+
+        const stateBefore = game.state;
+        const logIndexBefore = game.state.actionLog.length;
+        this.debugLogger.log({
+          event: 'action_received',
+          gameId: game.id,
+          actorPlayerId: action.playerId,
+          action,
+          stateBefore,
+        });
 
         const result = executeAction(game.state, action);
 
         if (!result.success) {
+          this.debugLogger.log({
+            event: 'action_rejected',
+            gameId: game.id,
+            actorPlayerId: action.playerId,
+            action,
+            result: { success: false, error: result.error },
+            stateBefore,
+          });
           this.send(ws, { type: 'action_result', success: false, error: result.error });
           return;
         }
@@ -392,8 +466,31 @@ export class GameServer {
           // Auto-advance through A-B-C-D phases (Awaken→Beginning→Channel→Draw)
           // when effect stack is empty, BEFORE broadcasting state
           if (game.state.phase !== 'GameOver') {
+            const beforeAutoAdvance = game.state;
             autoAdvanceABCDPhases(game);
+            if (beforeAutoAdvance !== game.state) {
+              this.debugLogger.log({
+                event: 'auto_advance',
+                gameId: game.id,
+                actorPlayerId: action.playerId,
+                action,
+                publicLogEntries: game.state.actionLog.slice(beforeAutoAdvance.actionLog.length),
+                stateBefore: beforeAutoAdvance,
+                stateAfter: game.state,
+              });
+            }
           }
+
+          this.debugLogger.log({
+            event: 'action_accepted',
+            gameId: game.id,
+            actorPlayerId: action.playerId,
+            action,
+            result: { success: true, sideEffects: result.sideEffects },
+            publicLogEntries: game.state.actionLog.slice(logIndexBefore),
+            stateBefore,
+            stateAfter: game.state,
+          });
 
           // Broadcast incremental log entries first so clients can append
           this.broadcastGameLog(game);
@@ -425,6 +522,17 @@ export class GameServer {
           timestamp: Date.now(),
         };
 
+        const stateBefore = game.state;
+        const logIndexBefore = game.state.actionLog.length;
+        this.debugLogger.log({
+          event: 'action_received',
+          gameId: game.id,
+          actorPlayerId: passAction.playerId,
+          action: passAction,
+          stateBefore,
+          detail: { source: 'pass_message' },
+        });
+
         const result = executeAction(game.state, passAction);
         if (result.success && result.newState) {
           game.state = result.newState;
@@ -436,7 +544,26 @@ export class GameServer {
 
           this.broadcastGameLog(game);
           this.broadcastGameState(game);
+          this.debugLogger.log({
+            event: 'action_accepted',
+            gameId: game.id,
+            actorPlayerId: passAction.playerId,
+            action: passAction,
+            result: { success: true, sideEffects: result.sideEffects },
+            publicLogEntries: game.state.actionLog.slice(logIndexBefore),
+            stateBefore,
+            stateAfter: game.state,
+          });
           this.scheduleAIMove(game);
+        } else {
+          this.debugLogger.log({
+            event: 'action_rejected',
+            gameId: game.id,
+            actorPlayerId: passAction.playerId,
+            action: passAction,
+            result: { success: false, error: result.error },
+            stateBefore,
+          });
         }
         break;
       }
@@ -543,6 +670,19 @@ export class GameServer {
     };
 
     this.liveGames.set(gameStateWithPhase.id, liveGame);
+    this.debugLogger.log({
+      event: 'game_created',
+      gameId: liveGame.id,
+      stateAfter: gameStateWithPhase,
+      publicLogEntries: gameStateWithPhase.actionLog,
+      detail: {
+        lobbyId: lobby.id,
+        playerIds: actualPlayerIds,
+        aiPlayerIds: actualPlayerIds.filter(id => id.startsWith('ai_')),
+        hostDeckId: lobby.hostDeckId,
+        guestDeckId: lobby.guestDeckId,
+      },
+    });
 
     // Register clients
     for (const [ws, c] of this.clients) {
@@ -571,9 +711,17 @@ export class GameServer {
           playerId: c.playerId,
           opponentId: opponentId!,
           initialState: this.sanitizeState(gameStateWithPhase, c.playerId),
+          initialLog: this.getPublicLogEntriesForViewer(gameStateWithPhase.actionLog, gameStateWithPhase, c.playerId),
           yourTurn,
         };
         this.send(ws, { type: 'game_start', ...startEvent });
+        this.debugLogger.log({
+          event: 'game_start_sent',
+          gameId: liveGame.id,
+          actorPlayerId: c.playerId,
+          stateAfter: gameStateWithPhase,
+          detail: { opponentId, yourTurn, path: 'client_scan' },
+        });
       }
     }
 
@@ -588,9 +736,17 @@ export class GameServer {
         playerId: pid,
         opponentId: opponentId!,
         initialState: this.sanitizeState(gameStateWithPhase, pid),
+        initialLog: this.getPublicLogEntriesForViewer(gameStateWithPhase.actionLog, gameStateWithPhase, pid),
         yourTurn,
       };
       this.send(ws, { type: 'game_start', ...startEvent });
+      this.debugLogger.log({
+        event: 'game_start_sent',
+        gameId: liveGame.id,
+        actorPlayerId: pid,
+        stateAfter: gameStateWithPhase,
+        detail: { opponentId, yourTurn, path: 'live_game_clients' },
+      });
     }
 
     // If first player is AI, schedule their move
@@ -633,6 +789,16 @@ export class GameServer {
 
       console.log(`[AI] Taking action: ${action.type}`);
 
+      const stateBefore = game.state;
+      const logIndexBefore = game.state.actionLog.length;
+      this.debugLogger.log({
+        event: 'ai_action_selected',
+        gameId: game.id,
+        actorPlayerId: currentAIActorId,
+        action,
+        stateBefore,
+      });
+
       const result = executeAction(game.state, action);
 
       if (result.success && result.newState) {
@@ -641,6 +807,18 @@ export class GameServer {
         if (game.state.phase !== 'GameOver') {
           autoAdvanceABCDPhases(game);
         }
+
+        this.debugLogger.log({
+          event: 'action_accepted',
+          gameId: game.id,
+          actorPlayerId: currentAIActorId,
+          action,
+          result: { success: true, sideEffects: result.sideEffects },
+          publicLogEntries: game.state.actionLog.slice(logIndexBefore),
+          stateBefore,
+          stateAfter: game.state,
+          detail: { source: 'ai' },
+        });
 
         this.broadcastGameLog(game);
         this.broadcastGameState(game);
@@ -651,6 +829,16 @@ export class GameServer {
           // Continue AI turns if still AI's turn
           this.scheduleAIMove(game);
         }
+      } else {
+        this.debugLogger.log({
+          event: 'action_rejected',
+          gameId: game.id,
+          actorPlayerId: currentAIActorId,
+          action,
+          result: { success: false, error: result.error },
+          stateBefore,
+          detail: { source: 'ai' },
+        });
       }
     }, 800); // 800ms delay for natural feel
   }
@@ -668,6 +856,13 @@ export class GameServer {
       console.log(`[broadcastGameState] sending to pid=${pid} phase=${sanitized.phase}`);
       this.send(ws, { ...event, state: sanitized });
     }
+
+    this.debugLogger.log({
+      event: 'game_state_broadcast',
+      gameId: game.id,
+      stateAfter: game.state,
+      detail: { recipients: Array.from(game.clients.keys()) },
+    });
   }
 
   /**
@@ -679,18 +874,105 @@ export class GameServer {
     const newEntries = game.state.actionLog.slice(game.lastLogIndex);
     if (newEntries.length === 0) return;
 
-    const event = {
-      type: 'game_log',
-      gameId: game.id,
-      entries: newEntries,
-      timestamp: Date.now(),
-    };
-
+    const broadcastSummaries: Array<{ playerId: string; entryCount: number; entryIds: string[] }> = [];
     for (const [pid, ws] of game.clients) {
-      this.send(ws, event);
+      const entries = this.getPublicLogEntriesForViewer(newEntries, game.state, pid);
+      broadcastSummaries.push({ playerId: pid, entryCount: entries.length, entryIds: entries.map(entry => entry.id) });
+      if (entries.length === 0) continue;
+      this.send(ws, {
+        type: 'game_log',
+        gameId: game.id,
+        entries,
+        timestamp: Date.now(),
+      });
     }
 
+    this.debugLogger.log({
+      event: 'game_log_broadcast',
+      gameId: game.id,
+      publicLogEntries: newEntries,
+      stateAfter: game.state,
+      detail: { broadcasts: broadcastSummaries },
+    });
+
     game.lastLogIndex = game.state.actionLog.length;
+  }
+
+  private getPublicLogEntriesForViewer(
+    entries: GameLogEntry[],
+    state: GameState,
+    viewerPlayerId: string
+  ): PublicGameLogEntry[] {
+    return entries
+      .map(entry => this.toPublicLogEntry(entry, state, viewerPlayerId))
+      .filter((entry): entry is PublicGameLogEntry => Boolean(entry));
+  }
+
+  private toPublicLogEntry(
+    entry: GameLogEntry,
+    state: GameState,
+    viewerPlayerId: string
+  ): PublicGameLogEntry | null {
+    if (!('message' in entry)) return null;
+
+    const type = entry.type;
+    const detail = entry.detail ?? {};
+    const playerId = entry.playerId;
+    const message = entry.message;
+
+    if (type === 'PhaseChange' || type === 'Channel' || type === 'Hide') return null;
+    if (type === 'Combat' && /assign(?:ing|ed) .*combat damage/i.test(message)) return null;
+    if (type === 'System' && /Awaken/i.test(message)) return null;
+
+    if (type === 'Draw') {
+      const isSelfOnly = detail._isSelfOnly === true;
+      const isViewerActor = playerId === viewerPlayerId;
+      if (isSelfOnly !== isViewerActor) return null;
+    }
+
+    const isKnownPublicType = [
+      'GameStart',
+      'TurnChange',
+      'Mulligan',
+      'Draw',
+      'Move',
+      'Showdown',
+      'Combat',
+      'Focus',
+      'Score',
+      'Equip',
+      'ReactFromHidden',
+      'GameOver',
+    ].includes(type);
+
+    const isSupportedSystem =
+      type === 'System' &&
+      (
+        ['PlayUnit', 'PlaySpell', 'PlayGear'].includes(String(detail.actionType)) ||
+        /was killed\.$/i.test(message) ||
+        /passed focus\.$/i.test(message)
+      );
+
+    if (!isKnownPublicType && !isSupportedSystem) return null;
+
+    return {
+      id: entry.id,
+      type,
+      message: this.normalizePublicMessage(message, state, viewerPlayerId),
+      turn: entry.turn,
+      phase: entry.phase,
+      timestamp: entry.timestamp,
+    };
+  }
+
+  private normalizePublicMessage(message: string, state: GameState, viewerPlayerId: string): string {
+    const viewerName = state.players[viewerPlayerId]?.name;
+    if (!viewerName) return message;
+    return message.replace(new RegExp(`^${this.escapeRegExp(viewerName)}\\b`), 'You');
+  }
+
+  private escapeRegExp(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   }
 
   private broadcastLobby(lobby: Lobby) {
@@ -706,6 +988,21 @@ export class GameServer {
     game.isRunning = false;
     if (game.aiTimer) clearTimeout(game.aiTimer);
 
+    const winnerName = game.state.players[game.state.winner!]?.name ?? game.state.winner!;
+    if (!game.state.actionLog.some(entry => 'message' in entry && entry.type === 'GameOver' && /Game over:/i.test(entry.message))) {
+      game.state.actionLog.push({
+        id: randomId(),
+        type: 'GameOver',
+        playerId: game.state.winner!,
+        message: `Game over: ${winnerName} wins`,
+        turn: game.state.turn,
+        phase: game.state.phase,
+        timestamp: Date.now(),
+        detail: { winnerId: game.state.winner },
+      });
+      this.broadcastGameLog(game);
+    }
+
     const event: GameOverEvent = {
       winnerId: game.state.winner!,
       reason: 'score',
@@ -714,6 +1011,14 @@ export class GameServer {
     for (const ws of game.clients.values()) {
       this.send(ws, { type: 'game_over', ...event });
     }
+
+    this.debugLogger.log({
+      event: 'game_over',
+      gameId: game.id,
+      actorPlayerId: game.state.winner!,
+      stateAfter: game.state,
+      detail: { ...event },
+    });
 
     // Cleanup after delay
     setTimeout(() => {
@@ -765,6 +1070,16 @@ export class GameServer {
   }
 
   private sendError(ws: WebSocket, message: string) {
+    const client = this.clients.get(ws);
+    if (client?.gameId) {
+      this.debugLogger.log({
+        event: 'server_error_sent',
+        gameId: client.gameId,
+        actorPlayerId: client.playerId,
+        stateAfter: this.liveGames.get(client.gameId)?.state,
+        detail: { message },
+      });
+    }
     this.send(ws, { type: 'error', message });
   }
 }

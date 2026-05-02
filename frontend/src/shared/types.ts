@@ -352,6 +352,15 @@ export interface SystemLogEntry {
 
 export type GameLogEntry = GameAction | SystemLogEntry;
 
+export interface PublicGameLogEntry {
+  id: string;
+  type: LogEntryType | ActionType;
+  message: string;
+  turn: number;
+  phase: Phase;
+  timestamp: number;
+}
+
 export type GameEventType =
   | 'game_start'
   | 'game_state_update'
@@ -376,6 +385,7 @@ export interface GameStartEvent {
   playerId: string;
   opponentId: string;
   initialState: GameState;
+  initialLog?: PublicGameLogEntry[];
   yourTurn: boolean;
 }
 
@@ -399,7 +409,7 @@ export interface GameOverEvent {
 
 export interface GameLogEvent {
   gameId: string;
-  entries: GameLogEntry[];  // incremental log entries since last broadcast
+  entries: PublicGameLogEntry[];  // incremental viewer-safe log entries since last broadcast
   timestamp: number;
 }
 
