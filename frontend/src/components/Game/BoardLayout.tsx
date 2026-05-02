@@ -81,7 +81,10 @@ function useBoardViewport() {
   }, []);
 
   return {
+    width: viewport.width,
+    height: viewport.height,
     isNarrow: viewport.width < 900,
+    isLaptop: viewport.width >= 900 && viewport.width < 1280,
     isShort: viewport.height < 780,
   };
 }
@@ -416,9 +419,10 @@ interface PlayerInfoBarProps {
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
   reversed?: boolean;        // flip layout horizontally (for opponent panel)
+  compact?: boolean;
 }
 
-function PlayerInfoBar({ player, isPlayer, allCards, cardDefs, reversed }: PlayerInfoBarProps) {
+function PlayerInfoBar({ player, isPlayer, allCards, cardDefs, reversed, compact = false }: PlayerInfoBarProps) {
   if (!player) return <div style={infoBarStyles.placeholder} />;
 
   const isYou = isPlayer;
@@ -432,6 +436,7 @@ function PlayerInfoBar({ player, isPlayer, allCards, cardDefs, reversed }: Playe
   return (
     <div style={{
       ...infoBarStyles.bar,
+      ...(compact ? infoBarStyles.barCompact : {}),
       borderColor: accentColor + '44',
       background: accentColor + '0d',
     }}>
@@ -442,7 +447,7 @@ function PlayerInfoBar({ player, isPlayer, allCards, cardDefs, reversed }: Playe
             {/* Opponent: score left, xp center, name right */}
             <div style={{ display: 'flex', justifyContent: 'flex-start', alignItems: 'center', gap: '4px', flex: 1 }}>
               <span style={infoBarStyles.star}>★</span>
-              <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843', fontSize: '42px', lineHeight: 1 }}>{player.score}</span>
+              <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843', fontSize: compact ? '32px' : '42px', lineHeight: 1 }}>{player.score}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'center', flex: 1 }}>
               <div style={infoBarStyles.resource}>
@@ -467,7 +472,7 @@ function PlayerInfoBar({ player, isPlayer, allCards, cardDefs, reversed }: Playe
             </div>
             <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', gap: '4px', flex: 1 }}>
               <span style={infoBarStyles.star}>★</span>
-              <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843', fontSize: '42px', lineHeight: 1 }}>{player.score}</span>
+              <span style={{ ...infoBarStyles.scoreNum, color: '#d4a843', fontSize: compact ? '32px' : '42px', lineHeight: 1 }}>{player.score}</span>
             </div>
           </>
         )}
@@ -503,6 +508,14 @@ const infoBarStyles: Record<string, React.CSSProperties> = {
     flex: 1,
     minWidth: '200px',
     maxWidth: '320px',
+  },
+  barCompact: {
+    minWidth: 0,
+    maxWidth: 'none',
+    width: '100%',
+    padding: '6px 8px',
+    borderRadius: '8px',
+    overflow: 'hidden',
   },
 
   name: {
@@ -858,12 +871,13 @@ interface ZoneRowProps {
   canMoveUnits?: boolean;
   pendingMoveUnitIds?: Set<string>;
   pendingMoveDestinationId?: string | null;
+  isNarrow?: boolean;
   onBaseDrop?: (cardInstanceId: string, baseBattlefieldId: string) => void;
   onMoveDrop?: (cardInstanceId: string, destinationBattlefieldId: string) => void;
   onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefields, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, onBaseDrop, onMoveDrop, onMoveDragStart }: ZoneRowProps) {
+function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefields, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, isNarrow = false, onBaseDrop, onMoveDrop, onMoveDragStart }: ZoneRowProps) {
   if (!player) return null;
 
   const rowRef = React.useRef<HTMLDivElement>(null);
@@ -916,6 +930,8 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefield
       .map(card => card.instanceId)
     : [];
   const baseContentIds = [...baseIds, ...baseUnitIds, ...baseGearIds];
+  const baseUnits = baseUnitIds.map(id => allCards[id]).filter(Boolean);
+  const baseSummary = unitSummaryText(baseUnits);
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
   const labelColor = isOpponent ? '#ef444488' : '#22c55e88';
@@ -941,7 +957,10 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefield
     }}>
       {/* Base — left-aligned */}
       <div style={zoneRowStyles.zone}>
-        <div style={{ ...zoneRowStyles.zoneLabel, color: '#7c3aed88' }}>BASE</div>
+        <div style={zoneRowStyles.zoneHeader}>
+          <span style={{ ...zoneRowStyles.zoneLabel, color: '#7c3aed88' }}>BASE</span>
+          {baseUnits.length > 0 && <span style={zoneRowStyles.unitSummary}>{baseSummary}</span>}
+        </div>
         <div
           ref={baseRef}
           style={{
@@ -989,7 +1008,7 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefield
                   cardDefs={cardDefs}
                   isOpponent={isOpponent}
                   size="md"
-                  maxHeightPx={baseCardH}
+                  maxHeightPx={isNarrow ? Math.min(baseCardH, 108) : baseCardH}
                   canDragMove={canDragMove}
                   isPendingMove={pendingMoveUnitIds?.has(id) ?? false}
                   onMoveDragStart={onMoveDragStart}
@@ -1075,12 +1094,31 @@ const zoneRowStyles: Record<string, React.CSSProperties> = {
     minHeight: 0,
     overflow: 'hidden',
   },
+  zoneHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '8px',
+    width: '100%',
+    minHeight: '14px',
+    flexShrink: 0,
+    overflow: 'hidden',
+  },
   zoneLabel: {
     fontSize: '9px',
     textTransform: 'uppercase',
     letterSpacing: '1.5px',
     fontWeight: 700,
     flexShrink: 0,
+  },
+  unitSummary: {
+    color: '#cbd5e1',
+    fontSize: '10px',
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    opacity: 0.82,
   },
   cardArea: {
     display: 'flex',
@@ -1318,6 +1356,7 @@ const unitZoneModalStyles: Record<string, React.CSSProperties> = {
     justifyContent: 'center',
     zIndex: 2000,
     backdropFilter: 'blur(4px)',
+    padding: '16px',
   },
   modal: {
     background: 'linear-gradient(180deg, #1e1b35 0%, #111827 100%)',
@@ -1325,8 +1364,8 @@ const unitZoneModalStyles: Record<string, React.CSSProperties> = {
     borderRadius: '14px',
     padding: '24px 28px',
     maxWidth: '860px',
-    width: '90vw',
-    maxHeight: '85vh',
+    width: 'min(860px, calc(100vw - 24px))',
+    maxHeight: 'calc(100dvh - 32px)',
     display: 'flex',
     flexDirection: 'column',
     gap: '20px',
@@ -1339,6 +1378,9 @@ const unitZoneModalStyles: Record<string, React.CSSProperties> = {
     justifyContent: 'space-between',
     gap: '16px',
     flexShrink: 0,
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
   },
   headerLeft: {
     display: 'flex',
@@ -1419,6 +1461,8 @@ interface BattlefieldRowProps {
   pendingMoveUnitIds?: Set<string>;
   pendingMoveDestinationId?: string | null;
   pendingSpell?: PendingSpell | null;
+  highlightedUnitId?: string | null;
+  isNarrow?: boolean;
   onBattlefieldUnitClick?: (unitInstanceId: string) => void;
   handleAction?: (type: string, payload?: Record<string, unknown>) => void;
   onBattlefieldDrop?: (cardInstanceId: string, battlefieldId: string) => void;
@@ -1428,7 +1472,7 @@ interface BattlefieldRowProps {
 
 function BattlefieldRow({
   gameState, playerId, myTurn,
-  canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell,
+  canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell, highlightedUnitId, isNarrow = false,
   onBattlefieldUnitClick, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart,
 }: BattlefieldRowProps) {
   const { battlefields, allCards, cardDefinitions } = gameState;
@@ -1478,6 +1522,7 @@ function BattlefieldRow({
     }
 
     const totalMight = units.reduce((sum, u) => sum + (u.currentStats.might ?? u.stats.might ?? 0), 0);
+    const summary = summarizeUnits(units);
 
     return (
       <div
@@ -1486,8 +1531,11 @@ function BattlefieldRow({
         title={`${label} units — click to view all`}
       >
         <div style={bfRowStyles.rowLabel}>{label}</div>
-        <div style={bfRowStyles.mightTotal}>
-          <span style={{ color: '#e63946', fontWeight: 900, fontSize: '13px' }}>⚔{totalMight}</span>
+        <div style={bfRowStyles.unitSummaryPill}>
+          <span style={{ color: '#e63946', fontWeight: 900 }}>Might {totalMight}</span>
+          <span>{summary.count} unit{summary.count === 1 ? '' : 's'}</span>
+          {summary.damage > 0 && <span>{summary.damage} dmg</span>}
+          {summary.exhausted > 0 && <span>{summary.exhausted} exhausted</span>}
         </div>
         {/* Vertically stacked portrait cards with overlap */}
         <div style={{
@@ -1535,7 +1583,9 @@ function BattlefieldRow({
                     : `0 1px 3px rgba(0,0,0,0.3)`,
                   opacity: isPendingMove ? 0.72 : 1,
                   cursor: isTargetable ? 'crosshair' : canDragMove ? 'grab' : 'pointer',
-                  outline: isSpellTarget ? '2px solid rgba(251,191,36,0.9)' : isPendingMove ? '2px solid rgba(251,191,36,0.9)' : 'none',
+                  outline: unit.instanceId === highlightedUnitId
+                    ? '3px solid rgba(251,191,36,0.95)'
+                    : isSpellTarget ? '2px solid rgba(251,191,36,0.9)' : isPendingMove ? '2px solid rgba(251,191,36,0.9)' : 'none',
                   outlineOffset: '2px',
                   transition: 'opacity 0.15s ease',
                   zIndex: idx,
@@ -1578,6 +1628,16 @@ function BattlefieldRow({
           const myUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId === playerId);
           const enemyUnits = bf.units.map(id => allCards[id]).filter(c => c && c.ownerId !== playerId);
           const bfColor = BF_COLORS[bf.cardId] ?? '#374151';
+          const controlledByMe = myUnits.length > 0 && enemyUnits.length === 0;
+          const controlledByEnemy = enemyUnits.length > 0 && myUnits.length === 0;
+          const contested = myUnits.length > 0 && enemyUnits.length > 0;
+          const territoryStyle = contested
+            ? bfRowStyles.contestedPanel
+            : controlledByMe
+              ? bfRowStyles.myTerritoryPanel
+              : controlledByEnemy
+                ? bfRowStyles.enemyTerritoryPanel
+                : {};
 
           return (
             <div
@@ -1587,6 +1647,7 @@ function BattlefieldRow({
                 ...((onBattlefieldDrop || onMoveDrop) ? bfRowStyles.dropPanel : {}),
                 ...(pendingMoveDestinationId === bf.id ? bfRowStyles.pendingDropPanel : {}),
                 borderColor: bfColor + '55',
+                ...territoryStyle,
                 flexDirection: 'row',
               }}
               onDragOver={e => {
@@ -1612,7 +1673,7 @@ function BattlefieldRow({
               {renderUnitColumn(myUnits, false, '#22c55e', 'Your')}
 
               {/* Center: battlefield card art */}
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: '132px', padding: '4px 8px', gap: '2px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flexShrink: 0, minWidth: isNarrow ? '112px' : '132px', padding: '4px 8px', gap: '2px' }}>
                 <CardArtView
                   card={{ instanceId: bf.id, cardId: bf.cardId, ownerId: '', location: 'battlefield', currentStats: { might: 0, health: 0 }, stats: { might: 0, health: 0 }, ready: false, exhausted: false, counters: {}, attachments: [], facing: 'up', owner_hidden: false }}
                   cardDef={CARDS[bf.cardId] ?? cardDefinitions[bf.cardId]}
@@ -1624,18 +1685,6 @@ function BattlefieldRow({
                   landscape={true}
                 />
                 <span style={{ fontSize: '10px', fontWeight: 700, color: bfColor }}>{bf.name}</span>
-                {myUnits.length > 0 && enemyUnits.length === 0 ? (
-                  <span style={{ fontSize: '9px', color: '#22c55e' }}>Your territory</span>
-                ) : enemyUnits.length > 0 && myUnits.length === 0 ? (
-                  <span style={{ fontSize: '9px', color: '#ef4444' }}>Enemy territory</span>
-                ) : myUnits.length > 0 && enemyUnits.length > 0 ? (
-                  <span style={{ fontSize: '9px', color: '#d4a843' }}>Contested</span>
-                ) : (
-                  <span style={{ fontSize: '9px', color: '#888' }}>Open</span>
-                )}
-                {bf.scoringPlayerId && (
-                  <span style={{ fontSize: '9px', color: '#d4a843' }}>● Scoring</span>
-                )}
               </div>
 
               {/* Right: opponent units */}
@@ -1698,6 +1747,18 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     boxShadow: '0 2px 8px rgba(0,0,0,0.2)',
     minHeight: 0,
   },
+  myTerritoryPanel: {
+    borderColor: 'rgba(34,197,94,0.72)',
+    boxShadow: 'inset 0 0 0 1px rgba(34,197,94,0.22), 0 0 18px rgba(34,197,94,0.12)',
+  },
+  enemyTerritoryPanel: {
+    borderColor: 'rgba(239,68,68,0.72)',
+    boxShadow: 'inset 0 0 0 1px rgba(239,68,68,0.22), 0 0 18px rgba(239,68,68,0.12)',
+  },
+  contestedPanel: {
+    borderColor: 'rgba(212,168,67,0.74)',
+    boxShadow: 'inset 0 0 0 1px rgba(212,168,67,0.24), 0 0 18px rgba(212,168,67,0.12)',
+  },
   dropPanel: {
     outline: '1px dashed rgba(255,255,255,0.16)',
     outlineOffset: '-4px',
@@ -1733,10 +1794,6 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     fontSize: '11px',
     fontWeight: 700,
   },
-  scoring: {
-    fontSize: '10px',
-    color: '#d4a843',
-  },
   unitArea: {
     flex: 1,
     padding: '8px',
@@ -1763,6 +1820,22 @@ const bfRowStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '4px',
     marginBottom: '4px',
+  },
+  unitSummaryPill: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    maxWidth: '100%',
+    marginBottom: '4px',
+    padding: '2px 6px',
+    borderRadius: '999px',
+    background: 'rgba(15,23,42,0.72)',
+    border: '1px solid rgba(148,163,184,0.12)',
+    color: '#cbd5e1',
+    fontSize: '9px',
+    fontWeight: 800,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
   },
   unitRowInner: {
     display: 'flex',
@@ -1876,28 +1949,30 @@ interface TopBarProps {
   turn: number;
   phase: Phase;
   myTurn: boolean;
+  compact?: boolean;
 }
 
-function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: TopBarProps) {
+function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn, compact = false }: TopBarProps) {
   const prompt = getTurnPrompt(phase, myTurn);
 
   return (
-    <div style={topBarStyles.bar}>
+    <div style={{ ...topBarStyles.bar, ...(compact ? topBarStyles.barCompact : {}) }}>
       {/* Left: player info */}
       <PlayerInfoBar
         player={player}
         isPlayer={true}
         allCards={allCards}
         cardDefs={cardDefs}
+        compact={compact}
       />
 
       {/* Center: turn tracker */}
-      <div style={topBarStyles.center}>
-        <div style={topBarStyles.commandStrip}>
+      <div style={{ ...topBarStyles.center, ...(compact ? topBarStyles.centerCompact : {}) }}>
+        <div style={{ ...topBarStyles.commandStrip, ...(compact ? topBarStyles.commandStripCompact : {}) }}>
           <span style={{ ...topBarStyles.commandPhase, color: myTurn ? '#fdba74' : '#cbd5e1' }}>
             {myTurn ? 'You' : 'AI'} - {getPhaseLabel(phase)}
           </span>
-          <span style={topBarStyles.commandPrompt}>{prompt}</span>
+          {!compact && <span style={topBarStyles.commandPrompt}>{prompt}</span>}
         </div>
         <PhaseIndicator phase={phase} turn={turn} myTurn={myTurn} />
         <div style={{ display: 'none' }}>
@@ -1919,6 +1994,7 @@ function TopBar({ player, opponent, allCards, cardDefs, turn, phase, myTurn }: T
         allCards={allCards}
         cardDefs={cardDefs}
         reversed={true}
+        compact={compact}
       />
     </div>
   );
@@ -1935,12 +2011,30 @@ const topBarStyles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
     gap: '16px',
   },
+  barCompact: {
+    display: 'grid',
+    gridTemplateColumns: '1fr 1fr',
+    gridTemplateRows: 'auto auto',
+    gap: '6px',
+    padding: '6px 8px',
+    alignItems: 'stretch',
+  },
   center: {
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     gap: '6px',
     flexShrink: 0,
+    position: 'sticky',
+    top: 0,
+    zIndex: 1,
+  },
+  centerCompact: {
+    gridColumn: '1 / -1',
+    gridRow: 2,
+    order: 3,
+    gap: '4px',
+    overflowX: 'auto',
   },
   commandStrip: {
     display: 'flex',
@@ -2067,9 +2161,11 @@ const confirmStyles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     justifyContent: 'center',
     background: 'rgba(0,0,0,0.62)',
+    padding: '16px',
   },
   dialog: {
-    width: 'min(360px, calc(100vw - 32px))',
+    width: 'min(360px, calc(100vw - 24px))',
+    maxHeight: 'calc(100dvh - 32px)',
     padding: '18px',
     borderRadius: '8px',
     background: '#111827',
@@ -2078,6 +2174,7 @@ const confirmStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
+    overflowY: 'auto',
   },
   moveDock: {
     position: 'fixed',
@@ -2226,6 +2323,24 @@ interface BoardLayoutProps {
   onExitToLobby?: () => void;
 }
 
+function summarizeUnits(units: CardInstance[]) {
+  return {
+    count: units.length,
+    might: units.reduce((sum, unit) => sum + (unit.currentStats.might ?? unit.stats.might ?? 0), 0),
+    damage: units.reduce((sum, unit) => sum + (unit.damage ?? 0), 0),
+    exhausted: units.filter(unit => unit.exhausted || !unit.ready).length,
+  };
+}
+
+function unitSummaryText(units: CardInstance[]): string {
+  const summary = summarizeUnits(units);
+  if (summary.count === 0) return 'No units';
+  const parts = [`${summary.count} unit${summary.count === 1 ? '' : 's'}`, `${summary.might} might`];
+  if (summary.damage > 0) parts.push(`${summary.damage} damage`);
+  if (summary.exhausted > 0) parts.push(`${summary.exhausted} exhausted`);
+  return parts.join(' | ');
+}
+
 interface GameOverModalProps {
   winnerName: string;
   isWinner: boolean;
@@ -2296,17 +2411,128 @@ function getDamagePriority(def?: CardDefinition): number {
   return 1;
 }
 
+function MobileBottomPanel({
+  activeTab,
+  onTabChange,
+  handCards,
+  cardDefs,
+  gameLog,
+  playerId,
+  opponentName,
+  pendingSpell,
+  onCardClick,
+  onSpellCardClick,
+}: {
+  activeTab: 'hand' | 'log' | 'chat';
+  onTabChange: (tab: 'hand' | 'log' | 'chat') => void;
+  handCards: CardInstance[];
+  cardDefs: Record<string, CardDefinition>;
+  gameLog: string[];
+  playerId: string;
+  opponentName: string;
+  pendingSpell: PendingSpell | null;
+  onCardClick: (instanceId: string) => void;
+  onSpellCardClick: (instanceId: string) => void;
+}) {
+  const tabs: Array<{ id: 'hand' | 'log' | 'chat'; label: string }> = [
+    { id: 'hand', label: 'Hand' },
+    { id: 'log', label: 'Log' },
+    { id: 'chat', label: 'Chat' },
+  ];
+
+  return (
+    <div style={mobilePanelStyles.panel}>
+      <div style={mobilePanelStyles.tabs}>
+        {tabs.map(tab => (
+          <button
+            key={tab.id}
+            type="button"
+            style={{
+              ...mobilePanelStyles.tab,
+              ...(activeTab === tab.id ? mobilePanelStyles.tabActive : {}),
+            }}
+            onClick={() => onTabChange(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div style={mobilePanelStyles.body}>
+        {activeTab === 'hand' && (
+          <PlayerHandRow
+            cards={handCards}
+            cardDefs={cardDefs}
+            onCardClick={onCardClick}
+            pendingSpell={pendingSpell}
+            onSpellCardClick={onSpellCardClick}
+            canInteract={true}
+            maxCardHeight={104}
+          />
+        )}
+        {activeTab === 'log' && <GameLog messages={gameLog} />}
+        {activeTab === 'chat' && <ChatBox playerId={playerId} opponentName={opponentName} compact />}
+      </div>
+    </div>
+  );
+}
+
+const mobilePanelStyles: Record<string, React.CSSProperties> = {
+  panel: {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '178px',
+    flexShrink: 0,
+    padding: '0 8px 6px',
+    gap: '6px',
+    background: 'rgba(2,6,23,0.96)',
+    borderTop: '1px solid rgba(148,163,184,0.16)',
+  },
+  tabs: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(3, 1fr)',
+    gap: '6px',
+    paddingTop: '7px',
+    flexShrink: 0,
+  },
+  tab: {
+    height: '28px',
+    borderRadius: '7px',
+    border: '1px solid rgba(148,163,184,0.18)',
+    background: 'rgba(15,23,42,0.82)',
+    color: '#94a3b8',
+    fontSize: '11px',
+    fontWeight: 900,
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  tabActive: {
+    borderColor: 'rgba(249,115,22,0.7)',
+    color: '#fdba74',
+    background: 'rgba(249,115,22,0.16)',
+  },
+  body: {
+    flex: 1,
+    minHeight: 0,
+    overflow: 'hidden',
+  },
+};
+
 function CombatDamageAssignmentPanel({
   gameState,
   playerId,
+  isNarrow,
+  onHoverTarget,
   onSubmit,
 }: {
   gameState: GameState;
   playerId: string;
+  isNarrow: boolean;
+  onHoverTarget: (unitId: string | null) => void;
   onSubmit: (targetOrder: string[]) => void;
 }) {
   const pending = gameState.pendingCombatDamageAssignment;
   const [targetOrder, setTargetOrder] = React.useState<string[]>([]);
+  const [draggingId, setDraggingId] = React.useState<string | null>(null);
   React.useEffect(() => setTargetOrder([]), [pending?.assigningPlayerId, pending?.sourceSide, pending?.availableDamage]);
   if (!pending || pending.assigningPlayerId !== playerId || gameState.showdown?.combatStep !== 'AssignDamage') return null;
 
@@ -2320,6 +2546,18 @@ function CombatDamageAssignmentPanel({
 
   const canSubmit = targets.length > 0 || pending.availableDamage === 0;
   const sideLabel = pending.sourceSide === 'attacker' ? 'Attackers' : 'Defenders';
+  const estimateDamage = (unitId: string, index: number): number => {
+    const unit = gameState.allCards[unitId];
+    const might = unit?.currentStats?.might ?? unit?.stats?.might ?? 0;
+    const alreadyDamaged = unit?.damage ?? 0;
+    const remaining = Math.max(0, might - alreadyDamaged);
+    const previous = orderedTargets.slice(0, index).reduce((sum, id) => {
+      const prev = gameState.allCards[id];
+      const prevMight = prev?.currentStats?.might ?? prev?.stats?.might ?? 0;
+      return sum + Math.max(0, prevMight - (prev?.damage ?? 0));
+    }, 0);
+    return Math.max(0, Math.min(remaining, pending.availableDamage - previous));
+  };
   const move = (unitId: string, direction: -1 | 1) => {
     setTargetOrder(prev => {
       const current = [...prev, ...targets.filter(id => !prev.includes(id))];
@@ -2330,22 +2568,66 @@ function CombatDamageAssignmentPanel({
       return current;
     });
   };
+  const reorderTo = (unitId: string, destinationId: string) => {
+    if (unitId === destinationId) return;
+    setTargetOrder(prev => {
+      const current = [...prev, ...targets.filter(id => !prev.includes(id))];
+      const from = current.indexOf(unitId);
+      const to = current.indexOf(destinationId);
+      if (from < 0 || to < 0) return current;
+      const [moved] = current.splice(from, 1);
+      current.splice(to, 0, moved);
+      return current;
+    });
+  };
+  const preview = orderedTargets
+    .map((unitId, index) => {
+      const def = gameState.cardDefinitions[gameState.allCards[unitId]?.cardId];
+      const damage = estimateDamage(unitId, index);
+      return damage > 0 ? `${def?.name ?? unitId} takes ${damage}` : null;
+    })
+    .filter(Boolean)
+    .join(', ');
 
   return (
-    <div style={combatAssignStyles.panel}>
+    <div style={{ ...combatAssignStyles.panel, ...(isNarrow ? combatAssignStyles.panelNarrow : {}) }}>
       <div style={combatAssignStyles.header}>{sideLabel} choose damage order</div>
-      <div style={combatAssignStyles.subhead}>{pending.availableDamage} damage will be assigned as lethal damage in this order.</div>
+      <div style={combatAssignStyles.subhead}>Assign {pending.availableDamage} damage. Targets are damaged from top to bottom.</div>
+      {preview && <div style={combatAssignStyles.preview}>{preview}</div>}
       <div style={combatAssignStyles.targets}>
         {orderedTargets.map((unitId, index) => {
           const unit = gameState.allCards[unitId];
           const def = unit ? gameState.cardDefinitions[unit.cardId] : undefined;
+          const might = unit?.currentStats?.might ?? unit?.stats?.might ?? 0;
+          const damage = unit?.damage ?? 0;
+          const projected = estimateDamage(unitId, index);
           return (
-            <div key={unitId} style={combatAssignStyles.targetRow}>
+            <div
+              key={unitId}
+              style={{
+                ...combatAssignStyles.targetRow,
+                ...(draggingId === unitId ? combatAssignStyles.draggingRow : {}),
+              }}
+              draggable
+              onDragStart={() => setDraggingId(unitId)}
+              onDragOver={e => e.preventDefault()}
+              onDrop={e => {
+                e.preventDefault();
+                if (draggingId) reorderTo(draggingId, unitId);
+                setDraggingId(null);
+              }}
+              onDragEnd={() => setDraggingId(null)}
+              onMouseEnter={() => onHoverTarget(unitId)}
+              onMouseLeave={() => onHoverTarget(null)}
+              onFocus={() => onHoverTarget(unitId)}
+              onBlur={() => onHoverTarget(null)}
+              tabIndex={0}
+            >
               <span style={combatAssignStyles.orderBadge}>{index + 1}</span>
               <span style={combatAssignStyles.targetName}>{def?.name ?? unitId}</span>
-              <span style={combatAssignStyles.targetMeta}>Might {unit?.currentStats?.might ?? unit?.stats?.might ?? 0}</span>
-              <button type="button" style={combatAssignStyles.iconButton} onClick={() => move(unitId, -1)} disabled={index === 0}>↑</button>
-              <button type="button" style={combatAssignStyles.iconButton} onClick={() => move(unitId, 1)} disabled={index === orderedTargets.length - 1}>↓</button>
+              <span style={combatAssignStyles.targetMeta}>Might {might} | Damage {damage} | Takes {projected}</span>
+              <button type="button" style={{ ...combatAssignStyles.iconButton, opacity: index === 0 ? 0.35 : 1 }} onClick={() => move(unitId, -1)} disabled={index === 0}>↑</button>
+              <button type="button" style={{ ...combatAssignStyles.iconButton, opacity: index === orderedTargets.length - 1 ? 0.35 : 1 }} onClick={() => move(unitId, 1)} disabled={index === orderedTargets.length - 1}>↓</button>
             </div>
           );
         })}
@@ -2364,9 +2646,9 @@ function CombatDamageAssignmentPanel({
 const combatAssignStyles: Record<string, React.CSSProperties> = {
   panel: {
     position: 'fixed',
-    left: '50%',
+    right: '304px',
     top: '50%',
-    transform: 'translate(-50%, -50%)',
+    transform: 'translateY(-50%)',
     zIndex: 120,
     width: 'min(420px, calc(100vw - 32px))',
     background: 'rgba(15,23,42,0.98)',
@@ -2376,10 +2658,33 @@ const combatAssignStyles: Record<string, React.CSSProperties> = {
     boxShadow: '0 18px 48px rgba(0,0,0,0.45)',
     color: '#f8fafc',
   },
+  commandStripCompact: {
+    maxWidth: '100%',
+    padding: '4px 9px',
+  },
+  panelNarrow: {
+    left: '8px',
+    right: '8px',
+    bottom: '64px',
+    top: 'auto',
+    transform: 'none',
+    width: 'auto',
+    maxHeight: 'min(360px, calc(100dvh - 164px))',
+    overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
+  },
   header: { fontSize: '14px', fontWeight: 900, textTransform: 'uppercase' },
   subhead: { marginTop: '4px', color: '#facc15', fontSize: '12px', fontWeight: 800 },
-  targets: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' },
-  targetRow: { display: 'grid', gridTemplateColumns: '28px 1fr auto 30px 30px', alignItems: 'center', gap: '8px' },
+  preview: {
+    marginTop: '6px',
+    color: '#cbd5e1',
+    fontSize: '11px',
+    lineHeight: 1.35,
+  },
+  targets: { display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px', overflowY: 'auto', minHeight: 0 },
+  targetRow: { display: 'grid', gridTemplateColumns: '28px 1fr auto 30px 30px', alignItems: 'center', gap: '8px', cursor: 'grab', borderRadius: '7px', padding: '3px', outline: 'none' },
+  draggingRow: { opacity: 0.55, background: 'rgba(251,191,36,0.10)' },
   orderBadge: { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: '24px', height: '24px', borderRadius: '999px', background: '#334155', color: '#f8fafc', fontSize: '11px', fontWeight: 900 },
   targetName: { fontSize: '12px', fontWeight: 800, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   targetMeta: { color: '#cbd5e1', fontSize: '11px', whiteSpace: 'nowrap' },
@@ -2390,7 +2695,7 @@ const combatAssignStyles: Record<string, React.CSSProperties> = {
 export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const store = useGameStore();
   const { gameState, myTurn, phase, playerId } = store;
-  const { isNarrow, isShort } = useBoardViewport();
+  const { isNarrow, isLaptop, isShort } = useBoardViewport();
 
   // Right panel split: 0-100 (gameLog height as %)
   const [splitPct, setSplitPct] = React.useState(50);
@@ -2400,6 +2705,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const [pendingSpell, setPendingSpell] = React.useState<PendingSpell | null>(null);
   const [discardPileModal, setDiscardPileModal] = React.useState<{ playerId: string; isOpponent: boolean } | null>(null);
   const [pendingPowerRuneSelection, setPendingPowerRuneSelection] = React.useState<PendingPlayAction | null>(null);
+  const [mobilePanelTab, setMobilePanelTab] = React.useState<'hand' | 'log' | 'chat'>('log');
+  const [highlightedDamageUnitId, setHighlightedDamageUnitId] = React.useState<string | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
 
   const handleDragStart = React.useCallback((e: React.MouseEvent) => {
@@ -2753,8 +3060,13 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const playerHandCards = me ? getPlayerCards(me, myCards, 'hand') : [];
   const opponentHandCount = opponent ? getPlayerCards(opponent, myCards, 'hand').length : 0;
   const isAIGame = Boolean(opponent?.id.startsWith('ai_') || opponent?.name.toLowerCase().includes('player 2'));
-  const rightPanelLogPct = isAIGame ? 68 : splitPct;
+  const rightPanelLogPct = isAIGame ? 86 : splitPct;
   const canMoveUnits = myTurn && phase === 'Action';
+  const damageAssignmentActive = Boolean(
+    gameState.pendingCombatDamageAssignment &&
+    gameState.pendingCombatDamageAssignment.assigningPlayerId === playerId &&
+    gameState.showdown?.combatStep === 'AssignDamage'
+  );
   const pendingMoveUnitIds = new Set(pendingMoveAction?.units.map(unit => unit.unitId) ?? []);
   const pendingMoveDestinationId = pendingMoveAction?.destinationBattlefieldId ?? null;
   const boardWithRightPanelStyle = {
@@ -2768,7 +3080,12 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   };
   const rightPanelStyle = {
     ...styles.rightPanel,
+    ...(isLaptop ? styles.rightPanelLaptop : {}),
     ...(isNarrow ? styles.rightPanelNarrow : {}),
+  };
+  const boardColumnStyle = {
+    ...styles.boardColumn,
+    ...(isNarrow ? styles.boardColumnNarrow : {}),
   };
 
   return (
@@ -2778,7 +3095,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
       {/* Board column (left) + right panel */}
       <div style={boardWithRightPanelStyle}>
         {/* Board column: top bar + main rows + action bar */}
-        <div style={styles.boardColumn}>
+        <div style={boardColumnStyle}>
           <TopBar
             player={me}
             opponent={opponent}
@@ -2787,9 +3104,11 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
             turn={gameState.turn}
             phase={phase}
             myTurn={myTurn}
+            compact={isNarrow}
           />
 
           {/* ========== MAIN FLEX COLUMN ========== */}
+          <div style={isNarrow ? styles.mobileBoardScroll : styles.boardGridShell}>
           <div style={boardGridStyle}>
 
             {/* Row 1: Opponent Graveyard | Hand | Deck */}
@@ -2816,6 +3135,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 allCards={myCards}
                 cardDefs={cardDefs}
                 battlefields={gameState.battlefields}
+                isNarrow={isNarrow}
               />
             </div>
 
@@ -2829,6 +3149,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 pendingMoveUnitIds={pendingMoveUnitIds}
                 pendingMoveDestinationId={pendingMoveDestinationId}
                 pendingSpell={pendingSpell}
+                highlightedUnitId={highlightedDamageUnitId}
+                isNarrow={isNarrow}
                 onBattlefieldUnitClick={handleTargetSelect}
                 handleAction={handleAction}
                 onBattlefieldDrop={(cardInstanceId, battlefieldId) => queuePlayFromDrop(cardInstanceId, battlefieldId, 'battlefield')}
@@ -2849,6 +3171,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 canMoveUnits={canMoveUnits}
                 pendingMoveUnitIds={pendingMoveUnitIds}
                 pendingMoveDestinationId={pendingMoveDestinationId}
+                isNarrow={isNarrow}
                 onBaseDrop={(cardInstanceId, baseBattlefieldId) => queuePlayFromDrop(cardInstanceId, baseBattlefieldId, 'base')}
                 onMoveDrop={queueMoveFromDrop}
                 onMoveDragStart={handleMoveDragStart}
@@ -2877,6 +3200,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
             </div>
 
           </div>
+          </div>
 
           {/* ========== BOTTOM ACTION BAR ========== */}
           <ActionBar
@@ -2888,7 +3212,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
         </div>
 
         {/* Right panel: game log (top) + draggable split + chat (bottom) */}
-        <div ref={panelRef} style={rightPanelStyle}>
+        {!isNarrow && <div ref={panelRef} style={rightPanelStyle}>
           <div style={{ flex: `0 0 ${rightPanelLogPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
             <GameLog messages={store.gameLog} />
           </div>
@@ -2919,8 +3243,23 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
           <div style={{ flex: `0 0 ${100 - rightPanelLogPct}%`, display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
             <ChatBox playerId={playerId} opponentName={opponent?.name ?? 'Opponent'} compact={isAIGame} />
           </div>
-        </div>
+        </div>}
       </div>
+
+      {isNarrow && !damageAssignmentActive && (
+        <MobileBottomPanel
+          activeTab={mobilePanelTab}
+          onTabChange={setMobilePanelTab}
+          handCards={playerHandCards}
+          cardDefs={cardDefs}
+          gameLog={store.gameLog}
+          playerId={playerId}
+          opponentName={opponent?.name ?? 'Opponent'}
+          pendingSpell={pendingSpell}
+          onCardClick={handleCardClick}
+          onSpellCardClick={handleSpellCardClick}
+        />
+      )}
 
       {/* Card modal */}
       {store.showCardModal && store.modalCardId && (
@@ -2999,6 +3338,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
       <CombatDamageAssignmentPanel
         gameState={gameState}
         playerId={playerId}
+        isNarrow={isNarrow}
+        onHoverTarget={setHighlightedDamageUnitId}
         onSubmit={handleAssignCombatDamage}
       />
 
@@ -3019,8 +3360,9 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
 const warningStyles: Record<string, React.CSSProperties> = {
   container: {
     position: 'fixed',
-    top: '14px',
-    right: '14px',
+    left: '50%',
+    bottom: '68px',
+    transform: 'translateX(-50%)',
     zIndex: 5000,
     display: 'flex',
     flexDirection: 'column',
@@ -3057,6 +3399,10 @@ const warningStyles: Record<string, React.CSSProperties> = {
     fontSize: '12px',
     lineHeight: 1.35,
     fontWeight: 700,
+    display: '-webkit-box',
+    WebkitLineClamp: 2,
+    WebkitBoxOrient: 'vertical',
+    overflow: 'hidden',
   },
   close: {
     width: '28px',
@@ -3156,10 +3502,19 @@ const styles: Record<string, React.CSSProperties> = {
     gap: '6px',
     minHeight: 0,
   },
+  boardGridShell: {
+    flex: 1,
+    display: 'flex',
+    minHeight: 0,
+    overflow: 'hidden',
+  },
   boardGridNarrow: {
     padding: '3px 8px',
     gap: '5px',
     overflowY: 'auto',
+    minWidth: '760px',
+    width: '760px',
+    height: '100%',
   },
   boardGridShort: {
     gap: '3px',
@@ -3219,7 +3574,7 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 0,
   },
   boardWithRightPanelNarrow: {
-    flexDirection: 'column',
+    overflow: 'hidden',
     gap: '4px',
   },
   // Board column: top bar + main rows + action bar (fills width minus right panel)
@@ -3231,16 +3586,29 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     minHeight: 0,
   },
+  boardColumnNarrow: {
+    width: '100%',
+    minWidth: 0,
+  },
+  mobileBoardScroll: {
+    flex: 1,
+    minHeight: 0,
+    overflowX: 'auto',
+    overflowY: 'hidden',
+  },
   // Right panel: game log (top) + chat (bottom)
   rightPanel: {
     display: 'flex',
     flexDirection: 'column',
-    width: '220px',
+    width: '280px',
     flexShrink: 0,
     gap: '6px',
     padding: '6px 0',
     minHeight: 0,
     overflow: 'hidden',
+  },
+  rightPanelLaptop: {
+    width: '240px',
   },
   rightPanelNarrow: {
     width: '100%',
