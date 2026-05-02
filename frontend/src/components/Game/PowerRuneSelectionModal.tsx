@@ -1,7 +1,6 @@
 /**
- * PowerRuneSelectionModal - shown when playing a dual-domain card with
- * a power cost. Users select which domain rune(s) to recycle for each
- * power cost point, with multi-select when power cost > 1.
+ * PowerRuneSelectionModal - shown when a player must choose rune domains
+ * to recycle, including dual-domain power costs and Hidden costs.
  */
 import React, { useState } from 'react';
 import type { Domain } from '../../shared/types';
@@ -33,7 +32,7 @@ const DOMAIN_COLORS: Record<string, string> = {
 interface Props {
   cardName: string;
   powerCost: number;
-  domains: Domain[]; // exactly 2 domains
+  domains: Domain[];
   onConfirm: (selectedDomains: Domain[]) => void;
   onCancel: () => void;
 }
@@ -46,10 +45,10 @@ export function PowerRuneSelectionModal({
   onCancel,
 }: Props) {
   const [selections, setSelections] = useState<Record<Domain, number>>(
-    () => ({ [domains[0]]: 0, [domains[1]]: 0 } as Record<Domain, number>)
+    () => Object.fromEntries(domains.map(domain => [domain, 0])) as Record<Domain, number>
   );
 
-  const totalSelected = selections[domains[0]] + selections[domains[1]];
+  const totalSelected = domains.reduce((sum, domain) => sum + (selections[domain] ?? 0), 0);
   const isValid = totalSelected === powerCost;
 
   function toggle(domain: Domain, delta: 1 | -1) {

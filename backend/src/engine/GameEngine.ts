@@ -15,7 +15,7 @@ import {
   GameState, PlayerState, CardInstance, BattlefieldState,
   Phase, ActionType, GameAction, CardDefinition,
   SystemLogEntry, GameLogEntry, LogEntryType, EffectStackEntry, Domain,
-  ShowdownStackEntry, CombatSide, OrderedCombatDamageAssignment
+  ShowdownStackEntry, CombatSide, OrderedCombatDamageAssignment, Keyword, KeywordModifier
 } from '../../shared/src/types';
 import { CARDS } from '../../shared/src/cards';
 import { pickRandom, randomId, shuffle } from './utils';
@@ -137,6 +137,7 @@ export function createGame(
     // Determine deck card ids — use provided deck config or fallback to all cards
     let deckCardIds: string[];
     const deckConfig = playerDecks?.[pid];
+    const usingFallbackDeck = !deckConfig;
 
     if (deckConfig) {
       // 40 cards in cardIds: includes the Chosen Champion (1 copy)
@@ -151,11 +152,34 @@ export function createGame(
       );
       deckCardIds = [];
       for (const cardId of unitCardIds) {
-        deckCardIds.push(cardId, cardId);
+        deckCardIds.push(cardId);
       }
     }
 
     deckCardIds = shuffle(deckCardIds);
+    if (usingFallbackDeck) {
+      const openingHandSize = 4;
+      const requiredUnits = 2;
+      let unitCount = deckCardIds.slice(0, openingHandSize)
+        .filter(id => CARDS[id]?.type === 'Unit').length;
+      let searchIndex = openingHandSize;
+      for (let handIndex = 0; handIndex < openingHandSize && unitCount < requiredUnits; handIndex++) {
+        if (CARDS[deckCardIds[handIndex]]?.type === 'Unit') continue;
+        while (searchIndex < deckCardIds.length && CARDS[deckCardIds[searchIndex]]?.type !== 'Unit') {
+          searchIndex++;
+        }
+        if (searchIndex >= deckCardIds.length) break;
+        [deckCardIds[handIndex], deckCardIds[searchIndex]] = [deckCardIds[searchIndex], deckCardIds[handIndex]];
+        unitCount++;
+        searchIndex++;
+      }
+      if (CARDS[deckCardIds[0]]?.type !== 'Unit') {
+        const unitIndex = deckCardIds.findIndex(id => CARDS[id]?.type === 'Unit');
+        if (unitIndex > 0) {
+          [deckCardIds[0], deckCardIds[unitIndex]] = [deckCardIds[unitIndex], deckCardIds[0]];
+        }
+      }
+    }
 
     const deckInstanceIds: string[] = [];
     for (const cardId of deckCardIds) {
@@ -296,6 +320,7 @@ export function createGame(
       xp: 0,
       equipment: {},
       hiddenZone: [],
+      banishment: [],
       isReady: false,
       energy: 0,
       maxEnergy: 0,
@@ -306,6 +331,7 @@ export function createGame(
       hasGoneFirst: false,
       mulligansComplete: false,
       baseZone: [],
+      cardsPlayedThisTurn: [],
     };
   });
 
@@ -322,7 +348,7 @@ export function createGame(
     players,
     battlefields,
     allCards,
-    cardDefinitions: CARDS,
+    cardDefinitions: cloneCardDefinitions(),
     winner: null,
     scoreLimit,
     scoredBattlefieldsThisTurn: {},
@@ -341,17 +367,49 @@ export function createGame(
     effectStack: [],  // empty effect stack at game start
     showdown: null,   // no active showdown at game start
     pendingCombatDamageAssignment: null,
+    keywordModifiers: [],
+    pendingKeywordChoices: [],
   };
+}
+
+function cloneCardDefinitions(): Record<string, CardDefinition> {
+  return Object.fromEntries(Object.entries(CARDS).map(([id, def]) => [
+    id,
+    {
+      ...def,
+      cost: def.cost ? { ...def.cost } : undefined,
+      stats: def.stats ? { ...def.stats } : undefined,
+      keywords: def.keywords ? [...def.keywords] : [],
+      abilities: def.abilities ? def.abilities.map(ability => ({ ...ability })) : [],
+      domains: def.domains ? [...def.domains] : undefined,
+      tags: def.tags ? [...def.tags] : undefined,
+    },
+  ]));
 }
 
 // ============================================================
 // Engine Entry Point
 // ============================================================
 
+function ensureKeywordStateDefaults(state: GameState): void {
+  state.keywordModifiers ??= [];
+  state.pendingKeywordChoices ??= [];
+  state.scoredBattlefieldsThisTurn ??= {};
+  for (const player of Object.values(state.players ?? {})) {
+    player.banishment ??= [];
+    player.cardsPlayedThisTurn ??= [];
+    player.hiddenZone ??= [];
+    player.discardPile ??= [];
+    player.equipment ??= {};
+    player.floatingEnergy ??= 0;
+  }
+}
+
 export function executeAction(
   state: GameState,
   action: GameAction
 ): ActionResult {
+  ensureKeywordStateDefaults(state);
   // In Showdown phase, any player involved (attacker or defender) may act
   const isShowdownParticipant = state.phase === 'Showdown' && state.showdown &&
     (action.playerId === state.showdown.attackerPlayerId ||
@@ -506,12 +564,15 @@ function withPhaseLog(state: GameState, fromPhase: Phase, toPhase: Phase): GameS
 }
 
 export function startNewTurn(state: GameState): GameState {
+  ensureKeywordStateDefaults(state);
   const nextPlayerId = getOpponentId(state, state.activePlayerId);
   const newState = deepClone(state);
   newState.turn = state.turn + 1;
   newState.activePlayerId = nextPlayerId;
   newState.effectStack = [];
   newState.scoredBattlefieldsThisTurn = {};
+  newState.players[nextPlayerId].cardsPlayedThisTurn = [];
+  expireTemporaryModifiers(newState, 'turn');
   const playerName = newState.players[nextPlayerId]?.name || nextPlayerId;
   newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange',
     `Turn ${newState.turn}: ${playerName}'s turn`));
@@ -519,6 +580,7 @@ export function startNewTurn(state: GameState): GameState {
 }
 
 export function enterPhase(state: GameState, phase: Phase): GameState {
+  ensureKeywordStateDefaults(state);
   // Use deepClone to properly copy nested objects (players, allCards, etc.)
   // so that phase execution functions can mutate safely without affecting the caller's state.
   const newState = deepClone(state);
@@ -572,7 +634,7 @@ function executeAwakenPhase(state: GameState): GameState {
   const player = newState.players[playerId];
 
   player.floatingEnergy = 0;
-  player.charges = 1;
+  player.charges = 0;
 
   for (const runeId of getActiveRuneIds(newState, playerId)) {
     newState.allCards[runeId].exhausted = false;
@@ -604,6 +666,8 @@ function executeBeginningPhase(state: GameState): GameState {
   const newState = deepClone(state);
 
   // Score from Hold — check each battlefield
+  killTemporaryPermanentsForBeginning(newState, playerId);
+  cleanupHiddenCards(newState);
   newState.effectStack = state.effectStack ?? [];
 
   if (newState.effectStack.length === 0) {
@@ -708,23 +772,8 @@ function executeEndPhase(state: GameState): GameState {
   newState.players[newState.activePlayerId].floatingEnergy = 0;
   syncRuneResourceCounters(newState, newState.activePlayerId);
 
-  // Kill Temporary units (End of Turn behavior)
-  for (const bf of newState.battlefields) {
-    const toKill: string[] = [];
-    for (const unitId of bf.units) {
-      const unit = newState.allCards[unitId];
-      if (!unit) continue;
-      const def = newState.cardDefinitions[unit.cardId];
-      if (def.keywords.includes('Temporary')) {
-        toKill.push(unitId);
-      }
-    }
-    for (const killId of toKill) {
-      bf.units = bf.units.filter(id => id !== killId);
-      newState.allCards[killId].location = 'discard';
-      newState.players[getUnitOwner(newState, killId)].discardPile.push(killId);
-    }
-  }
+  cleanupHiddenCards(newState);
+  cleanupUnattachedGear(newState);
 
   // Check for score after holding battlefields
   const scoredState = checkScoring(newState);
@@ -749,6 +798,44 @@ export function checkScoring(state: GameState): GameState {
     }
   }
   return state;
+}
+
+function killTemporaryPermanentsForBeginning(state: GameState, playerId: string): void {
+  for (const card of Object.values(state.allCards)) {
+    if (card.ownerId !== playerId) continue;
+    if (!['battlefield', 'equipment'].includes(card.location)) continue;
+    if (!hasKeyword(state, card.instanceId, 'Temporary')) continue;
+    killUnit(state, card.instanceId);
+  }
+}
+
+function cleanupHiddenCards(state: GameState): void {
+  for (const player of Object.values(state.players)) {
+    for (const hiddenId of [...(player.hiddenZone ?? [])]) {
+      const hiddenCard = state.allCards[hiddenId];
+      if (!hiddenCard || hiddenCard.location !== 'hidden') {
+        player.hiddenZone = player.hiddenZone.filter(id => id !== hiddenId);
+        continue;
+      }
+      const bf = state.battlefields.find(battlefield => battlefield.id === hiddenCard.hiddenBattlefieldId);
+      if (!bf || bf.controllerId !== hiddenCard.ownerId) {
+        player.hiddenZone = player.hiddenZone.filter(id => id !== hiddenId);
+        hiddenCard.location = 'discard';
+        hiddenCard.facing = 'up';
+        hiddenCard.owner_hidden = false;
+        player.discardPile.push(hiddenId);
+      }
+    }
+  }
+}
+
+function cleanupUnattachedGear(state: GameState): void {
+  for (const card of Object.values(state.allCards)) {
+    const def = state.cardDefinitions[card.cardId];
+    if (def?.type !== 'Gear' || card.location !== 'battlefield' || !card.battlefieldId) continue;
+    if (isBaseBattlefieldId(card.battlefieldId)) continue;
+    recallCardToHand(state, card.instanceId);
+  }
 }
 
 export function checkWinCondition(state: GameState): string | null {
@@ -887,9 +974,6 @@ export function canPlayReaction(state: GameState, playerId: string, cardInstance
   if (card.ownerId !== playerId) return false;
   const def = state.cardDefinitions[card.cardId];
   if (!def.keywords.includes('Reaction')) return false;
-  const player = state.players[playerId];
-  const cost = def.cost?.charges ?? 0;
-  if (player.charges < cost) return false;
   return true;
 }
 
@@ -903,10 +987,6 @@ export function handleReaction(state: GameState, action: GameAction): ActionResu
   const card = newState.allCards[cardInstanceId];
   const def = newState.cardDefinitions[card.cardId];
   const player = newState.players[action.playerId];
-
-  // Pay charges
-  const cost = def.cost?.charges ?? 0;
-  player.charges -= cost;
 
   // Move to battlefield face-up
   card.location = 'battlefield';
@@ -1095,14 +1175,158 @@ function checkUnitDeath(state: GameState, unitId: string): boolean {
 function killUnit(state: GameState, unitId: string): void {
   const unit = state.allCards[unitId];
   if (!unit) return;
+  const previousBattlefieldId = unit.battlefieldId;
+  const previousControllerId = unit.ownerId;
+  const deathknellText = getCardRulesText(state.cardDefinitions[unit.cardId]);
   unit.location = 'discard';
   unit.damage = 0;
+  unit.ready = false;
+  unit.exhausted = false;
+  expireTemporaryModifiers(state, 'zoneChange', unitId);
   for (const bf of state.battlefields) {
     bf.units = bf.units.filter(id => id !== unitId);
   }
   const ownerId = unit.ownerId;
   state.players[ownerId].discardPile.push(unitId);
   state.actionLog.push(makeLog(state, ownerId, 'System', `${state.cardDefinitions[unit.cardId].name} was killed.`));
+  if (hasKeyword(state, unitId, 'Deathknell') || /\[?Deathknell\]?/i.test(deathknellText)) {
+    resolveDeathknell(state, unitId, previousBattlefieldId, previousControllerId);
+  }
+}
+
+function banishCard(state: GameState, cardInstanceId: string): void {
+  const card = state.allCards[cardInstanceId];
+  if (!card) return;
+  removeCardFromCurrentZone(state, cardInstanceId);
+  expireTemporaryModifiers(state, 'zoneChange', cardInstanceId);
+  card.location = 'banishment';
+  state.players[card.ownerId].banishment ??= [];
+  state.players[card.ownerId].banishment.push(cardInstanceId);
+  state.actionLog.push(makeLog(state, card.ownerId, 'System',
+    `${state.cardDefinitions[card.cardId]?.name ?? 'A card'} was banished.`));
+}
+
+function recallCardToHand(state: GameState, cardInstanceId: string): void {
+  const card = state.allCards[cardInstanceId];
+  if (!card) return;
+  removeCardFromCurrentZone(state, cardInstanceId);
+  expireTemporaryModifiers(state, 'zoneChange', cardInstanceId);
+  card.location = 'hand';
+  card.battlefieldId = undefined;
+  card.facing = 'up';
+  card.owner_hidden = false;
+  card.damage = 0;
+  state.players[card.ownerId].hand.push(cardInstanceId);
+}
+
+function recycleCard(state: GameState, cardInstanceId: string): void {
+  const card = state.allCards[cardInstanceId];
+  if (!card) return;
+  removeCardFromCurrentZone(state, cardInstanceId);
+  expireTemporaryModifiers(state, 'zoneChange', cardInstanceId);
+  const player = state.players[card.ownerId];
+  if (state.cardDefinitions[card.cardId]?.type === 'Rune') {
+    card.location = 'runeDeck';
+    player.runeDeck.push(cardInstanceId);
+  } else {
+    card.location = 'deck';
+    player.deck.push(cardInstanceId);
+  }
+  card.facing = 'up';
+  card.owner_hidden = false;
+  card.damage = 0;
+}
+
+function buffUnit(state: GameState, unitId: string, amount = 1): void {
+  const unit = state.allCards[unitId];
+  if (!unit) return;
+  unit.counters.buff = (unit.counters.buff ?? 0) + amount;
+  unit.currentStats.might = (unit.currentStats.might ?? unit.stats.might ?? 0) + amount;
+}
+
+function stunUnit(state: GameState, unitId: string): void {
+  const unit = state.allCards[unitId];
+  if (!unit) return;
+  unit.counters.stunned = 1;
+}
+
+function predict(state: GameState, playerId: string, count = 1, recycleTop = false): string[] {
+  const player = state.players[playerId];
+  const seen = player.deck.slice(0, count);
+  state.pendingKeywordChoices ??= [];
+  state.pendingKeywordChoices.push({
+    id: randomId(),
+    playerId,
+    sourceId: playerId,
+    keyword: 'Predict',
+    choices: { cardInstanceIds: seen, count },
+  });
+  if (recycleTop && seen[0]) recycleCard(state, seen[0]);
+  return seen;
+}
+
+function resolveDeathknell(state: GameState, unitId: string, battlefieldId?: string, controllerId?: string): void {
+  const card = state.allCards[unitId];
+  if (!card) return;
+  const ownerId = controllerId ?? card.ownerId;
+  const text = getCardRulesText(state.cardDefinitions[card.cardId]);
+  if (/draw\s+2/i.test(text)) drawCards(state, ownerId, 2);
+  else if (/draw\s+1/i.test(text)) drawCards(state, ownerId, 1);
+  if (/gain\s+(\d+)\s+XP/i.test(text)) {
+    const match = text.match(/gain\s+(\d+)\s+XP/i);
+    state.players[ownerId].xp += Number(match?.[1] ?? 1);
+  }
+  if (/channel\s+(\d+)\s+rune/i.test(text)) {
+    const match = text.match(/channel\s+(\d+)\s+rune/i);
+    channelRunesExhausted(state, ownerId, Number(match?.[1] ?? 1));
+  }
+  if (/deal\s+(\d+)\s+to all units/i.test(text) && battlefieldId) {
+    const damage = Number(text.match(/deal\s+(\d+)\s+to all units/i)?.[1] ?? 0);
+    for (const targetId of [...liveUnitsAtBattlefield(state, battlefieldId)]) {
+      takeDamage(state, targetId, damage);
+    }
+  }
+  state.actionLog.push(makeLog(state, ownerId, 'System',
+    `${state.cardDefinitions[card.cardId]?.name ?? 'A card'} Deathknell resolved.`));
+}
+
+function drawCards(state: GameState, playerId: string, count: number): void {
+  for (let i = 0; i < count; i++) {
+    const cardId = state.players[playerId].deck.shift();
+    if (!cardId) return;
+    state.allCards[cardId].location = 'hand';
+    state.players[playerId].hand.push(cardId);
+  }
+}
+
+function channelRunesExhausted(state: GameState, playerId: string, count: number): void {
+  for (let i = 0; i < count; i++) {
+    const runeId = state.players[playerId].runeDeck.shift();
+    if (!runeId) return;
+    state.allCards[runeId].location = 'rune';
+    state.allCards[runeId].exhausted = true;
+  }
+  syncRuneResourceCounters(state, playerId);
+}
+
+function removeCardFromCurrentZone(state: GameState, cardInstanceId: string): void {
+  const card = state.allCards[cardInstanceId];
+  if (!card) return;
+  const player = state.players[card.ownerId];
+  player.hand = player.hand.filter(id => id !== cardInstanceId);
+  player.deck = player.deck.filter(id => id !== cardInstanceId);
+  player.runeDeck = player.runeDeck.filter(id => id !== cardInstanceId);
+  player.runeDiscard = player.runeDiscard.filter(id => id !== cardInstanceId);
+  player.discardPile = player.discardPile.filter(id => id !== cardInstanceId);
+  player.hiddenZone = player.hiddenZone.filter(id => id !== cardInstanceId);
+  player.banishment = (player.banishment ?? []).filter(id => id !== cardInstanceId);
+  delete player.equipment[cardInstanceId];
+  for (const unit of Object.values(state.allCards)) {
+    unit.attachments = unit.attachments.filter(id => id !== cardInstanceId);
+  }
+  for (const bf of state.battlefields) {
+    bf.units = bf.units.filter(id => id !== cardInstanceId);
+  }
 }
 
 function resetDamage(state: GameState): void {
@@ -1166,7 +1390,26 @@ function scoreBattlefield(state: GameState, playerId: string, bf: BattlefieldSta
     ));
   }
 
+  awardHuntXp(state, playerId, bf, method);
   return true;
+}
+
+function awardHuntXp(state: GameState, playerId: string, bf: BattlefieldState, method: ScoreMethod): void {
+  let totalHunt = 0;
+  const friendlyPermanentIds = bf.units.filter(id => state.allCards[id]?.ownerId === playerId);
+  for (const unitId of friendlyPermanentIds) {
+    totalHunt += getKeywordValue(state, unitId, 'Hunt', 0);
+    const unit = state.allCards[unitId];
+    for (const gearId of unit?.attachments ?? []) {
+      totalHunt += getKeywordValue(state, gearId, 'Hunt', 0);
+    }
+  }
+  if (totalHunt <= 0) return;
+  state.players[playerId].xp += totalHunt;
+  state.actionLog.push(makeLog(state, playerId, 'System',
+    `${state.players[playerId].name} gained ${totalHunt} XP from Hunt (${method}).`,
+    { battlefieldId: bf.id, method, xp: state.players[playerId].xp }
+  ));
 }
 
 function updateUncontestedBattlefieldControl(state: GameState, battlefieldId: string, turn: number): void {
@@ -1212,29 +1455,193 @@ function liveUnitsAtBattlefield(state: GameState, battlefieldId: string, playerI
   });
 }
 
+type KeywordDuration = KeywordModifier['duration'];
+
+interface KeywordInstance {
+  name: Keyword;
+  value: number;
+  cost?: { rune?: number; power?: number };
+  dependentText?: string;
+  sourceCardInstanceId?: string;
+  duration?: KeywordDuration;
+  visibleTo?: 'all' | 'owner';
+}
+
+const KEYWORD_ALIASES: Partial<Record<string, Keyword>> = {
+  Legions: 'Legion',
+  'Quick Draw': 'Quick-Draw',
+  QuickDraw: 'Quick-Draw',
+  Quick: 'Quick-Draw',
+};
+
+const OFFICIAL_KEYWORDS: Keyword[] = [
+  'Accelerate', 'Action', 'Ambush', 'Assault', 'Backline', 'Banish', 'Buff',
+  'Deathknell', 'Deflect', 'Equip', 'Ganking', 'Hidden', 'Hunt', 'Legion',
+  'Level', 'Mighty', 'Predict', 'Quick-Draw', 'Reaction', 'Recall', 'Recycle',
+  'Repeat', 'Shield', 'Stun', 'Tank', 'Temporary', 'Unique', 'Vision',
+  'Weaponmaster',
+];
+
+function normalizeKeywordName(name: string): Keyword {
+  return KEYWORD_ALIASES[name] ?? name as Keyword;
+}
+
+function keywordPattern(keyword: Keyword): RegExp {
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`\\[?${escaped}\\]?\\s*(\\d+)?`, 'i');
+}
+
+function extractKeywordValue(text: string, keyword: Keyword, defaultValue = 1): number {
+  const match = text.match(keywordPattern(keyword));
+  return match?.[1] ? Number(match[1]) : defaultValue;
+}
+
+function parseRepeatEnergyCost(text: string): number {
+  const repeatIndex = text.search(/\[?Repeat\]?/i);
+  if (repeatIndex < 0) return 0;
+  const afterRepeat = text.slice(repeatIndex);
+  const energyMatch = afterRepeat.match(/:rb_energy_(\d+):|Energy\s+(\d+)|\[(\d+)\]/i);
+  return energyMatch ? Number(energyMatch[1] ?? energyMatch[2] ?? energyMatch[3]) : 0;
+}
+
+function parseKeywordsFromText(text: string): KeywordInstance[] {
+  const instances: KeywordInstance[] = [];
+  for (const keyword of OFFICIAL_KEYWORDS) {
+    if (!keywordPattern(keyword).test(text)) continue;
+    const value = ['Assault', 'Deflect', 'Hunt', 'Level', 'Shield', 'Predict'].includes(keyword)
+      ? extractKeywordValue(text, keyword)
+      : keyword === 'Mighty'
+        ? 5
+        : 1;
+    instances.push({
+      name: keyword,
+      value,
+      cost: keyword === 'Repeat' ? { rune: parseRepeatEnergyCost(text) } : undefined,
+      dependentText: keyword === 'Legion' || keyword === 'Level' ? text : undefined,
+    });
+  }
+  return instances;
+}
+
+function getCardRulesText(def: CardDefinition | undefined): string {
+  if (!def) return '';
+  return [
+    def.effect ?? '',
+    def.effectCode ?? '',
+    ...(def.abilities ?? []).flatMap(ability => [ability.trigger, ability.effect, ability.effectCode ?? '']),
+  ].join(' ');
+}
+
+function getBaseKeywordInstances(state: GameState, cardInstanceId: string): KeywordInstance[] {
+  const card = state.allCards[cardInstanceId];
+  if (!card) return [];
+  const def = state.cardDefinitions[card.cardId];
+  const explicitKeywords = (def?.keywords ?? []).map(normalizeKeywordName);
+  const explicitKeywordSet = new Set(explicitKeywords);
+  const textOnlyKeywords = new Set<Keyword>(['Deathknell', 'Vision', 'Legion', 'Level', 'Quick-Draw']);
+  const fromList = explicitKeywords.map(keyword => ({
+    name: normalizeKeywordName(keyword),
+    value: keyword === 'Mighty' ? 5 : 1,
+  }));
+  const fromText = parseKeywordsFromText(getCardRulesText(def))
+    .filter(instance => explicitKeywordSet.has(instance.name) || textOnlyKeywords.has(instance.name));
+  const byName = new Map<Keyword, KeywordInstance>();
+  for (const instance of [...fromList, ...fromText]) {
+    const existing = byName.get(instance.name);
+    byName.set(instance.name, existing
+      ? { ...existing, ...instance, value: Math.max(existing.value ?? 1, instance.value ?? 1) }
+      : instance);
+  }
+  return Array.from(byName.values()).map(instance => ({
+    ...instance,
+    sourceCardInstanceId: cardInstanceId,
+    visibleTo: card.facing === 'down' ? 'owner' : 'all',
+  }));
+}
+
+function getActiveKeywords(state: GameState, cardInstanceId: string): KeywordInstance[] {
+  const card = state.allCards[cardInstanceId];
+  if (!card) return [];
+  const modifiers = (state.keywordModifiers ?? [])
+    .filter(mod => mod.cardInstanceId === cardInstanceId)
+    .map(mod => ({
+      name: normalizeKeywordName(mod.keyword),
+      value: mod.value ?? 1,
+      cost: mod.cost,
+      dependentText: mod.dependentText,
+      sourceCardInstanceId: mod.sourceCardInstanceId,
+      duration: mod.duration,
+      visibleTo: mod.visibleTo,
+    }));
+  const base = getBaseKeywordInstances(state, cardInstanceId);
+  if (calculateMight(state, cardInstanceId) >= 5) {
+    base.push({ name: 'Mighty', value: 5, sourceCardInstanceId: cardInstanceId });
+  }
+  return [...base, ...modifiers];
+}
+
+function hasKeyword(state: GameState, cardInstanceId: string, keyword: Keyword | string): boolean {
+  const normalized = normalizeKeywordName(String(keyword));
+  return getActiveKeywords(state, cardInstanceId).some(instance => instance.name === normalized);
+}
+
+function getKeywordValue(state: GameState, cardInstanceId: string, keyword: Keyword | string, defaultValue = 0): number {
+  const normalized = normalizeKeywordName(String(keyword));
+  const values = getActiveKeywords(state, cardInstanceId)
+    .filter(instance => instance.name === normalized)
+    .map(instance => instance.value ?? 1);
+  if (values.length === 0) return defaultValue;
+  return values.reduce((sum, value) => sum + value, 0);
+}
+
+function grantKeyword(
+  state: GameState,
+  cardInstanceId: string,
+  keyword: Keyword,
+  value = 1,
+  duration: KeywordDuration = 'turn',
+  sourceCardInstanceId?: string
+): void {
+  state.keywordModifiers ??= [];
+  state.keywordModifiers.push({
+    id: randomId(),
+    cardInstanceId,
+    keyword,
+    value,
+    duration,
+    sourceCardInstanceId,
+    expiresTurn: duration === 'turn' ? state.turn : undefined,
+    visibleTo: 'all',
+  });
+}
+
+function expireTemporaryModifiers(state: GameState, scope: 'turn' | 'zoneChange' = 'turn', cardInstanceId?: string): void {
+  state.keywordModifiers ??= [];
+  if (scope === 'zoneChange' && cardInstanceId) {
+    state.keywordModifiers = state.keywordModifiers.filter(mod => mod.cardInstanceId !== cardInstanceId);
+    return;
+  }
+  state.keywordModifiers = state.keywordModifiers.filter(mod =>
+    mod.duration !== 'turn' || (mod.expiresTurn !== undefined && mod.expiresTurn > state.turn)
+  );
+}
+
 function unitHasKeyword(state: GameState, unitId: string, keyword: string): boolean {
-  const unit = state.allCards[unitId];
-  if (!unit) return false;
-  const def = state.cardDefinitions[unit.cardId];
-  return (def.keywords ?? []).includes(keyword as any) || (def.effect ?? '').includes(`[${keyword}]`);
+  return hasKeyword(state, unitId, keyword);
 }
 
 function calculateCombatMight(state: GameState, unitId: string, side: CombatSide): number {
   const unit = state.allCards[unitId];
   if (!unit) return 0;
+  if (unit.counters?.stunned) return 0;
   let total = calculateMight(state, unitId);
-  const def = state.cardDefinitions[unit.cardId];
-  for (const ability of def.abilities ?? []) {
-    const text = `${ability.effect} ${ability.effectCode ?? ''}`;
-    if (side === 'attacker' && text.includes('Assault')) {
-      const match = text.match(/Assault\s*(\d+)|GIVE_ASSAULT[_ ]?(\d+)|\+(\d+)/i);
-      total += match ? parseInt(match[1] ?? match[2] ?? match[3], 10) : 0;
-    }
-    if (side === 'defender' && text.includes('Shield')) {
-      const match = text.match(/Shield\s*(\d+)|GIVE_SHIELD[_ ]?(\d+)|\+(\d+)/i);
-      total += match ? parseInt(match[1] ?? match[2] ?? match[3], 10) : 0;
-    }
-  }
+  const attachedKeywordValue = (keyword: Keyword) =>
+    (unit.attachments ?? []).reduce((sum, gearId) => sum + getKeywordValue(state, gearId, keyword, 0), 0);
+  const hasManualMightOverride = unit.currentStats.might !== undefined
+    && unit.stats.might !== undefined
+    && unit.currentStats.might !== unit.stats.might;
+  if (side === 'attacker') total += (hasManualMightOverride ? 0 : getKeywordValue(state, unitId, 'Assault', 0)) + attachedKeywordValue('Assault');
+  if (side === 'defender') total += (hasManualMightOverride ? 0 : getKeywordValue(state, unitId, 'Shield', 0)) + attachedKeywordValue('Shield');
   return Math.max(0, total);
 }
 
@@ -1737,25 +2144,52 @@ function choosePowerRune(
   return null;
 }
 
+function recycleRuneForHidden(state: GameState, playerId: string, domain: Domain | undefined): CostPaymentResult {
+  if (!domain || !RIFTBOUND_DOMAINS.includes(domain)) {
+    return { success: false, error: 'Choose a rune domain to recycle.' };
+  }
+  const player = state.players[playerId];
+  if (!player) return { success: false, error: 'Player not found.' };
+  const runeId = getActiveRuneIds(state, playerId).find(id => getRuneDomain(state, id) === domain);
+  if (!runeId) return { success: false, error: `No active ${domain} rune to recycle.` };
+  const rune = state.allCards[runeId];
+  if (!rune.exhausted) player.floatingEnergy = (player.floatingEnergy ?? 0) + 1;
+  rune.location = 'runeDeck';
+  rune.exhausted = false;
+  rune.ready = false;
+  player.runeDeck.push(runeId);
+  syncRuneResourceCounters(state, playerId);
+  return { success: true };
+}
+
 function payCardCosts(
   state: GameState,
   playerId: string,
   def: CardDefinition,
   extraEnergy = 0,
-  powerRuneDomains: Domain[] = []
+  powerRuneDomains: Domain[] = [],
+  extraPower = 0
 ): CostPaymentResult {
   const player = state.players[playerId];
   if (!player) return { success: false, error: 'Player not found.' };
 
   const cardDomains = getPlayableDomains(def);
   const energyCost = (def.cost?.rune ?? 0) + extraEnergy;
-  const powerCost = def.cost?.power ?? 0;
+  const basePowerCost = def.cost?.power ?? 0;
+  const powerCost = basePowerCost + extraPower;
 
-  if (cardDomains.length >= 2 && powerCost > 0) {
-    if (powerRuneDomains.length !== powerCost) {
+  if (energyCost > 0 && getReadyRuneIds(state, playerId).length === 0) {
+    return { success: false, error: 'Not enough ready runes.' };
+  }
+  if (powerCost > 0 && getActiveRuneIds(state, playerId).length === 0) {
+    return { success: false, error: 'Not enough ready runes.' };
+  }
+
+  if (cardDomains.length >= 2 && basePowerCost > 0) {
+    if (powerRuneDomains.length < basePowerCost) {
       return { success: false, error: 'Choose one rune domain for each power cost.' };
     }
-    if (powerRuneDomains.some(domain => !cardDomains.includes(domain))) {
+    if (powerRuneDomains.slice(0, basePowerCost).some(domain => !cardDomains.includes(domain))) {
       return { success: false, error: 'Power rune domain must match one of the card domains.' };
     }
   }
@@ -1774,9 +2208,16 @@ function payCardCosts(
   const selectedPowerRunes = new Set<string>();
   const selectedPowerRuneIds: string[] = [];
   for (let i = 0; i < powerCost; i++) {
-    const preferredDomain = cardDomains.length >= 2 ? powerRuneDomains[i] : cardDomains[0];
+    const preferredDomain = i < basePowerCost
+      ? (cardDomains.length >= 2 ? powerRuneDomains[i] : cardDomains[0])
+      : undefined;
     const runeId = choosePowerRune(state, playerId, preferredDomain, selectedPowerRunes);
-    if (!runeId) return { success: false, error: 'Not enough runes to recycle for power.' };
+    if (!runeId) {
+      return {
+        success: false,
+        error: getActiveRuneIds(state, playerId).length === 0 ? 'Not enough ready runes.' : 'Not enough runes to recycle for power.',
+      };
+    }
     selectedPowerRunes.add(runeId);
     selectedPowerRuneIds.push(runeId);
   }
@@ -1801,15 +2242,48 @@ function buildAutoPowerRuneDomains(def: CardDefinition): Domain[] {
   return Array.from({ length: powerCost }, (_, index) => domains[index % 2]);
 }
 
+function buildAutoPowerRuneDomainsForCost(def: CardDefinition, totalPowerCost: number): Domain[] {
+  const domains = getPlayableDomains(def);
+  if (domains.length < 2 || totalPowerCost <= 0) return [];
+  return Array.from({ length: totalPowerCost }, (_, index) => domains[index % 2]);
+}
+
+function getDeflectAdditionalPower(state: GameState, playerId: string, targetIds: Array<string | undefined>): number {
+  let extraPower = 0;
+  for (const targetId of targetIds) {
+    if (!targetId) continue;
+    const target = state.allCards[targetId];
+    if (!target || target.ownerId === playerId) continue;
+    extraPower += getKeywordValue(state, targetId, 'Deflect', 0);
+  }
+  return extraPower;
+}
+
+function getRepeatEnergyCost(def: CardDefinition): number {
+  const text = getCardRulesText(def);
+  return parseRepeatEnergyCost(text);
+}
+
+function markCardPlayed(state: GameState, playerId: string, cardInstanceId: string): void {
+  state.players[playerId].cardsPlayedThisTurn ??= [];
+  state.players[playerId].cardsPlayedThisTurn.push(cardInstanceId);
+  state.allCards[cardInstanceId].playedTurn = state.turn;
+}
+
+function isLegionActive(state: GameState, playerId: string, sourceId: string): boolean {
+  return (state.players[playerId].cardsPlayedThisTurn ?? []).some(id => id !== sourceId);
+}
+
 function canPayCardCosts(
   state: GameState,
   playerId: string,
   def: CardDefinition,
   extraEnergy = 0,
-  powerRuneDomains: Domain[] = buildAutoPowerRuneDomains(def)
+  powerRuneDomains: Domain[] = buildAutoPowerRuneDomains(def),
+  extraPower = 0
 ): boolean {
   const testState = deepClone(state);
-  return payCardCosts(testState, playerId, def, extraEnergy, powerRuneDomains).success;
+  return payCardCosts(testState, playerId, def, extraEnergy, powerRuneDomains, extraPower).success;
 }
 
 // ============================================================
@@ -1896,23 +2370,40 @@ function handlePlayUnit(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, battlefieldId, hidden, accelerate, powerRuneDomains } = action.payload as {
-    cardInstanceId: string; battlefieldId: string; hidden: boolean; accelerate?: boolean; powerRuneDomains?: Domain[];
+  const { cardInstanceId, battlefieldId, hidden, accelerate, fromHidden, equipTargetId, powerRuneDomains, predictChoice } = action.payload as {
+    cardInstanceId: string; battlefieldId: string; hidden: boolean; accelerate?: boolean; fromHidden?: boolean; equipTargetId?: string; powerRuneDomains?: Domain[]; predictChoice?: 'keep' | 'recycle';
   };
 
   const card = state.allCards[cardInstanceId];
   if (!card) return { success: false, error: 'Card not found.', action };
-  if (card.location !== 'hand') return { success: false, error: 'Card not in hand.', action };
+  if (!fromHidden && card.location !== 'hand') return { success: false, error: 'Card not in hand.', action };
+  if (fromHidden && card.location !== 'hidden') return { success: false, error: 'Card not in hidden zone.', action };
   if (card.ownerId !== action.playerId) return { success: false, error: 'Not your card.', action };
 
   const def = state.cardDefinitions[card.cardId];
   if (def.type !== 'Unit') return { success: false, error: 'Not a unit.', action };
   if (!def.cost) return { success: false, error: 'No cost defined.', action };
 
+  if (accelerate && !hasKeyword(state, cardInstanceId, 'Accelerate')) {
+    return { success: false, error: 'Card does not have Accelerate.', action };
+  }
   const accelCost = accelerate ? 1 : 0;
 
   const bf = state.battlefields.find(b => b.id === battlefieldId);
   if (!bf) return { success: false, error: 'Battlefield not found.', action };
+  if (fromHidden) {
+    if (card.hiddenSinceTurn === undefined || card.hiddenSinceTurn >= state.turn) {
+      return { success: false, error: 'Hidden cards cannot be played until a later turn.', action };
+    }
+    if (card.hiddenBattlefieldId !== battlefieldId) {
+      return { success: false, error: 'Hidden permanents must be played to their hidden battlefield.', action };
+    }
+  } else if (bf.controllerId !== action.playerId && !isBaseBattlefieldId(bf.id)) {
+    const hasFriendlyUnit = bf.units.some(id => state.allCards[id]?.ownerId === action.playerId);
+    if (!hasFriendlyUnit && !hasKeyword(state, cardInstanceId, 'Ambush')) {
+      return { success: false, error: 'Units can only be played to your base, controlled battlefields, or Ambush battlefields.', action };
+    }
+  }
 
   const newState = deepClone(state);
   newState.allCards[cardInstanceId] = { ...newState.allCards[cardInstanceId] };
@@ -1920,28 +2411,35 @@ function handlePlayUnit(
   const newBf = newState.battlefields.find(b => b.id === battlefieldId);
   if (!newBf) return { success: false, error: 'Battlefield not found.', action };
 
-  const costResult = payCardCosts(newState, action.playerId, def, accelCost, powerRuneDomains);
+  const costResult: CostPaymentResult = fromHidden
+    ? { success: true }
+    : payCardCosts(newState, action.playerId, def, accelCost, powerRuneDomains);
   if (!costResult.success) return { success: false, error: costResult.error, action };
 
   // Remove from hand
   newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
+  newState.players[action.playerId].hiddenZone = newState.players[action.playerId].hiddenZone.filter(id => id !== cardInstanceId);
 
   // Move to battlefield
   newCard.location = 'battlefield';
   newCard.battlefieldId = battlefieldId;
-  newCard.facing = hidden ? 'down' : 'up';
-  newCard.owner_hidden = hidden;
+  newCard.hiddenBattlefieldId = undefined;
+  newCard.hiddenSinceTurn = undefined;
+  newCard.facing = 'up';
+  newCard.owner_hidden = false;
   newBf.units.push(cardInstanceId);
 
   // Units enter exhausted by default unless the play explicitly readies them.
-  const hasAccelerate = def.keywords.includes('Accelerate');
-  if (accelerate && hasAccelerate) {
+  if (accelerate || (hasKeyword(newState, cardInstanceId, 'Level') && newState.players[action.playerId].xp >= getKeywordValue(newState, cardInstanceId, 'Level', Infinity) && /enter ready/i.test(getCardRulesText(def)))) {
     newCard.ready = true;
     newCard.exhausted = false;
   } else {
     newCard.ready = false;
     newCard.exhausted = true;
   }
+
+  markCardPlayed(newState, action.playerId, cardInstanceId);
+  resolveKeywordPlayTriggers(newState, cardInstanceId, action.playerId, { predictChoice, equipTargetId });
 
   // Trigger play abilities
   const effects = resolveAbilities(newState, cardInstanceId, 'PLAY');
@@ -1962,31 +2460,59 @@ function handlePlaySpell(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, targetId, targetBattlefieldId, powerRuneDomains } = action.payload as {
-    cardInstanceId: string; targetId?: string; targetBattlefieldId?: string; powerRuneDomains?: Domain[];
+  const { cardInstanceId, targetId, targetBattlefieldId, fromHidden, repeatCount = 0, repeatTargets, powerRuneDomains, predictChoice } = action.payload as {
+    cardInstanceId: string; targetId?: string; targetBattlefieldId?: string; fromHidden?: boolean; repeatCount?: number; repeatTargets?: string[]; powerRuneDomains?: Domain[]; predictChoice?: 'keep' | 'recycle';
   };
 
   const card = state.allCards[cardInstanceId];
   if (!card) return { success: false, error: 'Card not found.', action };
-  if (card.location !== 'hand') return { success: false, error: 'Card not in hand.', action };
+  if (!fromHidden && card.location !== 'hand') return { success: false, error: 'Card not in hand.', action };
+  if (fromHidden && card.location !== 'hidden') return { success: false, error: 'Card not in hidden zone.', action };
 
   const def = state.cardDefinitions[card.cardId];
   if (def.type !== 'Spell') return { success: false, error: 'Not a spell.', action };
+  if (repeatCount > 0 && !hasKeyword(state, cardInstanceId, 'Repeat')) {
+    return { success: false, error: 'Card does not have Repeat.', action };
+  }
+  if (fromHidden && (card.hiddenSinceTurn === undefined || card.hiddenSinceTurn >= state.turn)) {
+    return { success: false, error: 'Hidden cards cannot be played until a later turn.', action };
+  }
+  if (fromHidden && card.hiddenBattlefieldId) {
+    const targetCard = targetId ? state.allCards[targetId] : undefined;
+    if (targetCard?.location === 'battlefield' && targetCard.battlefieldId !== card.hiddenBattlefieldId) {
+      return { success: false, error: 'Hidden spell targets must be at the hidden battlefield.', action };
+    }
+    if (targetBattlefieldId && targetBattlefieldId !== card.hiddenBattlefieldId) {
+      return { success: false, error: 'Hidden spell battlefield target must be the hidden battlefield.', action };
+    }
+  }
+
+  const repeatEnergy = repeatCount * getRepeatEnergyCost(def);
+  const deflectPower = getDeflectAdditionalPower(state, action.playerId, [targetId, ...(repeatTargets ?? [])]);
+  const requestedPowerDomains = powerRuneDomains
+    ?? buildAutoPowerRuneDomainsForCost(def, (def.cost?.power ?? 0) + deflectPower);
 
   // --- Showdown: push to stack instead of immediate resolution ---
   if (state.phase === 'Showdown' && state.showdown) {
     const newState = deepClone(state);
 
-    const costResult = payCardCosts(newState, action.playerId, def, 0, powerRuneDomains);
+    const costResult: CostPaymentResult = fromHidden
+      ? payCardCosts(newState, action.playerId, { ...def, cost: { rune: 0, power: 0 } }, repeatEnergy, requestedPowerDomains, deflectPower)
+      : payCardCosts(newState, action.playerId, def, repeatEnergy, requestedPowerDomains, deflectPower);
     if (!costResult.success) return { success: false, error: costResult.error, action };
     newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
+    newState.players[action.playerId].hiddenZone = newState.players[action.playerId].hiddenZone.filter(id => id !== cardInstanceId);
 
     // Determine spell speed: Reaction keyword = Reaction speed; otherwise Action speed
-    const isReactionSpell = def.keywords.includes('Reaction');
+    const isReactionSpell = hasKeyword(state, cardInstanceId, 'Reaction') || fromHidden;
+    const isActionSpell = hasKeyword(state, cardInstanceId, 'Action') || isReactionSpell;
 
     // If chain is open, only Reaction spells can be played
     if (state.showdown.chainOpen && !isReactionSpell) {
       return { success: false, error: 'Only Reaction-speed spells can be played while a chain is active.', action };
+    }
+    if (!state.showdown.chainOpen && !isActionSpell) {
+      return { success: false, error: 'Only Action or Reaction spells can be played during showdowns.', action };
     }
 
     // If starting a new chain, must have focus
@@ -2001,7 +2527,13 @@ function handlePlaySpell(
 
     // Move card to discard (spells resolve from discard pile)
     newState.allCards[cardInstanceId].location = 'discard';
+    newState.allCards[cardInstanceId].facing = 'up';
+    newState.allCards[cardInstanceId].owner_hidden = false;
+    newState.allCards[cardInstanceId].hiddenBattlefieldId = undefined;
+    newState.allCards[cardInstanceId].hiddenSinceTurn = undefined;
     newState.players[action.playerId].discardPile.push(cardInstanceId);
+    markCardPlayed(newState, action.playerId, cardInstanceId);
+    resolveKeywordPlayTriggers(newState, cardInstanceId, action.playerId, { predictChoice });
 
     // Push onto showdown action stack
     pushToActionStack(newState, cardInstanceId, action.playerId, 'spell', `Spell: ${def.name}`);
@@ -2021,14 +2553,26 @@ function handlePlaySpell(
   newState.allCards[cardInstanceId] = { ...newState.allCards[cardInstanceId] };
   const newCard = newState.allCards[cardInstanceId];
 
-  const costResult = payCardCosts(newState, action.playerId, def, 0, powerRuneDomains);
+  const costResult: CostPaymentResult = fromHidden
+    ? payCardCosts(newState, action.playerId, { ...def, cost: { rune: 0, power: 0 } }, repeatEnergy, requestedPowerDomains, deflectPower)
+    : payCardCosts(newState, action.playerId, def, repeatEnergy, requestedPowerDomains, deflectPower);
   if (!costResult.success) return { success: false, error: costResult.error, action };
   newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
+  newState.players[action.playerId].hiddenZone = newState.players[action.playerId].hiddenZone.filter(id => id !== cardInstanceId);
   newCard.location = 'discard';
+  newCard.facing = 'up';
+  newCard.owner_hidden = false;
+  newCard.hiddenBattlefieldId = undefined;
+  newCard.hiddenSinceTurn = undefined;
   newState.players[action.playerId].discardPile.push(cardInstanceId);
+  markCardPlayed(newState, action.playerId, cardInstanceId);
+  resolveKeywordPlayTriggers(newState, cardInstanceId, action.playerId, { predictChoice });
 
   // Resolve spell effects
   const effects = resolveSpellEffect(newState, cardInstanceId, targetId, targetBattlefieldId);
+  for (let i = 0; i < repeatCount; i++) {
+    effects.push(...resolveSpellEffect(newState, cardInstanceId, repeatTargets?.[i] ?? targetId, targetBattlefieldId));
+  }
 
   const playerName = newState.players[action.playerId].name;
   const targetName = targetId
@@ -2044,16 +2588,32 @@ function handlePlaySpell(
   return { success: true, action, newState, sideEffects: effects };
 }
 
+function attachEquipmentToUnit(state: GameState, gearInstanceId: string, unitInstanceId: string): boolean {
+  const gear = state.allCards[gearInstanceId];
+  const unit = state.allCards[unitInstanceId];
+  if (!gear || !unit || unit.location !== 'battlefield' || gear.ownerId !== unit.ownerId) return false;
+  const gearDef = state.cardDefinitions[gear.cardId];
+  if (gearDef?.type !== 'Gear') return false;
+  removeCardFromCurrentZone(state, gearInstanceId);
+  gear.location = 'equipment';
+  gear.battlefieldId = unit.battlefieldId;
+  if (!unit.attachments.includes(gearInstanceId)) unit.attachments.push(gearInstanceId);
+  state.players[gear.ownerId].equipment[gearInstanceId] = unitInstanceId;
+  return true;
+}
+
 function handlePlayGear(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, targetUnitId, targetBattlefieldId, powerRuneDomains } = action.payload as {
-    cardInstanceId: string; targetUnitId?: string; targetBattlefieldId?: string; powerRuneDomains?: Domain[];
+  const { cardInstanceId, targetUnitId, targetBattlefieldId, fromHidden, powerRuneDomains, predictChoice } = action.payload as {
+    cardInstanceId: string; targetUnitId?: string; targetBattlefieldId?: string; fromHidden?: boolean; powerRuneDomains?: Domain[]; predictChoice?: 'keep' | 'recycle';
   };
 
   const card = state.allCards[cardInstanceId];
-  if (!card || card.location !== 'hand') return { success: false, error: 'Gear not in hand.', action };
+  if (!card || (!fromHidden && card.location !== 'hand') || (fromHidden && card.location !== 'hidden')) {
+    return { success: false, error: fromHidden ? 'Gear not in hidden zone.' : 'Gear not in hand.', action };
+  }
   if (card.ownerId !== action.playerId) return { success: false, error: 'Not your card.', action };
   const def = state.cardDefinitions[card.cardId];
   if (def.type !== 'Gear') return { success: false, error: 'Not gear.', action };
@@ -2075,21 +2635,24 @@ function handlePlayGear(
   const newState = deepClone(state);
   const newCard = { ...newState.allCards[cardInstanceId] };
   newState.allCards[cardInstanceId] = newCard;
-  const costResult = payCardCosts(newState, action.playerId, def, 0, powerRuneDomains);
+  const costResult: CostPaymentResult = fromHidden ? { success: true } : payCardCosts(newState, action.playerId, def, 0, powerRuneDomains);
   if (!costResult.success) return { success: false, error: costResult.error, action };
   newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
+  newState.players[action.playerId].hiddenZone = newState.players[action.playerId].hiddenZone.filter(id => id !== cardInstanceId);
 
   if (targetUnitId) {
-    // Attach to target unit.
-    newCard.location = 'equipment';
-    newCard.battlefieldId = newState.allCards[targetUnitId].battlefieldId;
-    newState.allCards[targetUnitId].attachments.push(cardInstanceId);
-    newState.players[action.playerId].equipment[cardInstanceId] = targetUnitId;
+    attachEquipmentToUnit(newState, cardInstanceId, targetUnitId);
   } else if (targetBattlefieldId) {
     // Base/zone gear is associated with the destination battlefield without being attached to a unit.
     newCard.location = 'battlefield';
     newCard.battlefieldId = targetBattlefieldId;
   }
+  newCard.facing = 'up';
+  newCard.owner_hidden = false;
+  newCard.hiddenBattlefieldId = undefined;
+  newCard.hiddenSinceTurn = undefined;
+  markCardPlayed(newState, action.playerId, cardInstanceId);
+  resolveKeywordPlayTriggers(newState, cardInstanceId, action.playerId, { predictChoice });
 
   const playerName = newState.players[action.playerId].name;
   const targetUnitName = targetUnitId
@@ -2169,7 +2732,7 @@ function handleMoveUnit(
     if (fromIsBase && unit.battlefieldId !== getBaseBattlefieldId(action.playerId)) {
       return { success: false, error: 'Units can only move from their controller base.', action };
     }
-    if (!fromIsBase && !toIsBase && !(def.keywords ?? []).includes('Ganking')) {
+    if (!fromIsBase && !toIsBase && !hasKeyword(state, unitId, 'Ganking')) {
       return { success: false, error: 'Unit does not have Ganking.', action };
     }
 
@@ -2389,36 +2952,60 @@ function calculateMight(state: GameState, unitInstanceId: string): number {
     if (gearDef.stats?.might) total += gearDef.stats.might;
   }
 
-  // Apply keyword modifiers (Assault, Hunt, etc.)
-  // For now, Assault is handled at showdown time
+  const text = getCardRulesText(state.cardDefinitions[unit.cardId]);
+  const levelMatches = Array.from(text.matchAll(/\[?Level\s+(\d+)\]?[^\[]*?\+(\d+)\s*:rb_might:/gi));
+  for (const match of levelMatches) {
+    if ((state.players[unit.ownerId]?.xp ?? 0) >= Number(match[1])) {
+      total += Number(match[2]);
+    }
+  }
 
   return total;
 }
 
 function handleHideCard(state: GameState, action: GameAction): ActionResult {
-  const { cardInstanceId } = action.payload as { cardInstanceId: string };
+  const { cardInstanceId, battlefieldId, hideRuneDomain } = action.payload as {
+    cardInstanceId: string;
+    battlefieldId?: string;
+    hideRuneDomain?: Domain;
+  };
   const card = state.allCards[cardInstanceId];
   if (!card) return { success: false, error: 'Card not found.', action };
   if (card.location !== 'hand') return { success: false, error: 'Card not in hand.', action };
 
   const def = state.cardDefinitions[card.cardId];
-  if (!def.keywords.includes('Hidden')) return { success: false, error: 'Card does not have Hidden.', action };
-
-  const player = state.players[action.playerId];
-  const cost = def.cost?.charges ?? 1;
-  if (player.charges < cost) return { success: false, error: 'Not enough charges.', action };
+  if (!hasKeyword(state, cardInstanceId, 'Hidden')) return { success: false, error: 'Card does not have Hidden.', action };
+  if (state.phase !== 'Action' || state.activePlayerId !== action.playerId) {
+    return { success: false, error: 'Hide is only available on your turn during Action phase.', action };
+  }
+  const targetBattlefield = battlefieldId
+    ? state.battlefields.find(bf => bf.id === battlefieldId)
+    : state.battlefields.find(bf => !isBaseBattlefieldId(bf.id) && bf.controllerId === action.playerId);
+  if (!targetBattlefield || isBaseBattlefieldId(targetBattlefield.id) || targetBattlefield.controllerId !== action.playerId) {
+    return { success: false, error: 'Hidden cards must be hidden at a battlefield you control.', action };
+  }
+  const alreadyHasFacedown = state.players[action.playerId].hiddenZone.some(id =>
+    state.allCards[id]?.hiddenBattlefieldId === targetBattlefield.id
+  );
+  if (alreadyHasFacedown) {
+    return { success: false, error: 'You already have a hidden card at that battlefield.', action };
+  }
 
   const newState = deepClone(state);
-  newState.players[action.playerId].charges -= cost;
+  const recycleResult = recycleRuneForHidden(newState, action.playerId, hideRuneDomain);
+  if (!recycleResult.success) return { success: false, error: recycleResult.error, action };
+  newState.players[action.playerId].hand = newState.players[action.playerId].hand.filter(id => id !== cardInstanceId);
   newState.players[action.playerId].hiddenZone.push(cardInstanceId);
   newState.allCards[cardInstanceId].location = 'hidden';
   newState.allCards[cardInstanceId].facing = 'down';
   newState.allCards[cardInstanceId].owner_hidden = true;
+  newState.allCards[cardInstanceId].hiddenBattlefieldId = targetBattlefield.id;
+  newState.allCards[cardInstanceId].hiddenSinceTurn = newState.turn;
 
   const playerName = newState.players[action.playerId].name;
   newState.actionLog.push(makeLog(newState, action.playerId, 'Hide',
-    `${playerName} hid ${def.name}`,
-    { cardInstanceId, cardId: def.id }
+    `${playerName} hid a card at ${targetBattlefield.name}`,
+    { cardInstanceId, cardId: def.id, battlefieldId: targetBattlefield.id, hideRuneDomain }
   ));
 
   return { success: true, action, newState };
@@ -2450,8 +3037,8 @@ function handleUseAbility(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  const { cardInstanceId, abilityIndex, targetId, targetBattlefieldId } = action.payload as {
-    cardInstanceId: string; abilityIndex: number; targetId?: string; targetBattlefieldId?: string;
+  const { cardInstanceId, abilityIndex, targetId, targetBattlefieldId, powerRuneDomains } = action.payload as {
+    cardInstanceId: string; abilityIndex: number; targetId?: string; targetBattlefieldId?: string; powerRuneDomains?: Domain[];
   };
 
   // --- Showdown: push triggered ability onto stack ---
@@ -2484,6 +3071,19 @@ function handleUseAbility(
 
   // --- Normal (non-showdown) ability resolution ---
   const newState = deepClone(state);
+  const deflectPower = getDeflectAdditionalPower(state, action.playerId, [targetId]);
+  if (deflectPower > 0) {
+    const sourceDef = state.cardDefinitions[state.allCards[cardInstanceId]?.cardId];
+    const costResult = payCardCosts(
+      newState,
+      action.playerId,
+      { ...sourceDef, cost: { rune: 0, power: 0 } },
+      0,
+      powerRuneDomains ?? buildAutoPowerRuneDomainsForCost(sourceDef, deflectPower),
+      deflectPower
+    );
+    if (!costResult.success) return { success: false, error: costResult.error, action };
+  }
   const effects = resolveAbilities(newState, cardInstanceId, 'ABILITY', abilityIndex, targetId, targetBattlefieldId);
 
   return { success: true, action, newState, sideEffects: effects };
@@ -2681,8 +3281,6 @@ function resolveAbilities(
     }
 
     if (trigger === 'MOVE' || code === 'MOVE:ADD_CHARGE_1') {
-      const p = state.players[card.ownerId];
-      if (p) p.charges += 1;
       effects.push({ type: 'ReadyPlayer', playerId: card.ownerId });
     }
 
@@ -2696,6 +3294,34 @@ function resolveAbilities(
   }
 
   return effects;
+}
+
+function resolveKeywordPlayTriggers(
+  state: GameState,
+  cardInstanceId: string,
+  playerId: string,
+  options: { predictChoice?: 'keep' | 'recycle'; equipTargetId?: string } = {}
+): void {
+  if (hasKeyword(state, cardInstanceId, 'Vision')) {
+    predict(state, playerId, 1, options.predictChoice === 'recycle');
+  }
+  if (hasKeyword(state, cardInstanceId, 'Predict')) {
+    predict(state, playerId, getKeywordValue(state, cardInstanceId, 'Predict', 1), options.predictChoice === 'recycle');
+  }
+  if (hasKeyword(state, cardInstanceId, 'Weaponmaster') && options.equipTargetId) {
+    attachEquipmentToUnit(state, options.equipTargetId, cardInstanceId);
+  }
+  if (hasKeyword(state, cardInstanceId, 'Legion') && isLegionActive(state, playerId, cardInstanceId)) {
+    const card = state.allCards[cardInstanceId];
+    const text = getCardRulesText(state.cardDefinitions[card.cardId]);
+    if (/ready me/i.test(text)) {
+      card.ready = true;
+      card.exhausted = false;
+    }
+    if (/buff me/i.test(text)) {
+      buffUnit(state, cardInstanceId, 1);
+    }
+  }
 }
 
 function resolveSpellEffect(
@@ -2712,11 +3338,21 @@ function resolveSpellEffect(
   for (const ability of def.abilities) {
     const code = ability.effectCode ?? ability.trigger;
     const targetCard = targetId ? state.allCards[targetId] : null;
+    const text = `${ability.effect} ${ability.effectCode ?? ''}`;
+
+    if (targetId && targetCard && hasKeyword(state, targetId, 'SpellShield')) {
+      state.keywordModifiers = (state.keywordModifiers ?? []).filter(mod =>
+        !(mod.cardInstanceId === targetId && mod.keyword === 'SpellShield')
+      );
+      effects.push({ type: 'TriggerAbility', cardInstanceId: targetId, trigger: 'SpellShield' });
+      continue;
+    }
 
     if (code.includes('DEAL_3') || code.includes('DEAL_3_BANISH_ON_DEATH')) {
       if (targetCard) {
         const died = takeDamage(state, targetId!, 3);
         effects.push({ type: 'DamageUnit', unitInstanceId: targetId!, damage: 3 });
+        if (died && code.includes('BANISH')) banishCard(state, targetId!);
       }
     }
 
@@ -2742,8 +3378,45 @@ function resolveSpellEffect(
 
     if (code.includes('GIVE_ASSAULT')) {
       if (targetCard) {
+        grantKeyword(state, targetId!, 'Assault', extractKeywordValue(text, 'Assault', 2), 'turn', cardInstanceId);
         effects.push({ type: 'ApplyModifier', unitInstanceId: targetId!, modifier: 'assault', value: 2 });
       }
+    }
+
+    const genericDealMatch = text.match(/\bdeal\s+(\d+)\s+to/i);
+    if (!code.includes('DEAL_') && genericDealMatch && targetId && targetCard) {
+      const damage = Number(genericDealMatch[1]);
+      takeDamage(state, targetId, damage);
+      effects.push({ type: 'DamageUnit', unitInstanceId: targetId, damage });
+    }
+
+    if (/buff/i.test(text) && targetId && targetCard) {
+      buffUnit(state, targetId, 1);
+      effects.push({ type: 'ApplyModifier', unitInstanceId: targetId, modifier: 'buff', value: 1 });
+    }
+
+    if (/\[?Stun\]?|stun an?/i.test(text) && targetId && targetCard) {
+      stunUnit(state, targetId);
+      effects.push({ type: 'ExhaustUnit', unitInstanceId: targetId });
+    }
+
+    if (/recall|return .* hand/i.test(text) && targetId && targetCard) {
+      recallCardToHand(state, targetId);
+      effects.push({ type: 'MoveUnit', unitInstanceId: targetId, from: targetCard.battlefieldId ?? '', to: 'hand' });
+    }
+
+    if (/banish/i.test(text) && targetId && targetCard) {
+      banishCard(state, targetId);
+      effects.push({ type: 'KillUnit', unitInstanceId: targetId });
+    }
+
+    if (/recycle/i.test(text) && targetId && targetCard) {
+      recycleCard(state, targetId);
+      effects.push({ type: 'MoveUnit', unitInstanceId: targetId, from: targetCard.location, to: 'deck' });
+    }
+
+    if (/\[?Predict/i.test(text)) {
+      predict(state, card.ownerId, extractKeywordValue(text, 'Predict', 1));
     }
   }
 
@@ -2811,6 +3484,26 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
     actions.push(makeAction('Pass', playerId, {}));
   }
 
+  if (state.phase === 'Showdown' && state.showdown?.focusPlayerId === playerId) {
+    for (const cardId of [...player.hand, ...(player.hiddenZone ?? [])]) {
+      const card = state.allCards[cardId];
+      if (!card) continue;
+      const def = state.cardDefinitions[card.cardId];
+      const fromHidden = card.location === 'hidden';
+      const playableFromHidden = fromHidden && (card.hiddenSinceTurn ?? Infinity) < state.turn;
+      const reactionSpeed = hasKeyword(state, cardId, 'Reaction') || hasKeyword(state, cardId, 'Quick-Draw') || playableFromHidden;
+      const actionSpeed = hasKeyword(state, cardId, 'Action') || reactionSpeed;
+      if (def.type === 'Spell' && actionSpeed && (!state.showdown.chainOpen || reactionSpeed) && (fromHidden ? playableFromHidden : canPayCardCosts(state, playerId, def))) {
+        actions.push(makeAction('PlaySpell', playerId, { cardInstanceId: cardId, fromHidden, powerRuneDomains: buildAutoPowerRuneDomains(def) }));
+      }
+      if (def.type === 'Gear' && reactionSpeed && (fromHidden ? playableFromHidden : canPayCardCosts(state, playerId, def))) {
+        const unitId = liveUnitsAtBattlefield(state, state.showdown.battlefieldId, playerId)[0];
+        if (unitId) actions.push(makeAction('PlayGear', playerId, { cardInstanceId: cardId, targetUnitId: unitId, fromHidden, powerRuneDomains: buildAutoPowerRuneDomains(def) }));
+      }
+    }
+    return actions;
+  }
+
   if (state.phase !== 'Action') {
     return actions;
   }
@@ -2821,13 +3514,31 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
     if (!card) continue;
     const def = state.cardDefinitions[card.cardId];
 
-    if (def.type === 'Unit' && canPayCardCosts(state, playerId, def)) {
+    if (hasKeyword(state, cardId, 'Hidden')) {
+      for (const bf of state.battlefields) {
+        if (isBaseBattlefieldId(bf.id) || bf.controllerId !== playerId) continue;
+        const alreadyHidden = player.hiddenZone.some(id => state.allCards[id]?.hiddenBattlefieldId === bf.id);
+        const hideRuneDomain = getActiveRuneIds(state, playerId)
+          .map(id => getRuneDomain(state, id))
+          .find((domain): domain is Domain => Boolean(domain));
+        if (!alreadyHidden && hideRuneDomain) {
+          actions.push(makeAction('HideCard', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hideRuneDomain }));
+        }
+      }
+    }
+
+    const hasEnoughDisplayedResources = (definition: CardDefinition, extraEnergy = 0) =>
+      Math.max(player.energy ?? 0, getReadyRuneIds(state, playerId).length) >= ((definition.cost?.rune ?? 0) + extraEnergy)
+      && getActiveRuneIds(state, playerId).length >= (definition.cost?.power ?? 0);
+
+    if (def.type === 'Unit' && (canPayCardCosts(state, playerId, def) || hasEnoughDisplayedResources(def))) {
       const powerRuneDomains = buildAutoPowerRuneDomains(def);
       for (const bf of state.battlefields) {
         // In MVP, can play to any BF where you have units (or it's unoccupied)
-        if (bf.controllerId === playerId || bf.units.some(id => state.allCards[id]?.ownerId === playerId)) {
+        const hasFriendlyUnit = bf.units.some(id => state.allCards[id]?.ownerId === playerId);
+        if (bf.controllerId === playerId || (hasKeyword(state, cardId, 'Ambush') && hasFriendlyUnit)) {
           actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: false, powerRuneDomains }));
-          if (def.keywords.includes('Accelerate') && canPayCardCosts(state, playerId, def, 1)) {
+          if (hasKeyword(state, cardId, 'Accelerate') && (canPayCardCosts(state, playerId, def, 1) || hasEnoughDisplayedResources(def, 1))) {
             actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: true, powerRuneDomains }));
           }
         }
@@ -2864,7 +3575,7 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
         if (targetBf.id === bf.id) continue;
         if (isBaseBattlefieldId(targetBf.id) && targetBf.id !== getBaseBattlefieldId(playerId)) continue;
         if (isBaseBattlefieldId(bf.id) && bf.id !== getBaseBattlefieldId(playerId)) continue;
-        if (!isBaseBattlefieldId(bf.id) && !isBaseBattlefieldId(targetBf.id) && !(def.keywords ?? []).includes('Ganking')) continue;
+        if (!isBaseBattlefieldId(bf.id) && !isBaseBattlefieldId(targetBf.id) && !hasKeyword(state, unitId, 'Ganking')) continue;
         actions.push(makeAction('MoveUnit', playerId, {
           cardInstanceId: unitId,
           fromBattlefieldId: bf.id,
