@@ -23,7 +23,7 @@
  */
 
 import React, { useCallback } from 'react';
-import { useGameStore } from '../../store/gameStore';
+import { useGameStore, type PlayerWarning } from '../../store/gameStore';
 import { gameService } from '../../services/gameService';
 import { ActionBar } from './ActionBar';
 import { CardModal } from './CardModal';
@@ -2252,6 +2252,42 @@ function GameOverModal({ winnerName, isWinner, onExitToLobby }: GameOverModalPro
   );
 }
 
+interface WarningToastsProps {
+  warnings: PlayerWarning[];
+  onDismiss: (id: string) => void;
+}
+
+function WarningToasts({ warnings, onDismiss }: WarningToastsProps) {
+  React.useEffect(() => {
+    if (warnings.length === 0) return;
+    const timers = warnings.map(warning =>
+      window.setTimeout(() => onDismiss(warning.id), 4200)
+    );
+    return () => timers.forEach(timer => window.clearTimeout(timer));
+  }, [warnings, onDismiss]);
+
+  if (warnings.length === 0) return null;
+
+  return (
+    <div style={warningStyles.container} role="status" aria-live="polite">
+      {warnings.slice(-3).map(warning => (
+        <div key={warning.id} style={warningStyles.toast}>
+          <div style={warningStyles.icon}>!</div>
+          <div style={warningStyles.message}>{warning.message}</div>
+          <button
+            type="button"
+            style={warningStyles.close}
+            onClick={() => onDismiss(warning.id)}
+            aria-label="Dismiss warning"
+          >
+            x
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function getDamagePriority(def?: CardDefinition): number {
   if (!def) return 1;
   const abilityText = (def.abilities ?? []).map(ability => ability.effect).join(' ');
@@ -2431,7 +2467,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     const card = gameState.allCards[cardInstanceId];
     const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
     const destination = gameState.battlefields.find(bf => bf.id === battlefieldId);
-    const reject = (message: string) => store.addLog(message);
+    const reject = (message: string) => store.addWarning(message);
 
     if (!player || !card || !def) return reject('Invalid play: card not found.');
     if (!myTurn || phase !== 'Action') return reject('Invalid play: you can only play cards during your Action phase.');
@@ -2490,7 +2526,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     const def = card ? gameState.cardDefinitions[card.cardId] : undefined;
     const origin = card?.battlefieldId ? gameState.battlefields.find(bf => bf.id === card.battlefieldId) : undefined;
     const destination = gameState.battlefields.find(bf => bf.id === destinationBattlefieldId);
-    const reject = (message: string) => store.addLog(message);
+    const reject = (message: string) => store.addWarning(message);
 
     if (!card || !def) return reject('Invalid move: unit not found.');
     if (!myTurn || phase !== 'Action') return reject('Invalid move: you can only move units during your Action phase.');
@@ -2591,7 +2627,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     // If a spell is already pending, clicking it again cancels
     if (pendingSpell && cardInstanceId === pendingSpell.cardInstanceId) {
       const def = gameState?.cardDefinitions[gameState.allCards[pendingSpell.cardInstanceId]?.cardId];
-      store.addLog(`Cancelled casting ${def?.name ?? 'spell'}.`);
+      store.addWarning(`Cancelled casting ${def?.name ?? 'spell'}.`);
       setPendingSpell(null);
       return;
     }
@@ -2611,13 +2647,13 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     const eligibility = canCastSpell(def, myTurn, phase, showdown ?? null, hasFocus);
 
     if (!eligibility.allowed) {
-      store.addLog(eligibility.reason ?? 'Cannot cast this spell now.');
+      store.addWarning(eligibility.reason ?? 'Cannot cast this spell now.');
       return;
     }
 
     const targeting = getSpellTargeting(def);
     setPendingSpell({ cardInstanceId, targetType: targeting.targetType, selectedTargetIds: [] });
-    store.addLog(targeting.needsTarget
+    store.addWarning(targeting.needsTarget
       ? `Select targets for ${def.name}.`
       : `Cast ${def.name}?`
     );
@@ -2650,7 +2686,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     }
 
     handleAction('PlaySpell', payload);
-    store.addLog(`Cast ${def?.name ?? 'spell'}.`);
+    store.addWarning(`Cast ${def?.name ?? 'spell'}.`);
     setPendingSpell(null);
   }, [pendingSpell, handleAction, gameState, store]);
 
@@ -2674,7 +2710,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const handleCancelSpell = useCallback(() => {
     if (!pendingSpell) return;
     const def = gameState?.cardDefinitions[gameState.allCards[pendingSpell.cardInstanceId]?.cardId];
-    store.addLog(`Cancelled casting ${def?.name ?? 'spell'}.`);
+    store.addWarning(`Cancelled casting ${def?.name ?? 'spell'}.`);
     // Clear power rune selection too if this spell had dual-domain power cost
     if (pendingPowerRuneSelection?.actionType === 'PlaySpell') {
       setPendingPowerRuneSelection(null);
@@ -2737,6 +2773,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
 
   return (
     <div style={styles.board}>
+      <WarningToasts warnings={store.warnings} onDismiss={store.dismissWarning} />
+
       {/* Board column (left) + right panel */}
       <div style={boardWithRightPanelStyle}>
         {/* Board column: top bar + main rows + action bar */}
@@ -2978,6 +3016,60 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
 // ─────────────────────────────────────────
 // Styles
 // ─────────────────────────────────────────
+const warningStyles: Record<string, React.CSSProperties> = {
+  container: {
+    position: 'fixed',
+    top: '14px',
+    right: '14px',
+    zIndex: 5000,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    width: 'min(360px, calc(100vw - 28px))',
+    pointerEvents: 'none',
+  },
+  toast: {
+    display: 'grid',
+    gridTemplateColumns: '24px 1fr 28px',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '10px',
+    borderRadius: '8px',
+    border: '1px solid rgba(250,204,21,0.38)',
+    background: 'rgba(24,20,12,0.96)',
+    color: '#fef3c7',
+    boxShadow: '0 14px 36px rgba(0,0,0,0.35)',
+    pointerEvents: 'auto',
+  },
+  icon: {
+    width: '22px',
+    height: '22px',
+    borderRadius: '50%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    background: '#facc15',
+    color: '#111827',
+    fontWeight: 900,
+    fontSize: '14px',
+  },
+  message: {
+    fontSize: '12px',
+    lineHeight: 1.35,
+    fontWeight: 700,
+  },
+  close: {
+    width: '28px',
+    height: '28px',
+    border: 'none',
+    borderRadius: '6px',
+    background: 'rgba(255,255,255,0.08)',
+    color: '#fef3c7',
+    fontWeight: 900,
+    cursor: 'pointer',
+  },
+};
+
 const gameOverStyles: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'fixed',

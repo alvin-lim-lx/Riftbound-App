@@ -330,7 +330,7 @@ export function createGame(
       {
         id: randomId(),
         type: 'GameStart' as const,
-        message: `Game started — ${playerNames[0]} vs ${playerNames[1]}`,
+        message: `Game started: ${playerNames[0]} vs ${playerNames[1]}`,
         turn: 0,
         phase: 'Setup' as Phase,
         timestamp: Date.now(),
@@ -368,51 +368,51 @@ export function executeAction(
   switch (action.type) {
     case 'Pass': {
       const result = handlePass(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'PlayUnit': {
       const result = handlePlayUnit(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'PlaySpell': {
       const result = handlePlaySpell(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'PlayGear': {
       const result = handlePlayGear(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'EquipGear': {
       const result = handleEquipGear(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'MoveUnit': {
       const result = handleMoveUnit(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'Attack': {
       const result = handleAttack(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'HideCard': {
       const result = handleHideCard(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'ReactFromHidden': {
       const result = handleReactFromHidden(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'UseAbility': {
       const result = handleUseAbility(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'Concede': {
       const result = handleConcede(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'Mulligan': {
       const result = handleMulligan(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'Focus': {
       // Focus action is deprecated — attacker now starts with focus automatically.
@@ -422,21 +422,29 @@ export function executeAction(
     }
     case 'Reaction': {
       const result = handleReaction(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'AssignCombatDamage': {
       const result = handleAssignCombatDamage(state, action);
-      return result;
+      return recordActionResult(result, action);
     }
     case 'CloseReactionWindow': {
       const newState = closeReactionWindow(state);
       // Automatically resolve combat after window closes
       const combatResult = resolveCombat(newState);
-      return combatResult;
+      return recordActionResult(combatResult, action);
     }
     default:
       return { success: false, error: `Unknown action type: ${action.type}`, action };
   }
+}
+
+function recordActionResult(result: ActionResult, action: GameAction): ActionResult {
+  if (!result.success || !result.newState) return result;
+  if (!result.newState.actionLog.some(entry => entry.id === action.id)) {
+    result.newState.actionLog.push(action);
+  }
+  return { ...result, action };
 }
 
 // ============================================================
@@ -506,7 +514,7 @@ export function startNewTurn(state: GameState): GameState {
   newState.scoredBattlefieldsThisTurn = {};
   const playerName = newState.players[nextPlayerId]?.name || nextPlayerId;
   newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange',
-    `Turn ${newState.turn} begins for ${playerName}`));
+    `Turn ${newState.turn}: ${playerName}'s turn`));
   return enterPhase(newState, 'Awaken');
 }
 
@@ -843,7 +851,8 @@ export function enterShowdown(
   }
 
   newState.actionLog.push(makeLog(newState, attackerOwner, 'Showdown',
-    `${state.cardDefinitions[attacker.cardId].name} entered ${bf.name}${bfIsEmpty ? ' (Focus claimed)' : ' — Showdown!'}`));
+    `Showdown started at ${bf.name}`,
+    { battlefieldId: bf.id, attackerIds, defenderIds, focusPlayerId }));
 
   return newState;
 }
@@ -1937,6 +1946,15 @@ function handlePlayUnit(
   // Trigger play abilities
   const effects = resolveAbilities(newState, cardInstanceId, 'PLAY');
 
+  const playerName = newState.players[action.playerId].name;
+  const destinationName = newBf.name;
+  newState.actionLog.push(makeLog(newState, action.playerId, 'System',
+    hidden
+      ? `${playerName} played a hidden unit to ${destinationName}`
+      : `${playerName} played ${def.name} to ${destinationName}`,
+    { actionType: 'PlayUnit', cardInstanceId, cardId: def.id, battlefieldId, hidden: Boolean(hidden) }
+  ));
+
   return { success: true, action, newState, sideEffects: effects };
 }
 
@@ -2012,6 +2030,17 @@ function handlePlaySpell(
   // Resolve spell effects
   const effects = resolveSpellEffect(newState, cardInstanceId, targetId, targetBattlefieldId);
 
+  const playerName = newState.players[action.playerId].name;
+  const targetName = targetId
+    ? newState.cardDefinitions[newState.allCards[targetId]?.cardId]?.name
+    : targetBattlefieldId
+      ? newState.battlefields.find(b => b.id === targetBattlefieldId)?.name
+      : undefined;
+  newState.actionLog.push(makeLog(newState, action.playerId, 'System',
+    targetName ? `${playerName} cast ${def.name} targeting ${targetName}` : `${playerName} cast ${def.name}`,
+    { actionType: 'PlaySpell', cardInstanceId, cardId: def.id, targetId, targetBattlefieldId }
+  ));
+
   return { success: true, action, newState, sideEffects: effects };
 }
 
@@ -2062,6 +2091,20 @@ function handlePlayGear(
     newCard.battlefieldId = targetBattlefieldId;
   }
 
+  const playerName = newState.players[action.playerId].name;
+  const targetUnitName = targetUnitId
+    ? newState.cardDefinitions[newState.allCards[targetUnitId]?.cardId]?.name
+    : undefined;
+  const targetBattlefieldName = targetBattlefieldId
+    ? newState.battlefields.find(b => b.id === targetBattlefieldId)?.name
+    : undefined;
+  newState.actionLog.push(makeLog(newState, action.playerId, targetUnitId ? 'Equip' : 'System',
+    targetUnitName
+      ? `${playerName} equipped ${def.name} to ${targetUnitName}`
+      : `${playerName} played ${def.name}${targetBattlefieldName ? ` to ${targetBattlefieldName}` : ''}`,
+    { actionType: 'PlayGear', gearInstanceId: cardInstanceId, cardId: def.id, targetUnitId, targetBattlefieldId }
+  ));
+
   return { success: true, action, newState };
 }
 
@@ -2069,23 +2112,8 @@ function handleEquipGear(
   state: GameState,
   action: GameAction
 ): ActionResult {
-  // Same as PlayGear for now
-  const result = handlePlayGear(state, action);
-  if (!result.success || !result.newState) return result;
-
-  // Log equipment attachment
-  const { cardInstanceId, targetUnitId } = action.payload as { cardInstanceId: string; targetUnitId?: string };
-  const def = state.cardDefinitions[state.allCards[cardInstanceId].cardId];
-  const playerName = result.newState.players[action.playerId].name;
-  if (targetUnitId) {
-    const targetUnitDef = state.cardDefinitions[result.newState.allCards[targetUnitId].cardId];
-    result.newState.actionLog.push(makeLog(result.newState, action.playerId, 'Equip',
-      `${playerName} equipped ${def.name} to ${targetUnitDef.name}`,
-      { gearInstanceId: cardInstanceId, targetUnitId }
-    ));
-  }
-
-  return result;
+  // Same as PlayGear for now; handlePlayGear owns the public log entry.
+  return handlePlayGear(state, action);
 }
 
 function handleMoveUnit(
@@ -2228,6 +2256,13 @@ function handleAttack(
   newAttacker.ready = false;
   newAttacker.exhausted = true;
   updateUncontestedBattlefieldControl(newState, fromBf?.id ?? '', newState.turn);
+
+  const playerName = newState.players[action.playerId].name;
+  const attackerName = newState.cardDefinitions[newAttacker.cardId]?.name ?? 'a unit';
+  newState.actionLog.push(makeLog(newState, action.playerId, 'Combat',
+    `${playerName} attacked ${targetBf.name} with ${attackerName}`,
+    { actionType: 'Attack', attackerId, targetBattlefieldId, fromBattlefieldId: fromBf?.id }
+  ));
 
   // Enter showdown state (sets phase + ShowdownState)
   const showdownState = enterShowdown(newState, attackerId, targetBattlefieldId);
@@ -2457,6 +2492,11 @@ function handleUseAbility(
 function handleConcede(state: GameState, action: GameAction): ActionResult {
   const opponentId = getOpponentId(state, action.playerId);
   const newState = deepClone(state);
+  const playerName = newState.players[action.playerId]?.name ?? action.playerId;
+  newState.actionLog.push(makeLog(newState, action.playerId, 'GameOver',
+    `${playerName} conceded`,
+    { actionType: 'Concede', winnerId: opponentId }
+  ));
   return {
     success: true,
     newState: { ...newState, phase: 'GameOver', winner: opponentId },
@@ -2507,9 +2547,12 @@ function handleMulligan(state: GameState, action: GameAction): ActionResult {
 
   // Log mulligan decision
   const playerName = newState.players[action.playerId].name;
+  const mulliganedCount = setAsideIds.length;
   newState.actionLog.push(makeLog(newState, action.playerId, 'Mulligan',
-    `${playerName} completed mulligan — kept ${uniqueKeepIds.length}, set aside ${setAsideIds.length}`,
-    { kept: uniqueKeepIds.length, setAside: setAsideIds.length }
+    mulliganedCount === 0
+      ? `${playerName} kept their opening hand`
+      : `${playerName} mulliganed ${mulliganedCount} card${mulliganedCount === 1 ? '' : 's'}`,
+    { kept: uniqueKeepIds.length, setAside: setAsideIds.length, mulliganed: mulliganedCount }
   ));
 
   if (bothReady) {

@@ -21,8 +21,8 @@ export function GamePage({ onExitToLobby }: GamePageProps) {
     const onGameStart = (data: any) => {
       console.log('[GamePage] Game started:', data);
       storeRef.current.setGameState(data.initialState);
+      storeRef.current.hydrateGameLog(data.initialLog ?? []);
       storeRef.current.setLobby(null);
-      storeRef.current.addLog('Game started!');
     };
 
     const onStateUpdate = (data: any) => {
@@ -30,11 +30,30 @@ export function GamePage({ onExitToLobby }: GamePageProps) {
     };
 
     const onGameOver = (data: any) => {
-      storeRef.current.addLog(`Game Over! Winner: ${data.winnerId}`);
+      if (storeRef.current.gameLogEntries.some(entry => entry.type === 'GameOver')) return;
+      const winnerName = storeRef.current.gameState?.players[data.winnerId]?.name ?? data.winnerId;
+      storeRef.current.addGameLogEntries([{
+        id: `game-over-${data.winnerId}-${Date.now()}`,
+        type: 'GameOver',
+        message: `Game over: ${winnerName} wins`,
+        turn: storeRef.current.gameState?.turn ?? 0,
+        phase: storeRef.current.gameState?.phase ?? 'GameOver',
+        timestamp: Date.now(),
+      }]);
     };
 
     const onError = (data: any) => {
-      storeRef.current.addLog(`Error: ${data.message}`);
+      storeRef.current.addWarning(data.message ?? 'Something went wrong.');
+    };
+
+    const onActionResult = (data: any) => {
+      if (data.success === false) {
+        storeRef.current.addWarning(data.error ?? 'Action failed.');
+      }
+    };
+
+    const onGameLog = (data: any) => {
+      storeRef.current.addGameLogEntries(data.entries ?? []);
     };
 
     const onChatMessage = (data: any) => {
@@ -44,15 +63,19 @@ export function GamePage({ onExitToLobby }: GamePageProps) {
 
     gameService.on('game_start', onGameStart);
     gameService.on('game_state_update', onStateUpdate);
+    gameService.on('game_log', onGameLog);
     gameService.on('game_over', onGameOver);
     gameService.on('error', onError);
+    gameService.on('action_result', onActionResult);
     gameService.on('chat_message', onChatMessage);
 
     return () => {
       gameService.off('game_start', onGameStart);
       gameService.off('game_state_update', onStateUpdate);
+      gameService.off('game_log', onGameLog);
       gameService.off('game_over', onGameOver);
       gameService.off('error', onError);
+      gameService.off('action_result', onActionResult);
       gameService.off('chat_message', onChatMessage);
     };
   }, []);
