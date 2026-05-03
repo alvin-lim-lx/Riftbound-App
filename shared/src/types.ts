@@ -254,6 +254,8 @@ export interface GameState {
   pendingCombatDamageAssignment: PendingCombatDamageAssignment | null;
   keywordModifiers: KeywordModifier[];
   pendingKeywordChoices: PendingKeywordChoice[];
+  /** Card instance IDs that have Legion keyword active this turn */
+  legionActiveCardIds: string[];
 }
 
 // --- Action Types ---

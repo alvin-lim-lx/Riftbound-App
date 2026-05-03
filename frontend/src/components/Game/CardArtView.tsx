@@ -22,6 +22,8 @@ interface Props {
   forceReady?: boolean;
   /** CSS border string applied to the card image element. */
   border?: string;
+  /** If true, a Legion badge is rendered on the card to indicate Legion is active. */
+  isLegionActive?: boolean;
 }
 
 // Card art aspect ratio (width / height)
@@ -42,8 +44,8 @@ const landscapeSizeMap = {
   lg: { w: 168, h: 120 },
 };
 
-const ENLARGE_W = 220;
-const ENLARGE_H = 220;
+const ENLARGE_W = 340;
+const ENLARGE_H = 340;
 const HOVER_MARGIN = 16;
 const RESERVED_BOTTOM_UI = 96;
 
@@ -69,6 +71,7 @@ export function CardArtView({
   showStats = false, showKeywords = false,
   size = 'md', maxHeight, landscape = false, onClick, onHover, forceReady = false,
   border,
+  isLegionActive = false,
 }: Props) {
   const [hovering, setHovering] = useState(false);
   const [enlargePos, setEnlargePos] = useState<{ w: number; h: number; left: number; top: number } | null>(null);
@@ -188,7 +191,13 @@ export function CardArtView({
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         title={def?.name ?? card.cardId}
-      />
+      >
+        {isLegionActive && (
+          <div style={legionBadge}>
+            <span style={legionText}>Legion</span>
+          </div>
+        )}
+      </div>
       </div>
       {hovering && enlargePos && def?.imageUrl && ReactDOM.createPortal(
         <div
@@ -239,4 +248,26 @@ const statBadge: React.CSSProperties = {
   position: 'absolute',
   top: '3px',
   right: '3px',
+};
+
+const legionBadge: React.CSSProperties = {
+  position: 'absolute',
+  top: '4px',
+  left: '4px',
+  padding: '2px 6px',
+  borderRadius: '4px',
+  background: 'linear-gradient(135deg, #c026d3 0%, #9333ea 100%)',
+  display: 'flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  boxShadow: '0 2px 6px rgba(0,0,0,0.4)',
+  zIndex: 2,
+};
+
+const legionText: React.CSSProperties = {
+  fontSize: '9px',
+  color: '#fff',
+  fontWeight: 900,
+  textTransform: 'uppercase',
+  letterSpacing: '0.5px',
 };
