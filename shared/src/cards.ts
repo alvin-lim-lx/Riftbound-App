@@ -30,7 +30,7 @@ export const CARDS: Record<string, CardDefinition> = {
     keywords: [],
     stats: { might: 5 },
     abilities: [
-      { trigger: 'Static', effect: "As you play me, you may discard 1 as an additional cost. If you do, reduce my cost by :rb_energy_2:.", effectCode: '' },
+      { trigger: 'Static', effect: "As you play me, you may discard 1 as an additional cost. If you do, reduce my cost by :rb_energy_2:.", effectCode: 'DISCARD_COST_2' },
     ],
     tags: ["Pirate", "Bilgewater"],
     set: 'Origins',
@@ -182,7 +182,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 4 },
     domains: ["Fury"],
-    keywords: [],
+    keywords: ['Legion'],
     stats: { might: 4 },
     abilities: [
       { trigger: 'Static', effect: "[Legion] — I cost :rb_energy_2: less. (Get the effect if you\'ve played another card this turn.)", effectCode: '' },
@@ -247,7 +247,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 3 },
     domains: ["Fury"],
-    keywords: [],
+    keywords: ['Legion'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Legion] — When you play me, give a unit +2 :rb_might: this turn. (Get the effect if you\'ve played another card this turn.)", effectCode: '' },
@@ -311,7 +311,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 5, power: 1 },
     domains: ["Fury"],
-    keywords: [],
+    keywords: ['Legion'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Legion] — When you play me, discard 2, then draw 2. (Get the effect if you\'ve played another card this turn.)", effectCode: '' },
@@ -328,7 +328,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 2, power: 1 },
     domains: ["Fury"],
-    keywords: [],
+    keywords: ['Legion'],
     abilities: [
       { trigger: 'Static', effect: ":rb_exhaust:: [Legion] — The next unit you play this turn enters ready. (Get the effect if you\'ve played another card this turn.)", effectCode: '' },
     ],
@@ -1192,7 +1192,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 7 },
     domains: ["Calm"],
-    keywords: ['Accelerate'],
+    keywords: ['Accelerate', 'Deathknell'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Accelerate] (You may pay :rb_energy_1::rb_rune_calm: as an additional cost to have me enter ready.) [Deathknell] — Channel 2 runes exhausted and draw 1. (When I die, get the effect.)", effectCode: '' },
@@ -1369,7 +1369,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 5 },
     domains: ["Mind"],
-    keywords: ['Shield', 'Recycle'],
+    keywords: ['Shield', 'Recycle', 'Vision'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.) [Shield] (+1 :rb_might: while I\'m a defender.)", effectCode: '' },
@@ -1521,10 +1521,11 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Mind"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 1 },
     abilities: [
-      { trigger: 'Static', effect: "[Deathknell] — Draw 1. (When I die, get the effect.)", effectCode: '' },
+      { trigger: 'Static', effect: "[
+        knell] — Draw 1. (When I die, get the effect.)", effectCode: '' },
     ],
     tags: ["Freljord"],
     set: 'Origins',
@@ -1585,7 +1586,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Mind"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Vision'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.) Other friendly units have [Vision].", effectCode: '' },
@@ -1746,7 +1747,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 5, power: 1 },
     domains: ["Mind"],
-    keywords: ['Accelerate', 'Recycle'],
+    keywords: ['Accelerate', 'Recycle', 'Deathknell'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Accelerate] (You may pay :rb_energy_1::rb_rune_mind: as an additional cost to have me enter ready.) [Deathknell] — Recycle me to ready your runes. (When I die, get the effect.)", effectCode: '' },
@@ -2648,7 +2649,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Chaos Rune",
     type: 'Rune',
     domains: ["Chaos"],
-    keywords: [],
+    keywords: ['Action', 'Hidden'],
     abilities: [],
     tags: [],
     set: 'Origins',
@@ -2722,7 +2723,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Chaos"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Vision'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.)", effectCode: '' },
@@ -2770,7 +2771,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 6 },
     domains: ["Chaos"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Vision'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.) You may play me to an open battlefield.", effectCode: '' },
@@ -2834,7 +2835,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 5, power: 1 },
     domains: ["Chaos"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — Discard 2, then draw 2. (When I die, get the effect.)", effectCode: '' },
@@ -3023,7 +3024,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Chaos"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 1 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — Deal 4 to all units at my battlefield. (When I die, get the effect.)", effectCode: '' },
@@ -3441,7 +3442,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 1 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — Channel 1 rune exhausted. (When I die, get the effect.)", effectCode: '' },
@@ -3457,7 +3458,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Order"],
-    keywords: ['Buff'],
+    keywords: ['Buff', 'Legion'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Legion] — When you play me, buff me. (If I don\'t have a buff, I get a +1 :rb_might: buff. Get the effect if you\'ve played another card this turn.)", effectCode: '' },
@@ -3474,7 +3475,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Legion'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Legion] — When you play me, play two 1 :rb_might: Recruit unit tokens here. (Get the effect if you\'ve played another card this turn.)", effectCode: '' },
@@ -3748,7 +3749,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 6, power: 1 },
     domains: ["Order"],
-    keywords: ['Buff', 'Recycle'],
+    keywords: ['Buff', 'Recycle', 'Vision'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.) When you recycle one or more cards to your Main Deck, buff a friendly unit. (If it doesn\'t have a buff, it gets a +1 :rb_might: buff. Runes aren\'t cards.)", effectCode: '' },
@@ -3765,7 +3766,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "Your [Deathknell] effects trigger an additional time.", effectCode: '' },
@@ -3815,7 +3816,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 5, power: 1 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 4 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — Play three 1 :rb_might: Recruit unit tokens into your base. (When I die, get the effect.)", effectCode: '' },
@@ -3881,7 +3882,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 6, power: 1 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Legion'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Legion] — When you play me, ready me. (Get the effect if you\'ve played another card this turn) Other friendly units have +1 :rb_might: here.", effectCode: '' },
@@ -3945,7 +3946,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Daughter of the Void",
     type: 'Legend',
     domains: ["Fury", "Mind"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Mighty'],
     abilities: [
       { trigger: 'Static', effect: ":rb_exhaust:: [Reaction] — [Add] :rb_rune_rainbow:. Use only to play spells. (Abilities that add resources can\'t be reacted to.)", effectCode: '' },
     ],
@@ -4007,7 +4008,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Loose Cannon",
     type: 'Legend',
     domains: ["Fury", "Chaos"],
-    keywords: [],
+    keywords: ['Reaction', 'Legion'],
     abilities: [
       { trigger: 'Static', effect: "At start of your Beginning Phase, draw 1 if you have one or fewer cards in your hand.", effectCode: '' },
     ],
@@ -4038,7 +4039,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Hand of Noxus",
     type: 'Legend',
     domains: ["Fury", "Order"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Legion'],
     abilities: [
       { trigger: 'Static', effect: ":rb_exhaust:: [Reaction], [Legion] — [Add] :rb_energy_1:. (Abilities that add resources can\'t be reacted to. Get the effect if you\'ve played a card this turn.)", effectCode: '' },
     ],
@@ -4055,7 +4056,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Signature',
     cost: { rune: 4, power: 1 },
     domains: ["Fury", "Order"],
-    keywords: ['Action'],
+    keywords: ['Action', 'Legion'],
     abilities: [
       { trigger: 'Static', effect: "[Action] (Play on your turn or in showdowns.) Choose a unit. Kill it the next time it takes damage this turn. [Legion] — Kill it now instead. (Get the effect if you\'ve played another card this turn.)", effectCode: '' },
     ],
@@ -4069,7 +4070,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Nine-Tailed Fox",
     type: 'Legend',
     domains: ["Calm", "Mind"],
-    keywords: [],
+    keywords: ['Action'],
     abilities: [
       { trigger: 'Static', effect: "When an enemy unit attacks a battlefield you control, give it -1 :rb_might: this turn, to a minimum of 1 :rb_might:.", effectCode: '' },
     ],
@@ -4162,7 +4163,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Radiant Dawn",
     type: 'Legend',
     domains: ["Calm", "Order"],
-    keywords: ['Buff', 'Stun'],
+    keywords: ['Buff', 'Stun', 'Hidden'],
     abilities: [
       { trigger: 'Static', effect: "When you stun one or more enemy units, buff a friendly unit. (If it doesn\'t have a buff, it gets a +1 :rb_might: buff.)", effectCode: '' },
     ],
@@ -4224,7 +4225,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Herald of the Arcane",
     type: 'Legend',
     domains: ["Mind", "Order"],
-    keywords: [],
+    keywords: ['Ganking'],
     abilities: [
       { trigger: 'Static', effect: ":rb_energy_1:, :rb_exhaust:: Play a 1 :rb_might: Recruit unit token.", effectCode: '' },
     ],
@@ -4385,7 +4386,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Aspirant\'s Climb",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Shield'],
     abilities: [
       { trigger: 'Static', effect: "Increase the points needed to win the game by 1.", effectCode: '' },
     ],
@@ -4399,7 +4400,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Back-Alley Bar",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Shield'],
     abilities: [
       { trigger: 'Static', effect: "When a unit moves from here, give it +1 :rb_might: this turn.", effectCode: '' },
     ],
@@ -4413,7 +4414,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Bandle Tree",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Shield'],
     abilities: [
       { trigger: 'Static', effect: "You may hide an additional card here.", effectCode: '' },
     ],
@@ -4637,7 +4638,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Trifarian War Camp",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Ganking'],
     abilities: [
       { trigger: 'Static', effect: "Units here have +1 :rb_might:. (This includes attackers.)", effectCode: '' },
     ],
@@ -4651,7 +4652,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Vilemaw\'s Lair",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Ganking'],
     abilities: [
       { trigger: 'Static', effect: "Units can\'t move from here to base.", effectCode: '' },
     ],
@@ -4665,7 +4666,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Void Gate",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Reaction', 'Ganking'],
     abilities: [
       { trigger: 'Static', effect: "Spells and abilities deal 1 Bonus Damage to units here. (Each instance of damage the spell deals to a unit here is increased by 1.)", effectCode: '' },
     ],
@@ -4679,7 +4680,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Windswept Hillock",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: ['Ganking'],
+    keywords: ['Ganking', 'Mighty', 'Reaction'],
     abilities: [
       { trigger: 'Static', effect: "Units here have [Ganking]. (They can move from battlefield to battlefield.)", effectCode: '' },
     ],
@@ -4693,7 +4694,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Zaun Warrens",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Reaction', 'Mighty'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer here, discard 1, then draw 1.", effectCode: '' },
     ],
@@ -4707,7 +4708,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Daughter of the Void",
     type: 'Legend',
     domains: ["Fury", "Mind"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Mighty'],
     abilities: [
       { trigger: 'Static', effect: ":rb_exhaust:: [Reaction] — [Add] :rb_rune_rainbow:. Use only to play spells. (Abilities that add resources can\'t be reacted to.)", effectCode: '' },
     ],
@@ -4722,7 +4723,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Relentless Storm",
     type: 'Legend',
     domains: ["Fury", "Body"],
-    keywords: ['Mighty'],
+    keywords: ['Mighty', 'Reaction', 'Legion'],
     abilities: [
       { trigger: 'Static', effect: "When you play a [Mighty] unit, you may exhaust me to channel 1 rune exhausted. (A unit is Mighty while it has 5+ :rb_might:.)", effectCode: '' },
     ],
@@ -4737,7 +4738,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Loose Cannon",
     type: 'Legend',
     domains: ["Fury", "Chaos"],
-    keywords: [],
+    keywords: ['Reaction', 'Legion'],
     abilities: [
       { trigger: 'Static', effect: "At start of your Beginning Phase, draw 1 if you have one or fewer cards in your hand.", effectCode: '' },
     ],
@@ -4752,7 +4753,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Hand of Noxus",
     type: 'Legend',
     domains: ["Fury", "Order"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Legion'],
     abilities: [
       { trigger: 'Static', effect: ":rb_exhaust:: [Reaction], [Legion] — [Add] :rb_energy_1:. (Abilities that add resources can\'t be reacted to. Get the effect if you\'ve played a card this turn.)", effectCode: '' },
     ],
@@ -4797,7 +4798,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Unforgiven",
     type: 'Legend',
     domains: ["Calm", "Chaos"],
-    keywords: [],
+    keywords: ['Hidden'],
     abilities: [
       { trigger: 'Static', effect: ":rb_energy_2:, :rb_exhaust:: Move a friendly unit to or from its base.", effectCode: '' },
     ],
@@ -4812,7 +4813,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Radiant Dawn",
     type: 'Legend',
     domains: ["Calm", "Order"],
-    keywords: ['Buff', 'Stun'],
+    keywords: ['Buff', 'Stun', 'Hidden'],
     abilities: [
       { trigger: 'Static', effect: "When you stun one or more enemy units, buff a friendly unit. (If it doesn\'t have a buff, it gets a +1 :rb_might: buff.)", effectCode: '' },
     ],
@@ -4827,7 +4828,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Swift Scout",
     type: 'Legend',
     domains: ["Mind", "Chaos"],
-    keywords: ['Hidden'],
+    keywords: ['Hidden', 'Ganking'],
     abilities: [
       { trigger: 'Static', effect: "You may pay :rb_energy_1: to hide a card with [Hidden] instead of :rb_rune_rainbow:. :rb_energy_1:, :rb_exhaust:: Put a Teemo unit you own into your hand from your Champion Zone or the board.", effectCode: '' },
     ],
@@ -4842,7 +4843,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Herald of the Arcane",
     type: 'Legend',
     domains: ["Mind", "Order"],
-    keywords: [],
+    keywords: ['Ganking'],
     abilities: [
       { trigger: 'Static', effect: ":rb_energy_1:, :rb_exhaust:: Play a 1 :rb_might: Recruit unit token.", effectCode: '' },
     ],
@@ -5408,7 +5409,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 1 },
     domains: ["Fury"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Assault'],
     stats: { might: 0 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_rune_fury: (:rb_rune_fury:: Attach this to a unit you control.)", effectCode: '' },
@@ -5601,7 +5602,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 6, power: 1 },
     domains: ["Fury"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — Play two 3 :rb_might: Mech unit tokens to your base. (When I die, get the effect.)", effectCode: '' },
@@ -5618,7 +5619,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 2, power: 1 },
     domains: ["Fury"],
-    keywords: ['Quick', 'Reaction', 'Equip'],
+    keywords: ['Quick', 'Reaction', 'Equip', 'Quick-Draw'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.) [Equip] :rb_rune_fury: (:rb_rune_fury:: Attach this to a unit you control.)", effectCode: '' },
@@ -5801,7 +5802,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 1 },
     domains: ["Calm"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Tank'],
     stats: { might: 1 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_rune_calm: (:rb_rune_calm:: Attach this to a unit you control.)", effectCode: '' },
@@ -5849,7 +5850,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Calm"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — If I died alone, draw 1. (When I die, get the effect. I\'m alone if there are no other friendly units here.)", effectCode: '' },
@@ -6143,7 +6144,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 5, power: 1 },
     domains: ["Calm"],
-    keywords: ['Deflect', 'Quick', 'Reaction'],
+    keywords: ['Deflect', 'Quick', 'Reaction', 'Quick-Draw'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Deflect] (Opponents must pay :rb_rune_rainbow: to choose me with a spell or ability.) Your Equipment everywhere have [Quick-Draw]. (Each gains [Reaction]. When you play it, attach it to a unit you control.)", effectCode: '' },
@@ -6177,7 +6178,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 2 },
     domains: ["Calm"],
-    keywords: ['Quick', 'Reaction', 'Equip'],
+    keywords: ['Quick', 'Reaction', 'Equip', 'Quick-Draw'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.) [Equip] :rb_rune_calm: (:rb_rune_calm:: Attach this to a unit you control.)", effectCode: '' },
@@ -6309,7 +6310,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 1 },
     domains: ["Mind"],
-    keywords: ['Quick', 'Reaction', 'Equip'],
+    keywords: ['Quick', 'Reaction', 'Equip', 'Quick-Draw', 'Shield'],
     stats: { might: 0 },
     abilities: [
       { trigger: 'Static', effect: "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.) [Equip] :rb_rune_mind: (:rb_rune_mind:: Attach this to a unit you control.)", effectCode: '' },
@@ -6326,7 +6327,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Mind"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Vision'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "Your Mechs have [Vision]. (When you play us, look at the top card of your Main Deck. You may recycle it.)", effectCode: '' },
@@ -6733,7 +6734,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 3 },
     domains: ["Mind"],
-    keywords: ['Equip', 'Banish'],
+    keywords: ['Equip', 'Banish', 'Deathknell'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_energy_1::rb_rune_mind: (:rb_energy_1::rb_rune_mind:: Attach this to a unit you control.) :rb_energy_3::rb_rune_mind:, Banish this: Play all units banished with this, ignoring their costs. (Use only if unattached.)", effectCode: '' },
@@ -6929,7 +6930,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 2 },
     domains: ["Body"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Deflect'],
     stats: { might: 1 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_rune_body: (:rb_rune_body:: Attach this to a unit you control.)", effectCode: '' },
@@ -7437,7 +7438,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 3 },
     domains: ["Chaos"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Ganking'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_rune_chaos: (:rb_rune_chaos:: Attach this to a unit you control.)", effectCode: '' },
@@ -7795,7 +7796,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — Play a Gold gear token exhausted. (When I die, get the effect.)", effectCode: '' },
@@ -7955,7 +7956,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 5, power: 1 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — You may play a unit with cost no more than :rb_energy_3: and no more than :rb_rune_rainbow: from your trash, ignoring its cost. (When I die, get the effect.)", effectCode: '' },
@@ -7986,7 +7987,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Order"],
-    keywords: ['Mighty'],
+    keywords: ['Mighty', 'Deathknell'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell] — If I was [Mighty], draw 2. (When I die, get the effect. I\'m Mighty while I have 5+ :rb_might:.)", effectCode: '' },
@@ -8068,7 +8069,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 2, power: 1 },
     domains: ["Order"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Deathknell'],
     stats: { might: 1 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_rune_order: (:rb_rune_order:: Attach this to a unit you control.)", effectCode: '' },
@@ -8220,7 +8221,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Mechanized Menace",
     type: 'Legend',
     domains: ["Fury", "Mind"],
-    keywords: ['Shield'],
+    keywords: ['Shield', 'Repeat', 'Assault'],
     abilities: [
       { trigger: 'Static', effect: "Your Mechs have [Shield]. (+1 :rb_might: while they\'re defenders.)", effectCode: '' },
     ],
@@ -8282,7 +8283,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Glorious Executioner",
     type: 'Legend',
     domains: ["Fury", "Chaos"],
-    keywords: [],
+    keywords: ['Reaction', 'Temporary', 'Equip'],
     abilities: [
       { trigger: 'Static', effect: "When you win a combat, draw 1. (You win if only your units remain after combat.)", effectCode: '' },
     ],
@@ -8299,7 +8300,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Signature',
     cost: { rune: 2, power: 1 },
     domains: ["Fury", "Chaos"],
-    keywords: ['Temporary', 'Quick', 'Reaction', 'Equip'],
+    keywords: ['Temporary', 'Quick', 'Reaction', 'Equip', 'Quick-Draw'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Quick-Draw] (This has [Reaction]. When you play it, attach it to a unit you control.) [Equip] :rb_rune_rainbow: (:rb_rune_rainbow:: Attach this to a unit you control.) [Temporary] (If this is unattached, kill it at the start of its controller\'s Beginning Phase, before scoring.)", effectCode: '' },
@@ -8314,7 +8315,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Void Burrower",
     type: 'Legend',
     domains: ["Fury", "Order"],
-    keywords: ['Banish', 'Recycle'],
+    keywords: ['Banish', 'Recycle', 'Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer, you may exhaust me to reveal the top 2 cards of your Main Deck. You may banish one, then play it. Recycle the rest.", effectCode: '' },
     ],
@@ -8345,7 +8346,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Fire Below the Mountain",
     type: 'Legend',
     domains: ["Calm", "Mind"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Equip'],
     abilities: [
       { trigger: 'Static', effect: ":rb_exhaust:: [Reaction] — [Add] :rb_rune_rainbow:. Use only to play gear or use gear abilities. (Abilities that add resources can\'t be reacted to.)", effectCode: '' },
     ],
@@ -8362,7 +8363,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Signature',
     cost: { rune: 4, power: 2 },
     domains: ["Calm", "Mind"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Unique'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Unique] (Your deck can have only 1 card with this name.) [Equip] :rb_rune_rainbow: (:rb_rune_rainbow:: Attach this to a unit you control.)", effectCode: '' },
@@ -8380,7 +8381,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Signature',
     cost: { rune: 4, power: 2 },
     domains: ["Calm", "Mind"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Unique'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Unique] (Your deck can have only 1 card with this name.) [Equip] :rb_rune_rainbow: (:rb_rune_rainbow:: Attach this to a unit you control.)", effectCode: '' },
@@ -8398,7 +8399,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Signature',
     cost: { rune: 4, power: 2 },
     domains: ["Calm", "Mind"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Ganking', 'Unique'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Unique] (Your deck can have only 1 card with this name.) [Equip] :rb_rune_rainbow: (:rb_rune_rainbow:: Attach this to a unit you control.) When you play this, ready your units.", effectCode: '' },
@@ -8445,7 +8446,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Blade Dancer",
     type: 'Legend',
     domains: ["Calm", "Chaos"],
-    keywords: [],
+    keywords: ['Weaponmaster'],
     abilities: [
       { trigger: 'Static', effect: "When you choose a friendly unit, you may exhaust me and pay :rb_rune_rainbow: to ready it. When you conquer, you may pay :rb_energy_1: to ready me.", effectCode: '' },
     ],
@@ -8476,7 +8477,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Emperor of the Sands",
     type: 'Legend',
     domains: ["Calm", "Order"],
-    keywords: ['Weaponmaster'],
+    keywords: ['Weaponmaster', 'Reaction'],
     abilities: [
       { trigger: 'Static', effect: "Your Sand Soldiers have [Weaponmaster]. :rb_energy_1:, :rb_exhaust:: Play a 2 :rb_might: Sand Soldier unit token to your base. Use only if you\'ve played an Equipment this turn.", effectCode: '' },
     ],
@@ -8569,7 +8570,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Battle Mistress",
     type: 'Legend',
     domains: ["Body", "Chaos"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Mighty'],
     abilities: [
       { trigger: 'Static', effect: "When you recycle a rune, you may exhaust me to play a Gold gear token exhausted. When one or more enemy units die, ready me.", effectCode: '' },
     ],
@@ -8645,7 +8646,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Forge of the Fluft",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Repeat'],
     abilities: [
       { trigger: 'Static', effect: "While you control this battlefield, friendly legends have &quot;:rb_exhaust:: Attach an Equipment you control to a unit you control.&quot;", effectCode: '' },
     ],
@@ -8659,7 +8660,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Forgotten Monument",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Repeat'],
     abilities: [
       { trigger: 'Static', effect: "Players can\'t score here until their third turn.", effectCode: '' },
     ],
@@ -8673,7 +8674,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Hall of Legends",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Repeat'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer here, you may pay :rb_energy_1: to ready your legend.", effectCode: '' },
     ],
@@ -8743,7 +8744,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Ravenbloom Conservatory",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Mighty'],
     abilities: [
       { trigger: 'Static', effect: "When you defend here, reveal the top card of your Main Deck. If it\'s a spell, put it in your hand. Otherwise, recycle it.", effectCode: '' },
     ],
@@ -8757,7 +8758,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Rockfall Path",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Mighty'],
     abilities: [
       { trigger: 'Static', effect: "Units can\'t be played here.", effectCode: '' },
     ],
@@ -8771,7 +8772,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Seat of Power",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Mighty'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer here, draw 1 for each other battlefield you or allies control.", effectCode: '' },
     ],
@@ -8799,7 +8800,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "The Papertree",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When you hold here, each player channels 1 rune exhausted.", effectCode: '' },
     ],
@@ -8813,7 +8814,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Treasure Hoard",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer here, you may pay :rb_energy_1: to play a Gold gear token exhausted.", effectCode: '' },
     ],
@@ -8827,7 +8828,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Veiled Temple",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer here, you may ready a friendly gear. If it\'s an Equipment, you may detach it.", effectCode: '' },
     ],
@@ -9076,7 +9077,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 6, power: 1 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Legion'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Legion] — When you play me, ready me. (Get the effect if you\'ve played another card this turn) Other friendly units have +1 :rb_might: here.", effectCode: '' },
@@ -9093,7 +9094,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 6, power: 1 },
     domains: ["Order"],
-    keywords: ['Buff', 'Recycle'],
+    keywords: ['Buff', 'Recycle', 'Vision'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.) When you recycle one or more cards, buff a friendly unit. (If it doesn\'t have a buff, it gets a +1 :rb_might: buff. Runes aren\'t cards.)", effectCode: '' },
@@ -9141,7 +9142,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Mechanized Menace",
     type: 'Legend',
     domains: ["Fury", "Mind"],
-    keywords: ['Shield'],
+    keywords: ['Shield', 'Assault'],
     abilities: [
       { trigger: 'Static', effect: "Your Mechs have [Shield]. (+1 :rb_might: while they\'re defenders.)", effectCode: '' },
     ],
@@ -9171,7 +9172,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Glorious Executioner",
     type: 'Legend',
     domains: ["Fury", "Chaos"],
-    keywords: [],
+    keywords: ['Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When you win a combat, draw 1. (You win if only your units remain after combat.)", effectCode: '' },
     ],
@@ -9186,7 +9187,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Void Burrower",
     type: 'Legend',
     domains: ["Fury", "Order"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer, you may exhaust me to reveal the top 2 cards of your Main Deck. You may play one. Then recycle the rest.", effectCode: '' },
     ],
@@ -9216,7 +9217,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Grandmaster at Arms",
     type: 'Legend',
     domains: ["Calm", "Body"],
-    keywords: [],
+    keywords: ['Weaponmaster', 'Equip'],
     abilities: [
       { trigger: 'Static', effect: ":rb_energy_1:, :rb_exhaust:: Attach a detached Equipment you control to a unit you control. :rb_exhaust:: Attach an attached Equipment you control to a unit you control.", effectCode: '' },
     ],
@@ -9231,7 +9232,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Blade Dancer",
     type: 'Legend',
     domains: ["Calm", "Chaos"],
-    keywords: [],
+    keywords: ['Reaction', 'Weaponmaster', 'Equip'],
     abilities: [
       { trigger: 'Static', effect: "When you choose a friendly unit, you may exhaust me and pay :rb_rune_rainbow: to ready it. When you conquer, you may pay :rb_energy_1: to ready me.", effectCode: '' },
     ],
@@ -9246,7 +9247,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Emperor of the Sands",
     type: 'Legend',
     domains: ["Calm", "Order"],
-    keywords: ['Equip', 'Weaponmaster'],
+    keywords: ['Equip', 'Weaponmaster', 'Reaction'],
     abilities: [
       { trigger: 'Static', effect: "Sand Soldiers you play have [Weaponmaster]. (When they\'re played, you may [Equip] one of your Equipment to them for :rb_rune_rainbow: less.) :rb_energy_1:, :rb_exhaust:: Play a 2 :rb_might: Sand Soldier unit token to your base. Use only if you\'ve played an Equipment this turn.", effectCode: '' },
     ],
@@ -9276,7 +9277,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Chem-Baroness",
     type: 'Legend',
     domains: ["Mind", "Order"],
-    keywords: [],
+    keywords: ['Mighty'],
     abilities: [
       { trigger: 'Static', effect: "When you or an ally hold, you may exhaust me to play a Gold gear token exhausted. While your score is within 3 points of the Victory Score, your Gold [ADD] an additional :rb_energy_1:.", effectCode: '' },
     ],
@@ -9291,7 +9292,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Battle Mistress",
     type: 'Legend',
     domains: ["Body", "Chaos"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Reaction', 'Mighty'],
     abilities: [
       { trigger: 'Static', effect: "When you recycle a rune, you may exhaust me to play a Gold gear token exhausted. When one or more enemy units die, ready me.", effectCode: '' },
     ],
@@ -9306,7 +9307,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Grand Duelist",
     type: 'Legend',
     domains: ["Body", "Order"],
-    keywords: ['Mighty'],
+    keywords: ['Mighty', 'Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When one of your units becomes [Mighty], you may exhaust me to channel 1 rune exhausted. (A unit is Mighty while it has 5+ :rb_might:.)", effectCode: '' },
     ],
@@ -9576,7 +9577,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Fury"],
-    keywords: ['Hunt'],
+    keywords: ['Hunt', 'Level'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Hunt 2] (When I conquer or hold, gain 2 XP.) [Level 3][>] I have +1 :rb_might: and enter ready. (While you have 3+ XP, get the effect.)", effectCode: '' },
@@ -9723,7 +9724,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 3 },
     domains: ["Fury"],
-    keywords: [],
+    keywords: ['Legion'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Legion][>] You may play me from your trash for :rb_energy_3::rb_rune_fury:. (Get the effect if you\'ve played another card this turn.)", effectCode: '' },
@@ -9824,7 +9825,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Spell',
     cost: { rune: 1 },
     domains: ["Calm"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Level'],
     abilities: [
       { trigger: 'Static', effect: "[Reaction] (Play any time, even before spells and abilities resolve.) Give a unit +1 :rb_might: this turn. [Level 6][>] Give it +3 :rb_might: this turn instead. (While you have 6+ XP, get the effect.)", effectCode: '' },
     ],
@@ -9937,7 +9938,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 2, power: 1 },
     domains: ["Calm"],
-    keywords: ['Stun'],
+    keywords: ['Stun', 'Level'],
     abilities: [
       { trigger: 'Static', effect: "Move an enemy unit. [Level 6][>] [Stun] an enemy unit. (While you have 6+ XP, get the effect. A stunned unit doesn\'t deal combat damage this turn.)", effectCode: '' },
     ],
@@ -9952,7 +9953,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 1 },
     domains: ["Calm"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Level'],
     stats: { might: 1 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_rune_calm: (:rb_rune_calm:: Attach this to a unit you control.)", effectCode: '' },
@@ -9969,7 +9970,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Calm"],
-    keywords: ['Hunt'],
+    keywords: ['Hunt', 'Level'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Hunt] (When I conquer or hold, gain 1 XP.) [Level 6][>] When you play me, draw 1. (While you have 6+ XP, get the effect.)", effectCode: '' },
@@ -10016,7 +10017,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 3 },
     domains: ["Calm"],
-    keywords: ['Buff'],
+    keywords: ['Buff', 'Backline'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Backline] (I must be assigned combat damage last.) When I hold, [Buff] all units here. (Give each a +1 :rb_might: buff if it doesn\'t have one.)", effectCode: '' },
@@ -10079,7 +10080,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Calm"],
-    keywords: ['Deflect', 'Hunt'],
+    keywords: ['Deflect', 'Hunt', 'Level'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Hunt 2] (When I conquer or hold, gain 2 XP.) [Level 3][>] I have +1 :rb_might: and [Deflect]. (While you have 3+ XP, get the effect. Opponents must pay :rb_rune_rainbow: to choose a [Deflect] unit with a spell or ability.)", effectCode: '' },
@@ -10111,7 +10112,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 2 },
     domains: ["Calm"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Level'],
     abilities: [
       { trigger: 'Static', effect: "This enters exhausted. [Reaction][>] :rb_exhaust:: [Add] :rb_rune_rainbow:. (Abilities that add resources can\'t be reacted to.) [Level 6][>] [>>][Reaction][>] :rb_exhaust:: [Add] :rb_energy_1::rb_rune_rainbow:. (Use this ability only while you have 6+ XP.)", effectCode: '' },
     ],
@@ -10177,7 +10178,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Calm"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 0 },
     abilities: [
       { trigger: 'Static', effect: "(Units with 0 :rb_might: can conquer and hold.) When you play me, draw 1. [Deathknell][>] Choose an opponent. They reveal their hand. You can look at their facedown cards this turn. Gain 1 XP. (When I die, get the effects.)", effectCode: '' },
@@ -10278,7 +10279,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 12, power: 3 },
     domains: ["Calm"],
-    keywords: [],
+    keywords: ['Level'],
     stats: { might: 12 },
     abilities: [
       { trigger: 'Static', effect: "[Level 3][>] I cost :rb_energy_2::rb_rune_calm: less. (While you have 3+ XP, get the effect.) [Level 6][>] I cost :rb_energy_4::rb_rune_calm::rb_rune_calm: less instead. [Level 11][>] I cost :rb_energy_6::rb_rune_calm::rb_rune_calm::rb_rune_calm: less instead. [Level 16][>] I can\'t be chosen by enemy spells and abilities.", effectCode: '' },
@@ -10326,7 +10327,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 4 },
     domains: ["Mind"],
-    keywords: ['Recycle', 'Predict'],
+    keywords: ['Recycle', 'Predict', 'Deathknell'],
     stats: { might: 4 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell][>] [Predict 2]. (When I die, look at the top two cards of your Main Deck. Recycle any of them and put the rest back in any order.)", effectCode: '' },
@@ -10405,7 +10406,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 6, power: 1 },
     domains: ["Mind"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell][>] Deal 4 to an enemy unit. (When I die, get the effect.)", effectCode: '' },
@@ -10530,7 +10531,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Mind"],
-    keywords: ['Ganking', 'Hunt'],
+    keywords: ['Ganking', 'Hunt', 'Level'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Hunt 2] (When I conquer or hold, gain 2 XP.) [Level 3][>] I have +1 :rb_might: and [Ganking]. (While you have 3+ XP, get the effect. A [Ganking] unit can move from battlefield to battlefield.)", effectCode: '' },
@@ -10579,7 +10580,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 2, power: 1 },
     domains: ["Mind"],
-    keywords: ['Temporary', 'Repeat'],
+    keywords: ['Temporary', 'Repeat', 'Deathknell'],
     abilities: [
       { trigger: 'Static', effect: "[Temporary] (Kill this at the start of its controller\'s Beginning Phase, before scoring.) When you play this, play a ready 3 :rb_might: Sprite unit token with [Temporary] to your base. [Deathknell][>] Repeat this gear\'s play effect. (When this dies, get the effect.)", effectCode: '' },
     ],
@@ -10758,7 +10759,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 4 },
     domains: ["Mind"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Vision'],
     stats: { might: 4 },
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play me, look at the top card of your Main Deck. You may recycle it.) If you\'ve spent :rb_energy_4: or more to play a spell this turn, you may play me for :rb_rune_mind:.", effectCode: '' },
@@ -10775,7 +10776,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 4 },
     domains: ["Mind"],
-    keywords: ['Temporary'],
+    keywords: ['Temporary', 'Backline'],
     stats: { might: 4 },
     abilities: [
       { trigger: 'Static', effect: "[Backline] (I must be assigned combat damage last.) Your [Temporary] effects at my battlefield don\'t trigger.", effectCode: '' },
@@ -10791,7 +10792,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Spell',
     cost: { rune: 5 },
     domains: ["Body"],
-    keywords: [],
+    keywords: ['Level'],
     abilities: [
       { trigger: 'Static', effect: "Draw 2. [Level 6][>] This costs :rb_energy_2: less. (While you have 6+ XP, get the effect.) [Level 11][>] This costs :rb_energy_4: less instead.", effectCode: '' },
     ],
@@ -10838,7 +10839,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Body"],
-    keywords: ['Hunt'],
+    keywords: ['Hunt', 'Level'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Hunt] (When I conquer or hold, gain 1 XP.) [Level 6][>] I have +1 :rb_might:. (While you have 6+ XP, get the effect.)", effectCode: '' },
@@ -10869,7 +10870,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 3 },
     domains: ["Body"],
-    keywords: ['Equip'],
+    keywords: ['Equip', 'Hunt'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Equip] :rb_rune_body: (:rb_rune_body:: Attach this to a unit you control.)", effectCode: '' },
@@ -10902,7 +10903,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 6 },
     domains: ["Body"],
-    keywords: [],
+    keywords: ['Level'],
     stats: { might: 6 },
     abilities: [
       { trigger: 'Static', effect: "[Level 11][>] I have +4 :rb_might:. (While you have 11+ XP, get the effect.)", effectCode: '' },
@@ -11139,7 +11140,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 4 },
     domains: ["Body"],
-    keywords: ['Deflect', 'Ganking', 'Hunt'],
+    keywords: ['Deflect', 'Ganking', 'Hunt', 'Level'],
     stats: { might: 4 },
     abilities: [
       { trigger: 'Static', effect: "[Hunt 2] (When I conquer or hold, gain 2 XP.) [Level 6][>] I have [Deflect] and [Ganking]. (While you have 6+ XP, opponents must pay :rb_rune_rainbow: to choose me with a spell or ability and I can move from battlefield to battlefield.)", effectCode: '' },
@@ -11592,7 +11593,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 2 },
     domains: ["Chaos"],
-    keywords: ['Hidden'],
+    keywords: ['Hidden', 'Backline'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Hidden] (Hide now for :rb_rune_rainbow: to react with later for :rb_energy_0:.) [Backline] (I must be assigned combat damage last.) When you play me from face down on your turn, you may move an enemy unit at a different location to my battlefield.", effectCode: '' },
@@ -11659,7 +11660,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3 },
     domains: ["Chaos"],
-    keywords: ['Hidden', 'Reaction'],
+    keywords: ['Hidden', 'Reaction', 'Backline'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Hidden] (Hide now for :rb_rune_rainbow: to react with later for :rb_energy_0:.) [Backline] (I must be assigned combat damage last.) Once each turn, when an enemy unit dies while I\'m at a battlefield, play a Gold gear token exhausted. (It has &quot;[Reaction][>] Kill this, :rb_exhaust:: [Add] :rb_rune_rainbow:.&quot;)", effectCode: '' },
@@ -11760,7 +11761,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 4, power: 1 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Level'],
     stats: { might: 5 },
     abilities: [
       { trigger: 'Static', effect: "[Level 3][>] I enter ready. (While you have 3+ XP, get the effect.)", effectCode: '' },
@@ -11776,7 +11777,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 3 },
     domains: ["Order"],
-    keywords: ['Assault'],
+    keywords: ['Assault', 'Deathknell'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Assault] (+1 :rb_might: while I\'m an attacker.) [Deathknell][>] Channel 1 rune exhausted. (When I die, get the effect.)", effectCode: '' },
@@ -11792,7 +11793,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Order"],
-    keywords: ['Deflect'],
+    keywords: ['Deflect', 'Deathknell'],
     stats: { might: 1 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell][>] Play a 1 :rb_might: Bird unit token with [Deflect] to your base. (When I die, get the effect. Opponents must pay :rb_rune_rainbow: to choose a [Deflect] unit with a spell or ability.)", effectCode: '' },
@@ -11839,7 +11840,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 3 },
     domains: ["Order"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell][>] If I didn\'t die alone, draw 1. (When I die, get the effect. I wasn\'t alone if there were other friendly units here.)", effectCode: '' },
@@ -11919,7 +11920,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Gear',
     cost: { rune: 2 },
     domains: ["Order"],
-    keywords: ['Action', 'Recycle'],
+    keywords: ['Action', 'Recycle', 'Vision'],
     abilities: [
       { trigger: 'Static', effect: "[Vision] (When you play this, look at the top card of your Main Deck. You may recycle it.) [Action][>] Kill this, :rb_exhaust:: Give a unit +2 :rb_might: this turn.", effectCode: '' },
     ],
@@ -12100,7 +12101,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 3, power: 1 },
     domains: ["Order"],
-    keywords: ['Assault'],
+    keywords: ['Assault', 'Deathknell'],
     stats: { might: 3 },
     abilities: [
       { trigger: 'Static', effect: "[Assault] (+1 :rb_might: while I\'m an attacker.) [Deathknell][>] Draw 1. If it\'s your Beginning Phase, draw 2 instead. (When I die, get the effect.)", effectCode: '' },
@@ -12213,7 +12214,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 8, power: 1 },
     domains: ["Order"],
-    keywords: ['Recycle'],
+    keywords: ['Recycle', 'Deathknell'],
     stats: { might: 7 },
     abilities: [
       { trigger: 'Static', effect: "When I move to a battlefield, look at the top 3 cards of your Main Deck. You may reveal a unit from among them and draw it. Recycle the rest. [Deathknell][>] Play a unit from your hand to your base, ignoring its Energy cost. (When I die, get the effect. You must still pay its Power cost.)", effectCode: '' },
@@ -12275,7 +12276,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Pridestalker",
     type: 'Legend',
     domains: ["Fury", "Body"],
-    keywords: [],
+    keywords: ['Reaction'],
     abilities: [
       { trigger: 'Static', effect: "When you play a unit, give a unit +1 :rb_might: this turn.", effectCode: '' },
     ],
@@ -12337,7 +12338,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Piltover Enforcer",
     type: 'Legend',
     domains: ["Fury", "Order"],
-    keywords: [],
+    keywords: ['Temporary'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer, if you assigned 3 or more excess damage, you may exhaust me to ready a unit.", effectCode: '' },
     ],
@@ -12370,7 +12371,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Bashful Bloom",
     type: 'Legend',
     domains: ["Calm", "Mind"],
-    keywords: ['Temporary'],
+    keywords: ['Temporary', 'Level'],
     abilities: [
       { trigger: 'Static', effect: ":rb_energy_4:, :rb_exhaust:: Play a ready 3 :rb_might: Sprite unit token with [Temporary]. This ability costs :rb_energy_1: less for each friendly unit with [Temporary].", effectCode: '' },
     ],
@@ -12401,7 +12402,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Wuju Master",
     type: 'Legend',
     domains: ["Calm", "Body"],
-    keywords: [],
+    keywords: ['Level'],
     abilities: [
       { trigger: 'Static', effect: "[Level 6][>] Your units have +1 :rb_might:. (While you have 6+ XP, get the effect.) [Level 11][>] Your units enter ready.", effectCode: '' },
     ],
@@ -12432,7 +12433,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Gloomist",
     type: 'Legend',
     domains: ["Calm", "Chaos"],
-    keywords: [],
+    keywords: ['Stun', 'Action'],
     abilities: [
       { trigger: 'Static', effect: "When you or an ally hold, you may exhaust me to draw 1.", effectCode: '' },
     ],
@@ -12464,7 +12465,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Green Father",
     type: 'Legend',
     domains: ["Calm", "Order"],
-    keywords: [],
+    keywords: ['Stun'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer or hold, you may exhaust me to replace that battlefield with a Brush battlefield token. (Bird, Cat, Dog, Poro, and Ivern units have +1 :rb_might: in Brush. It can be swapped back when scored.)", effectCode: '' },
     ],
@@ -12496,7 +12497,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Scorn of the Moon",
     type: 'Legend',
     domains: ["Mind", "Chaos"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Temporary'],
     abilities: [
       { trigger: 'Static', effect: "[Reaction][>] :rb_exhaust:: [Add] :rb_energy_1:. Spend this Energy only during showdowns. (Abilities that add resources can\'t be reacted to.)", effectCode: '' },
     ],
@@ -12527,7 +12528,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Deceiver",
     type: 'Legend',
     domains: ["Mind", "Order"],
-    keywords: ['Temporary'],
+    keywords: ['Temporary', 'Buff'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer or hold, you may discard 1 and exhaust me to play a ready Reflection unit token there. It becomes a copy of another unit there. Give it [Temporary].", effectCode: '' },
     ],
@@ -12620,7 +12621,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Abandoned Hall",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Shield'],
     abilities: [
       { trigger: 'Static', effect: "When a player plays a spell, they may give a unit they control here +1 :rb_might: this turn.", effectCode: '' },
     ],
@@ -12634,7 +12635,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Altar of Blood",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: ['Recall'],
+    keywords: ['Recall', 'Shield', 'Temporary'],
     abilities: [
       { trigger: 'Static', effect: "If a unit here would die during combat, its controller may pay :rb_rune_rainbow::rb_rune_rainbow::rb_rune_rainbow: to heal it, exhaust it, and recall it instead.", effectCode: '' },
     ],
@@ -12648,7 +12649,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Amateur Recital",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Shield', 'Temporary'],
     abilities: [
       { trigger: 'Static', effect: "When you hold here, you may move a unit at a battlefield to its base.", effectCode: '' },
     ],
@@ -12676,7 +12677,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Dusk Rose Lab",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Predict'],
     abilities: [
       { trigger: 'Static', effect: "At the start of your Beginning Phase, you may kill a unit you control here to draw 1. (This happens before scoring.)", effectCode: '' },
     ],
@@ -12690,7 +12691,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Forbidding Waste",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Predict'],
     abilities: [
       { trigger: 'Static', effect: "While a unit here is defending alone, it has -2 :rb_might:. (It\'s alone if there are no other friendly units here.)", effectCode: '' },
     ],
@@ -12732,7 +12733,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Gardens of Becoming",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Repeat'],
     abilities: [
       { trigger: 'Static', effect: "Units here have &quot;:rb_exhaust:: Gain 1 XP.&quot;", effectCode: '' },
     ],
@@ -12746,7 +12747,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Ripper\'s Bay",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Repeat'],
     abilities: [
       { trigger: 'Static', effect: "When a unit here is returned to a player\'s hand, that player may pay :rb_energy_1: to channel 1 rune exhausted.", effectCode: '' },
     ],
@@ -12760,7 +12761,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Star Spring",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: [],
+    keywords: ['Repeat', 'Deflect'],
     abilities: [
       { trigger: 'Static', effect: "The first time a player plays a non-token unit here each turn, they may move another unit they control here to its base.", effectCode: '' },
     ],
@@ -12774,7 +12775,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "The Academy",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: ['Repeat'],
+    keywords: ['Repeat', 'Buff', 'Deflect'],
     abilities: [
       { trigger: 'Static', effect: "When you hold here, give your next spell this turn [Repeat] equal to its base cost. (You may pay the additional cost to repeat the spell\'s effect.)", effectCode: '' },
     ],
@@ -12788,7 +12789,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Trapping Grounds",
     type: 'Battlefield',
     domains: ["Colorless"],
-    keywords: ['Deflect'],
+    keywords: ['Deflect', 'Buff'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer here, if you assigned 3 or more excess damage, play a 1 :rb_might: Bird unit token with [Deflect].", effectCode: '' },
     ],
@@ -12847,7 +12848,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Calm"],
-    keywords: [],
+    keywords: ['Deathknell'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Deathknell][>] If I died alone, draw 1.", effectCode: '' },
@@ -12895,7 +12896,7 @@ export const CARDS: Record<string, CardDefinition> = {
     type: 'Unit',
     cost: { rune: 2 },
     domains: ["Chaos"],
-    keywords: [],
+    keywords: ['Vision'],
     stats: { might: 2 },
     abilities: [
       { trigger: 'Static', effect: "[Vision]", effectCode: '' },
@@ -12956,7 +12957,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Bloodharbor Ripper",
     type: 'Legend',
     domains: ["Fury", "Chaos"],
-    keywords: [],
+    keywords: ['Temporary'],
     abilities: [
       { trigger: 'Static', effect: ":rb_energy_1:, :rb_exhaust:: Return a friendly unit at a battlefield to its owner\'s hand. Play a Gold gear token exhausted.", effectCode: '' },
     ],
@@ -12971,7 +12972,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Piltover Enforcer",
     type: 'Legend',
     domains: ["Fury", "Order"],
-    keywords: [],
+    keywords: ['Level', 'Temporary'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer, if you assigned 3 or more excess damage, you may exhaust me to ready a unit.", effectCode: '' },
     ],
@@ -12986,7 +12987,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Bashful Bloom",
     type: 'Legend',
     domains: ["Calm", "Mind"],
-    keywords: ['Temporary'],
+    keywords: ['Temporary', 'Level'],
     abilities: [
       { trigger: 'Static', effect: ":rb_energy_4:, :rb_exhaust:: Play a ready 3 :rb_might: Sprite unit token with [Temporary]. This ability costs :rb_energy_1: less for each friendly unit with [Temporary].", effectCode: '' },
     ],
@@ -13001,7 +13002,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Wuju Master",
     type: 'Legend',
     domains: ["Calm", "Body"],
-    keywords: [],
+    keywords: ['Level'],
     abilities: [
       { trigger: 'Static', effect: "[Level 6][>] Your units have +1 :rb_might:. [Level 11][>] Your units enter ready.", effectCode: '' },
     ],
@@ -13031,7 +13032,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Green Father",
     type: 'Legend',
     domains: ["Calm", "Order"],
-    keywords: [],
+    keywords: ['Temporary'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer or hold, you may exhaust me to replace that battlefield with a Brush battlefield token.", effectCode: '' },
     ],
@@ -13046,7 +13047,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Scorn of the Moon",
     type: 'Legend',
     domains: ["Mind", "Chaos"],
-    keywords: ['Reaction'],
+    keywords: ['Reaction', 'Buff', 'Temporary'],
     abilities: [
       { trigger: 'Static', effect: "[Reaction][>] :rb_exhaust:: [Add] :rb_energy_1:. Spend this Energy only during showdowns.", effectCode: '' },
     ],
@@ -13061,7 +13062,7 @@ export const CARDS: Record<string, CardDefinition> = {
     name: "Deceiver",
     type: 'Legend',
     domains: ["Mind", "Order"],
-    keywords: ['Temporary'],
+    keywords: ['Temporary', 'Buff'],
     abilities: [
       { trigger: 'Static', effect: "When you conquer or hold, you may discard 1 and exhaust me to play a ready Reflection unit token there. It becomes a copy of another unit there. Give it [Temporary].", effectCode: '' },
     ],
@@ -13108,7 +13109,7 @@ export const CARDS: Record<string, CardDefinition> = {
     superType: 'Champion',
     cost: { rune: 10, power: 3 },
     domains: ["Chaos"],
-    keywords: [],
+    keywords: ['Deflect', 'Temporary', 'Reaction'],
     stats: { might: 12 },
     abilities: [
       { trigger: 'Static', effect: "As you play me, add the Baron Pit battlefield token to the board if it\'s not there already. If you do, I enter there. I can\'t be chosen by enemy spells and abilities. Other friendly units have +2 :rb_might:.", effectCode: '' },

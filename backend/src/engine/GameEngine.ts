@@ -369,6 +369,7 @@ export function createGame(
     pendingCombatDamageAssignment: null,
     keywordModifiers: [],
     pendingKeywordChoices: [],
+    legionActiveCardIds: [],
   };
 }
 
@@ -572,6 +573,7 @@ export function startNewTurn(state: GameState): GameState {
   newState.effectStack = [];
   newState.scoredBattlefieldsThisTurn = {};
   newState.players[nextPlayerId].cardsPlayedThisTurn = [];
+  newState.legionActiveCardIds = [];
   expireTemporaryModifiers(newState, 'turn');
   const playerName = newState.players[nextPlayerId]?.name || nextPlayerId;
   newState.actionLog.push(makeLog(newState, nextPlayerId, 'TurnChange',
@@ -1164,7 +1166,8 @@ function takeDamage(state: GameState, unitId: string, amount: number): boolean {
 function checkUnitDeath(state: GameState, unitId: string): boolean {
   const unit = state.allCards[unitId];
   if (!unit || unit.location === 'discard') return false;
-  const totalHealth = unit.currentStats.might ?? unit.stats.might ?? 1;
+  // Use effective might (base + Assault) for death threshold
+  const totalHealth = getEffectiveMight(state, unitId);
   if ((unit.damage || 0) >= totalHealth) {
     killUnit(state, unitId);
     return true;
@@ -1708,7 +1711,8 @@ function buildCombatDamageFromOrder(
       return { ok: false, error: 'Combat damage must respect Tank and Backline assignment priority.' };
     }
 
-    const lethal = Math.max(0, calculateMight(state, unitId));
+    // Use effective might (base + Assault) for the lethal cap
+    const lethal = Math.max(0, getEffectiveMight(state, unitId));
     const damage = remainingTargets.size === 1 ? remainingDamage : Math.min(remainingDamage, lethal);
     if (damage <= 0) return { ok: false, error: 'Assigned damage must be positive.' };
     const hasOtherTargets = Array.from(remainingTargets).some(id => id !== unitId);
@@ -1751,7 +1755,8 @@ function buildAutomaticCombatDamageAssignment(
   for (let i = 0; i < orderedTargets.length && remaining > 0; i++) {
     const unitId = orderedTargets[i];
     const isLast = i === orderedTargets.length - 1;
-    const lethal = Math.max(0, calculateMight(state, unitId));
+    // Use effective might (base + Assault) for the lethal cap
+    const lethal = Math.max(0, getEffectiveMight(state, unitId));
     const damage = isLast ? remaining : Math.min(remaining, lethal);
     if (damage > 0) assignments.push({ unitId, damage });
     remaining -= damage;
@@ -1943,9 +1948,9 @@ export function resolveCombat(state: GameState): ActionResult {
   // Close reaction window
   newState.showdown = { ...newState.showdown, reactionWindowOpen: false };
 
-  // Calculate total Might for each side
-  let totalAttackerMight = calculateMight(newState, attackerId);
-  let totalDefenderMight = defenderIds.reduce((sum, id) => sum + calculateMight(newState, id), 0);
+  // Calculate total Might for each side (using effective might for proper Assault/Deflect integration)
+  let totalAttackerMight = getEffectiveMight(newState, attackerId);
+  let totalDefenderMight = defenderIds.reduce((sum, id) => sum + getEffectiveMight(newState, id), 0);
 
   // Apply Assault keyword to attacker
   const attackerDef = newState.cardDefinitions[attacker.cardId];
@@ -1974,7 +1979,7 @@ export function resolveCombat(state: GameState): ActionResult {
     let remainingAttackerDamage = totalAttackerMight;
     for (const defenderId of defenderIds) {
       if (remainingAttackerDamage <= 0) { survivingDefenders.push(defenderId); continue; }
-      const killThreshold = calculateMight(newState, defenderId);
+      const killThreshold = getEffectiveMight(newState, defenderId);
       const damageToAssign = Math.min(remainingAttackerDamage, killThreshold);
       const died = takeDamage(newState, defenderId, damageToAssign);
       if (!died) survivingDefenders.push(defenderId);
@@ -1986,7 +1991,7 @@ export function resolveCombat(state: GameState): ActionResult {
     let remainingDefenderDamage = totalDefenderMight;
     for (const atkId of attackerIds) {
       if (remainingDefenderDamage <= 0) { survivingAttackers.push(atkId); continue; }
-      const killThreshold = calculateMight(newState, atkId);
+      const killThreshold = getEffectiveMight(newState, atkId);
       const damageToAssign = Math.min(remainingDefenderDamage, killThreshold);
       const died = takeDamage(newState, atkId, damageToAssign);
       if (!died) survivingAttackers.push(atkId);
@@ -2068,6 +2073,34 @@ function getRuneDomain(state: GameState, runeId: string): Domain | null {
   const rune = state.allCards[runeId];
   const def = rune ? state.cardDefinitions[rune.cardId] : undefined;
   return getPlayableDomains(def ?? ({} as CardDefinition))[0] ?? null;
+}
+
+/**
+ * Check if player has a rune (ready or exhausted) matching the given domain.
+ */
+function hasDomainRune(state: GameState, playerId: string, domain: Domain): boolean {
+  return getActiveRuneIds(state, playerId).some(id => getRuneDomain(state, id) === domain);
+}
+
+/**
+ * Check if player can afford to play a card with Accelerate.
+ * Accelerate costs: base cost + 1 extra energy (exhaust ready rune) + recycle 1 domain-matching rune.
+ */
+function canPayAccelerateCosts(state: GameState, playerId: string, def: CardDefinition): boolean {
+  const cardDomains = getPlayableDomains(def);
+  if (cardDomains.length === 0) return false;
+  
+  const cardDomain = cardDomains[0];
+  const baseCost = def.cost?.rune ?? 0;
+  const readyRuneCount = getReadyRuneIds(state, playerId).length;
+  
+  // Need enough ready runes for base cost + 1 extra for accelerate energy
+  if (readyRuneCount < baseCost + 1) return false;
+  
+  // Need at least 1 rune (ready or exhausted) matching card domain to recycle
+  if (!hasDomainRune(state, playerId, cardDomain)) return false;
+  
+  return true;
 }
 
 function getActiveRuneIds(state: GameState, playerId: string): string[] {
@@ -2168,21 +2201,31 @@ function payCardCosts(
   def: CardDefinition,
   extraEnergy = 0,
   powerRuneDomains: Domain[] = [],
-  extraPower = 0
+  extraPower = 0,
+  isAccelerate = false
 ): CostPaymentResult {
   const player = state.players[playerId];
   if (!player) return { success: false, error: 'Player not found.' };
 
   const cardDomains = getPlayableDomains(def);
-  const energyCost = (def.cost?.rune ?? 0) + extraEnergy;
+  const runeCost = def.cost?.rune ?? 0;
   const basePowerCost = def.cost?.power ?? 0;
-  const powerCost = basePowerCost + extraPower;
+
+  // Accelerate adds +1 energy and +1 power to the base cost
+  const accelerateEnergy = isAccelerate ? 1 : 0;
+  const acceleratePower = isAccelerate ? 1 : 0;
+
+  const energyCost = runeCost + extraEnergy + accelerateEnergy;
+  const powerCost = basePowerCost + extraPower + acceleratePower;
 
   if (energyCost > 0 && getReadyRuneIds(state, playerId).length === 0) {
     return { success: false, error: 'Not enough ready runes.' };
   }
-  if (powerCost > 0 && getActiveRuneIds(state, playerId).length === 0) {
+  if (energyCost > 0 && getReadyRuneIds(state, playerId).length < energyCost) {
     return { success: false, error: 'Not enough ready runes.' };
+  }
+  if (powerCost > 0 && getActiveRuneIds(state, playerId).length === 0) {
+    return { success: false, error: 'Not enough runes.' };
   }
 
   if (cardDomains.length >= 2 && basePowerCost > 0) {
@@ -2204,6 +2247,9 @@ function payCardCosts(
   for (const runeId of energyRunes) {
     state.allCards[runeId].exhausted = true;
   }
+
+  // Accelerate: the +1 power is paid from the general rune pool (handled below)
+  // No special recycle/channel logic needed — just extra energy + power cost
 
   const selectedPowerRunes = new Set<string>();
   const selectedPowerRuneIds: string[] = [];
@@ -2268,10 +2314,39 @@ function markCardPlayed(state: GameState, playerId: string, cardInstanceId: stri
   state.players[playerId].cardsPlayedThisTurn ??= [];
   state.players[playerId].cardsPlayedThisTurn.push(cardInstanceId);
   state.allCards[cardInstanceId].playedTurn = state.turn;
+  console.log(`[markCardPlayed] ✅ playerId=${playerId} cardInstanceId=${cardInstanceId} cardsPlayedThisTurn=${JSON.stringify(state.players[playerId].cardsPlayedThisTurn)}`);
+
+  // Update legionActiveCardIds for ALL legion cards owned by this player
+  // When any card is played, Legion becomes active for ALL existing legion cards
+  updateLegionActiveCards(state, playerId);
+}
+
+function updateLegionActiveCards(state: GameState, playerId: string): void {
+  // Check if player has played ANY card this turn (Legion is now active)
+  const cardsPlayed = state.players[playerId].cardsPlayedThisTurn ?? [];
+  if (cardsPlayed.length === 0) {
+    state.legionActiveCardIds = [];
+    return;
+  }
+
+  // Find ALL cards owned by this player that have the Legion keyword
+  const playerLegionCards: string[] = [];
+  for (const [instanceId, card] of Object.entries(state.allCards)) {
+    if (card.ownerId !== playerId) continue;
+    if (hasKeyword(state, instanceId, 'Legion')) {
+      playerLegionCards.push(instanceId);
+    }
+  }
+
+  state.legionActiveCardIds = playerLegionCards;
+  console.log(`[Legion] ✅ Updated legionActiveCardIds for player ${playerId}: ${JSON.stringify(state.legionActiveCardIds)}`);
 }
 
 function isLegionActive(state: GameState, playerId: string, sourceId: string): boolean {
-  return (state.players[playerId].cardsPlayedThisTurn ?? []).some(id => id !== sourceId);
+  const cardsPlayed = state.players[playerId].cardsPlayedThisTurn ?? [];
+  const isActive = cardsPlayed.some(id => id !== sourceId);
+  console.log(`[Legion] isLegionActive check: playerId=${playerId}, sourceId=${sourceId}, cardsPlayedThisTurn=${JSON.stringify(cardsPlayed)}, isActive=${isActive}`);
+  return isActive;
 }
 
 function canPayCardCosts(
@@ -2413,7 +2488,7 @@ function handlePlayUnit(
 
   const costResult: CostPaymentResult = fromHidden
     ? { success: true }
-    : payCardCosts(newState, action.playerId, def, accelCost, powerRuneDomains);
+    : payCardCosts(newState, action.playerId, def, accelCost, powerRuneDomains, 0, accelerate ?? false);
   if (!costResult.success) return { success: false, error: costResult.error, action };
 
   // Remove from hand
@@ -2963,6 +3038,19 @@ function calculateMight(state: GameState, unitInstanceId: string): number {
   return total;
 }
 
+/**
+ * Returns effective might including numeric keyword bonuses.
+ * Assault: generic increase to attacker's might (damage dealt + survival threshold)
+ * Shield: generic increase to defender's might (damage dealt + survival threshold)
+ * Used for combat damage dealt, death thresholds, and survival checks.
+ */
+function getEffectiveMight(state: GameState, unitId: string): number {
+  const base = calculateMight(state, unitId);
+  const assaultBonus = getKeywordValue(state, unitId, 'Assault', 0);
+  const shieldBonus = getKeywordValue(state, unitId, 'Shield', 0);
+  return base + assaultBonus + shieldBonus;
+}
+
 function handleHideCard(state: GameState, action: GameAction): ActionResult {
   const { cardInstanceId, battlefieldId, hideRuneDomain } = action.payload as {
     cardInstanceId: string;
@@ -3253,6 +3341,48 @@ function resolveAbilities(
       }
     }
 
+    // OGN-003 Chemtech Enforcer: "When you play me, discard 1" — PLAY trigger
+    if (code === 'PLAY:DISCARD_1' || /when you play me.*discard/i.test(ability.effect)) {
+      const player = state.players[card.ownerId];
+      if (player && player.hand.length > 0) {
+        // Auto-discard the last card in hand (simple implementation)
+        const discardedId = player.hand[player.hand.length - 1];
+        const discardedCard = state.allCards[discardedId];
+        player.hand = player.hand.filter(id => id !== discardedId);
+        discardedCard.location = 'discard';
+        player.discardPile.push(discardedId);
+        state.actionLog.push(makeLog(state, card.ownerId, 'System',
+          `${def.name} triggered: discarded 1 card`));
+      }
+    }
+
+    // OGN-020 Scrapyard Champion Legion trigger: "discard 2, draw 2"
+    if (code === 'LEGION:DISCARD_2_DRAW_2' || (code === 'DISCARD_2_DRAW_2') ||
+        /legion.*discard.*draw/i.test(ability.effect)) {
+      const player = state.players[card.ownerId];
+      // Only trigger if Legion is active for this player
+      if (player && isLegionActive(state, card.ownerId, cardInstanceId)) {
+        // Discard 2 cards from hand
+        for (let i = 0; i < 2 && player.hand.length > 0; i++) {
+          const discardedId = player.hand[player.hand.length - 1];
+          const discardedCard = state.allCards[discardedId];
+          player.hand = player.hand.filter(id => id !== discardedId);
+          discardedCard.location = 'discard';
+          player.discardPile.push(discardedId);
+        }
+        // Draw 2 cards
+        for (let i = 0; i < 2; i++) {
+          const drawnId = player.deck.shift();
+          if (drawnId) {
+            state.allCards[drawnId].location = 'hand';
+            player.hand.push(drawnId);
+          }
+        }
+        state.actionLog.push(makeLog(state, card.ownerId, 'System',
+          `${def.name} Legion triggered: discarded 2, drew 2`));
+      }
+    }
+
     if (trigger === 'CONQUER_EXCESS_3' || code === 'CONQUER_EXCESS_3:PLAY_GOLD_TOKENS') {
       // Check if this was a conquer with 3+ excess damage
       // Simplified: always trigger for now
@@ -3311,17 +3441,8 @@ function resolveKeywordPlayTriggers(
   if (hasKeyword(state, cardInstanceId, 'Weaponmaster') && options.equipTargetId) {
     attachEquipmentToUnit(state, options.equipTargetId, cardInstanceId);
   }
-  if (hasKeyword(state, cardInstanceId, 'Legion') && isLegionActive(state, playerId, cardInstanceId)) {
-    const card = state.allCards[cardInstanceId];
-    const text = getCardRulesText(state.cardDefinitions[card.cardId]);
-    if (/ready me/i.test(text)) {
-      card.ready = true;
-      card.exhausted = false;
-    }
-    if (/buff me/i.test(text)) {
-      buffUnit(state, cardInstanceId, 1);
-    }
-  }
+  // Note: Legion is handled in markCardPlayed() via updateLegionActiveCards()
+  // which sets legionActiveCardIds for ALL legion cards owned by the player
 }
 
 function resolveSpellEffect(
@@ -3531,6 +3652,12 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
       Math.max(player.energy ?? 0, getReadyRuneIds(state, playerId).length) >= ((definition.cost?.rune ?? 0) + extraEnergy)
       && getActiveRuneIds(state, playerId).length >= (definition.cost?.power ?? 0);
 
+    const canAffordAccelerate = (definition: CardDefinition) => {
+      const baseCost = definition.cost?.rune ?? 0;
+      const readyRuneCount = getReadyRuneIds(state, playerId).length;
+      return readyRuneCount >= baseCost + 1;
+    };
+
     if (def.type === 'Unit' && (canPayCardCosts(state, playerId, def) || hasEnoughDisplayedResources(def))) {
       const powerRuneDomains = buildAutoPowerRuneDomains(def);
       for (const bf of state.battlefields) {
@@ -3538,7 +3665,7 @@ export function getLegalActions(state: GameState, playerId: string): GameAction[
         const hasFriendlyUnit = bf.units.some(id => state.allCards[id]?.ownerId === playerId);
         if (bf.controllerId === playerId || (hasKeyword(state, cardId, 'Ambush') && hasFriendlyUnit)) {
           actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: false, powerRuneDomains }));
-          if (hasKeyword(state, cardId, 'Accelerate') && (canPayCardCosts(state, playerId, def, 1) || hasEnoughDisplayedResources(def, 1))) {
+          if (hasKeyword(state, cardId, 'Accelerate') && (canPayCardCosts(state, playerId, def, 1) || canAffordAccelerate(def))) {
             actions.push(makeAction('PlayUnit', playerId, { cardInstanceId: cardId, battlefieldId: bf.id, hidden: false, accelerate: true, powerRuneDomains }));
           }
         }

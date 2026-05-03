@@ -223,6 +223,7 @@ export interface GameState {
   pendingCombatDamageAssignment?: PendingCombatDamageAssignment | null;
   keywordModifiers?: KeywordModifier[];
   pendingKeywordChoices?: PendingKeywordChoice[];
+  legionActiveCardIds?: string[];
 }
 
 export interface BattlefieldState {
@@ -275,6 +276,7 @@ export interface GameState {
   pendingCombatDamageAssignment?: PendingCombatDamageAssignment | null;
   keywordModifiers?: KeywordModifier[];
   pendingKeywordChoices?: PendingKeywordChoice[];
+  legionActiveCardIds?: string[];
 }
 
 // --- Action Types ---

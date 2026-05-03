@@ -176,6 +176,8 @@ interface PendingPlayAction {
   powerDomains?: Domain[];
   targetType?: SpellTargetType; // only for spells
   selectedTargetIds?: string[]; // only for spells
+  hasAccelerate?: boolean; // card has Accelerate keyword
+  accelerateDomain?: Domain; // domain required for accelerate cost
 }
 
 interface PendingMoveUnit {
@@ -632,6 +634,7 @@ function OpponentHandRow({ count }: OpponentHandRowProps) {
 interface PlayerHandRowProps {
   cards: CardInstance[];
   cardDefs: Record<string, CardDefinition>;
+  legionActiveCardIds?: string[];
   onCardClick?: (instanceId: string) => void;
   pendingSpell?: PendingSpell | null;
   onSpellCardClick?: (instanceId: string) => void;
@@ -641,7 +644,7 @@ interface PlayerHandRowProps {
   maxCardHeight?: number;
 }
 
-function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCardClick, pendingHideCardId, onHideCardClick, canInteract = false, maxCardHeight = CARD_HEIGHTS.handMax }: PlayerHandRowProps) {
+function PlayerHandRow({ cards, cardDefs, legionActiveCardIds, onCardClick, pendingSpell, onSpellCardClick, pendingHideCardId, onHideCardClick, canInteract = false, maxCardHeight = CARD_HEIGHTS.handMax }: PlayerHandRowProps) {
   const handleClick = (instanceId: string) => {
     const card = cards.find(c => c.instanceId === instanceId);
     const def = card ? cardDefs[card.cardId] : undefined;
@@ -734,6 +737,7 @@ function PlayerHandRow({ cards, cardDefs, onCardClick, pendingSpell, onSpellCard
                 showKeywords={true}
                 size="md"
                 maxHeight={maxCardHeight}
+                isLegionActive={legionActiveCardIds?.includes(card.instanceId) ?? false}
                 onClick={() => handleClick(card.instanceId)}
               />
             </div>
@@ -874,6 +878,7 @@ interface ZoneCardProps {
   cardId: string;
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
+  legionActiveCardIds?: string[];
   isOpponent: boolean;
   size?: 'sm' | 'md' | 'lg';
   maxHeightPx?: number;
@@ -882,7 +887,7 @@ interface ZoneCardProps {
   onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md', maxHeightPx, canDragMove = false, isPendingMove = false, onMoveDragStart }: ZoneCardProps) {
+function ZoneCard({ cardId, allCards, cardDefs, legionActiveCardIds, isOpponent, size = 'md', maxHeightPx, canDragMove = false, isPendingMove = false, onMoveDragStart }: ZoneCardProps) {
   const card = allCards[cardId];
   if (!card) return null;
   const def = cardDefs[card.cardId];
@@ -916,6 +921,7 @@ function ZoneCard({ cardId, allCards, cardDefs, isOpponent, size = 'md', maxHeig
         showKeywords={false}
         size={size}
         maxHeight={maxHeightPx}
+        isLegionActive={legionActiveCardIds?.includes(card.instanceId) ?? false}
       />
     </div>
   );
@@ -930,6 +936,7 @@ interface ZoneRowProps {
   isOpponent: boolean;
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
+  legionActiveCardIds?: string[];
   battlefields?: BattlefieldState[];
   canMoveUnits?: boolean;
   pendingMoveUnitIds?: Set<string>;
@@ -940,7 +947,7 @@ interface ZoneRowProps {
   onMoveDragStart?: (cardInstanceId: string, event: React.DragEvent<HTMLDivElement>) => void;
 }
 
-function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefields, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, isNarrow = false, onBaseDrop, onMoveDrop, onMoveDragStart }: ZoneRowProps) {
+function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, legionActiveCardIds, battlefields, canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, isNarrow = false, onBaseDrop, onMoveDrop, onMoveDragStart }: ZoneRowProps) {
   if (!player) return null;
 
   const rowRef = React.useRef<HTMLDivElement>(null);
@@ -1069,6 +1076,7 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefield
                   cardId={id}
                   allCards={allCards}
                   cardDefs={cardDefs}
+                  legionActiveCardIds={legionActiveCardIds}
                   isOpponent={isOpponent}
                   size="md"
                   maxHeightPx={isNarrow ? Math.min(baseCardH, 108) : baseCardH}
@@ -1092,9 +1100,9 @@ function ZoneRow({ player, playerId, isOpponent, allCards, cardDefs, battlefield
         <div style={zoneRowStyles.zone}>
           <div style={{ ...zoneRowStyles.zoneLabel, color: '#d4a84388' }}>LEGEND</div>
           <div ref={legendRef} style={zoneRowStyles.cardArea}>
-            {legendIds.length > 0 ? (
+              {legendIds.length > 0 ? (
               legendIds.map(id => (
-                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} isOpponent={isOpponent} size="md" maxHeightPx={legendCardH} />
+                <ZoneCard key={id} cardId={id} allCards={allCards} cardDefs={cardDefs} legionActiveCardIds={legionActiveCardIds} isOpponent={isOpponent} size="md" maxHeightPx={legendCardH} />
               ))
             ) : (
               <div style={{ ...zoneRowStyles.empty, borderColor: '#d4a84333' }}>
@@ -1224,6 +1232,7 @@ interface DeckAreaProps {
   isOpponent: boolean;
   allCards: Record<string, CardInstance>;
   cardDefs: Record<string, CardDefinition>;
+  legionActiveCardIds?: string[];
   handCards: CardInstance[];
   opponentHandCount: number;
   myTurn?: boolean;
@@ -1238,7 +1247,7 @@ interface DeckAreaProps {
   onGraveyardClick?: () => void;
 }
 
-function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards, opponentHandCount, myTurn = false, phase, hasShowdownFocus = false, onCardClick, pendingSpell, onSpellCardClick, pendingHideCardId, onHideCardClick, compactCards = false, onGraveyardClick }: DeckAreaProps) {
+function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, legionActiveCardIds, handCards, opponentHandCount, myTurn = false, phase, hasShowdownFocus = false, onCardClick, pendingSpell, onSpellCardClick, pendingHideCardId, onHideCardClick, compactCards = false, onGraveyardClick }: DeckAreaProps) {
   if (!player) return null;
 
   const accentColor = isOpponent ? '#ef4444' : '#22c55e';
@@ -1304,6 +1313,7 @@ function DeckArea({ player, playerId, isOpponent, allCards, cardDefs, handCards,
         <PlayerHandRow
           cards={handCards}
           cardDefs={cardDefs}
+          legionActiveCardIds={legionActiveCardIds}
           onCardClick={onCardClick}
           pendingSpell={pendingSpell}
           onSpellCardClick={onSpellCardClick}
@@ -1545,7 +1555,7 @@ function BattlefieldRow({
   canMoveUnits = false, pendingMoveUnitIds, pendingMoveDestinationId, pendingSpell, pendingHideCardId, highlightedUnitId, isNarrow = false,
   onBattlefieldUnitClick, handleAction, onBattlefieldDrop, onMoveDrop, onMoveDragStart, onHideBattlefield, onPlayHiddenCard,
 }: BattlefieldRowProps) {
-  const { battlefields, allCards, cardDefinitions } = gameState;
+  const { battlefields, allCards, cardDefinitions, legionActiveCardIds } = gameState;
   const rowRef = React.useRef<HTMLDivElement>(null);
   const [rowH, setRowH] = React.useState(0);
 
@@ -2278,13 +2288,25 @@ const topBarStyles: Record<string, React.CSSProperties> = {
 // ─────────────────────────────────────────
 function PlayConfirmModal({
   pending,
+  accelerateEnabled,
+  onToggleAccelerate,
   onConfirm,
   onCancel,
 }: {
   pending: PendingPlayAction;
+  accelerateEnabled: boolean;
+  onToggleAccelerate: (enabled: boolean) => void;
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const hasAccelerate = pending.hasAccelerate;
+  const runeCost = pending.runeCost ?? 0;
+  const powerCost = pending.powerCost ?? 0;
+  // Accelerate adds +1 rune (energy) and +1 power to the base cost
+  const accelerateRuneCost = runeCost + 1;
+  const acceleratePowerCost = powerCost + 1;
+  const canAffordAccelerate = (pending.availableRunes ?? 0) >= accelerateRuneCost;
+
   return (
     <div style={confirmStyles.backdrop} onClick={onCancel}>
       <div style={confirmStyles.dialog} onClick={e => e.stopPropagation()}>
@@ -2296,12 +2318,34 @@ function PlayConfirmModal({
         </div>
         <div style={confirmStyles.costRow}>
           <span>Rune cost</span>
-          <strong>{pending.runeCost}</strong>
+          <strong>{accelerateEnabled ? accelerateRuneCost : runeCost}</strong>
         </div>
+        {powerCost > 0 && (
+          <div style={confirmStyles.costRow}>
+            <span>Power cost</span>
+            <strong>{accelerateEnabled ? acceleratePowerCost : powerCost}</strong>
+          </div>
+        )}
         <div style={confirmStyles.costRow}>
           <span>Available runes</span>
           <strong>{pending.availableRunes}</strong>
         </div>
+        {hasAccelerate && (
+          <div style={confirmStyles.accelerateRow}>
+            <button
+              type="button"
+              style={{
+                ...confirmStyles.accelerateButton,
+                ...(accelerateEnabled ? confirmStyles.accelerateButtonActive : {}),
+                ...(!canAffordAccelerate ? confirmStyles.accelerateButtonDisabled : {}),
+              }}
+              onClick={() => canAffordAccelerate && onToggleAccelerate(!accelerateEnabled)}
+              disabled={!canAffordAccelerate}
+            >
+              Accelerate
+            </button>
+          </div>
+        )}
         <div style={confirmStyles.actions}>
           <button style={confirmStyles.cancelButton} onClick={onCancel}>Cancel</button>
           <button style={confirmStyles.confirmButton} onClick={onConfirm}>Confirm</button>
@@ -2406,6 +2450,31 @@ const confirmStyles: Record<string, React.CSSProperties> = {
     borderTop: '1px solid rgba(255,255,255,0.08)',
     color: '#e2e8f0',
     fontSize: '13px',
+  },
+  accelerateRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    paddingTop: '4px',
+  },
+  accelerateButton: {
+    padding: '6px 16px',
+    borderRadius: '6px',
+    border: '1px solid rgba(255,255,255,0.22)',
+    background: 'rgba(255,255,255,0.06)',
+    color: '#e2e8f0',
+    fontSize: '12px',
+    fontWeight: 800,
+    cursor: 'pointer',
+  },
+  accelerateButtonActive: {
+    background: '#16a34a',
+    borderColor: '#22c55e',
+    color: '#ffffff',
+  },
+  accelerateButtonDisabled: {
+    opacity: 0.38,
+    cursor: 'not-allowed',
   },
   moveList: {
     display: 'flex',
@@ -2667,6 +2736,7 @@ function MobileBottomPanel({
             onHideCardClick={onHideCardClick}
             canInteract={true}
             maxCardHeight={104}
+            legionActiveCardIds={undefined}
           />
         )}
         {activeTab === 'log' && <GameLog messages={gameLog} />}
@@ -2907,6 +2977,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
   const [pendingHideRuneSelection, setPendingHideRuneSelection] = React.useState<PendingHideRuneSelection | null>(null);
   const [discardPileModal, setDiscardPileModal] = React.useState<{ playerId: string; isOpponent: boolean } | null>(null);
   const [pendingPowerRuneSelection, setPendingPowerRuneSelection] = React.useState<PendingPlayAction | null>(null);
+  const [accelerateEnabled, setAccelerateEnabled] = React.useState(false);
   const [mobilePanelTab, setMobilePanelTab] = React.useState<'hand' | 'log' | 'chat'>('log');
   const [highlightedDamageUnitId, setHighlightedDamageUnitId] = React.useState<string | null>(null);
   const panelRef = React.useRef<HTMLDivElement>(null);
@@ -2992,6 +3063,12 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     const powerDomains = (def.domains ?? []).filter((d: string) => RUNE_ICONS[d as Domain]);
 
     if (def.type === 'Unit') {
+      const hasAccelerate = cardHasKeyword(def, 'Accelerate');
+      const accelerateDomain = hasAccelerate ? runeDomain(def) : undefined;
+      // Check if player has the required domain rune available for accelerate
+      const availableDomains = getActiveRuneDomains(player, gameState.allCards, gameState.cardDefinitions);
+      const canAccelerate = hasAccelerate && accelerateDomain && availableDomains.includes(accelerateDomain);
+
       setPendingMoveAction(null);
       setPendingHideCardId(null);
       setPendingPlayAction({
@@ -3004,6 +3081,8 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
         availableRunes,
         powerCost,
         powerDomains,
+        hasAccelerate,
+        accelerateDomain,
       });
       return;
     }
@@ -3085,20 +3164,25 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
     event.dataTransfer.setData('application/riftbound-unit', cardInstanceId);
   }, []);
 
-  const confirmPendingPlay = useCallback(() => {
+  const confirmPendingPlay = useCallback((accelerate: boolean) => {
     if (!pendingPlayAction) return;
     // Dual-domain card with power cost → show rune selection modal
     if ((pendingPlayAction.powerDomains?.length ?? 0) === 2 && (pendingPlayAction.powerCost ?? 0) > 0) {
       setPendingPowerRuneSelection(pendingPlayAction);
       return;
     }
-    handleAction(pendingPlayAction.actionType, pendingPlayAction.payload);
+    const payload = {
+      ...pendingPlayAction.payload,
+      accelerate,
+    };
+    handleAction(pendingPlayAction.actionType, payload);
     setPendingPlayAction(null);
-  }, [handleAction, pendingPlayAction]);
+    setAccelerateEnabled(false);
+  }, [handleAction, pendingPlayAction, setAccelerateEnabled]);
 
   const handlePowerRuneConfirm = useCallback((selectedDomains: Domain[]) => {
     if (!pendingPowerRuneSelection) return;
-    const payload = { ...pendingPowerRuneSelection.payload, powerRuneDomains: selectedDomains };
+    const payload: Record<string, unknown> = { ...pendingPowerRuneSelection.payload, powerRuneDomains: selectedDomains };
     if (pendingPowerRuneSelection.selectedTargetIds?.length) {
       payload.targetId = pendingPowerRuneSelection.selectedTargetIds[0];
     }
@@ -3426,6 +3510,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 isOpponent={true}
                 allCards={myCards}
                 cardDefs={cardDefs}
+                legionActiveCardIds={gameState.legionActiveCardIds}
                 handCards={[]}
                 opponentHandCount={opponentHandCount}
                 compactCards={isShort || isNarrow}
@@ -3441,6 +3526,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 isOpponent={true}
                 allCards={myCards}
                 cardDefs={cardDefs}
+                legionActiveCardIds={gameState.legionActiveCardIds}
                 battlefields={gameState.battlefields}
                 isNarrow={isNarrow}
               />
@@ -3477,6 +3563,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 isOpponent={false}
                 allCards={myCards}
                 cardDefs={cardDefs}
+                legionActiveCardIds={gameState.legionActiveCardIds}
                 battlefields={gameState.battlefields}
                 canMoveUnits={canMoveUnits}
                 pendingMoveUnitIds={pendingMoveUnitIds}
@@ -3496,6 +3583,7 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
                 isOpponent={false}
                 allCards={myCards}
                 cardDefs={cardDefs}
+                legionActiveCardIds={gameState.legionActiveCardIds}
                 handCards={playerHandCards}
                 opponentHandCount={0}
                 myTurn={myTurn}
@@ -3587,8 +3675,19 @@ export function BoardLayout({ onExitToLobby }: BoardLayoutProps) {
       {pendingPlayAction && (
         <PlayConfirmModal
           pending={pendingPlayAction}
-          onConfirm={confirmPendingPlay}
-          onCancel={() => setPendingPlayAction(null)}
+          accelerateEnabled={accelerateEnabled}
+          onToggleAccelerate={setAccelerateEnabled}
+          onConfirm={() => {
+            if (pendingPlayAction.actionType === 'PlayUnit') {
+              confirmPendingPlay(accelerateEnabled);
+            } else {
+              confirmPendingPlay(false);
+            }
+          }}
+          onCancel={() => {
+            setPendingPlayAction(null);
+            setAccelerateEnabled(false);
+          }}
         />
       )}
 
